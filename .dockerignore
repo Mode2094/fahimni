@@ -1,0 +1,46 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+vendor
+node_modules
+frontend/node_modules
+frontend/.next
+frontend/out
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/app/backups/*
+!storage/app/backups/.gitkeep
+# public/storage is (re)baked as a symlink by the Dockerfile build step —
+# excluded here so the host-specific link never enters the context.
+public/storage
+.DS_Store
+docs
+tests
+scripts
+*.log
+frontend/.next
+frontend/node_modules
+mobile/build
+mobile/.dart_tool
+# TLS private keys / certs must never enter image layers (mounted read-only at runtime).
+certs
+*.pem
+*.key
+# Local env files with real credentials.
+.env.testing
+frontend/.env.local
+mobile/.env
+# Historical logs may contain sensitive request data.
+storage/logs
+# Local tooling / editor state.
+.claude-flow
+.opencode
+.agents
+.swiftpm
+*.tsbuildinfo

@@ -1,0 +1,50 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Laravel
+/vendor
+/storage/*.key
+/storage/app/backups/
+/storage/framework/cache/data/
+/storage/framework/sessions/
+/storage/framework/views/
+/storage/logs/*.log
+/bootstrap/cache/*.php
+/public/storage
+
+# Database
+/database/*.sqlite
+
+# Frontend
+/node_modules
+/frontend/node_modules
+/frontend/.next
+/frontend/out
+.next/
+frontend/.env.local
+frontend/.env.*.local
+
+# Agent tooling (local only)
+/.claude-flow/
+/.opencode/node_modules/
+
+# PHPUnit
+.phpunit.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Logs / build artifacts
+*.log
+npm-debug.log*
+yarn-error.log*
+tsconfig.tsbuildinfo
+certs/
+
+# Load test results
+/tests/load/results/*.json
+!/tests/load/results/.gitkeep
