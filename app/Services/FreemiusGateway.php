@@ -317,4 +317,82 @@ class FreemiusGateway
 
         return hash_equals($computed, $signature);
     }
+
+    /**
+     * Verify the HOSTED checkout redirect signature (official algorithm):
+     *
+     *   1. Take the full absolute URL.
+     *   2. Remove the "&signature=..." (or "?signature=...") part.
+     *   3. HMAC-SHA256(cleanUrl, PRODUCT_SECRET_KEY).
+     *   4. Constant-time compare with the provided signature.
+     *
+     * Returns the parsed redirect parameters when the signature is valid, or
+     * null when it is missing/invalid. The caller MUST still require the
+     * authenticated session and the server-side purchase facts; a valid
+     * signature proves authenticity of the Freemius redirect, not ownership of
+     * a specific tenant.
+     *
+     * @return array<string, string>|null
+     */
+    public static function verifyCheckoutRedirect(string $fullUrl): ?array
+    {
+        $secret = self::config()['secret_key'];
+
+        if ($secret === '') {
+            return null;
+        }
+
+        // Parse query params from the URL.
+        $parts = parse_url($fullUrl);
+
+        if ($parts === false || empty($parts['query'])) {
+            return null;
+        }
+
+        parse_str($parts['query'], $query);
+
+        $signature = isset($query['signature']) ? (string) $query['signature'] : '';
+
+        if ($signature === '') {
+            return null;
+        }
+
+        // Rebuild the clean URL exactly as Freemius does: absolute URL with the
+        // signature parameter removed. Freemius' SDK also normalizes encoded
+        // spaces (%20 -> +) before hashing, so we mirror that.
+        $cleanUrl = str_replace('%20', '+', self::stripSignatureParam($fullUrl));
+
+        $computed = hash_hmac('sha256', $cleanUrl, $secret);
+
+        if (! hash_equals($computed, $signature)) {
+            return null;
+        }
+
+        /** @var array<string, string> $params */
+        $params = array_filter(
+            array_map(fn ($v) => is_array($v) ? (string) reset($v) : (string) $v, $query),
+            fn ($v) => $v !== '',
+        );
+
+        return $params;
+    }
+
+    /**
+     * Remove the signature query parameter from a URL, preserving the rest of
+     * the query string order (so the HMAC matches Freemius' computation).
+     */
+    private static function stripSignatureParam(string $url): string
+    {
+        // Cut everything from the first signature parameter onward (Freemius
+        // appends `&signature=` last).
+        foreach (['&signature=', '?signature='] as $needle) {
+            $pos = strpos($url, $needle);
+
+            if ($pos !== false) {
+                return substr($url, 0, $pos);
+            }
+        }
+
+        return $url;
+    }
 }

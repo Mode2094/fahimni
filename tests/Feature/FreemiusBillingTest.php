@@ -83,6 +83,18 @@ class FreemiusBillingTest extends TenantTestCase
     }
 
     /**
+     * Build a Freemius-signed Hosted-Checkout redirect URL exactly as Freemius
+     * does: params + `&signature=HMAC-SHA256(cleanUrl, secret)`.
+     */
+    private function signedRedirect(array $params): string
+    {
+        $base = 'https://app.fahimni.test/checkout/success';
+        $clean = $base.'?'.http_build_query($params);
+
+        return $clean.'&signature='.hash_hmac('sha256', $clean, 'test-secret-key');
+    }
+
+    /**
      * Attach a user as the tenant owner AND bind the tenant's owner_id so the
      * Freemius entitlement sync can resolve the customer by owner email.
      */
@@ -446,7 +458,7 @@ class FreemiusBillingTest extends TenantTestCase
 
     // ── Return / portal / cancel ─────────────────────────────────────
 
-    public function test_complete_redirect_without_license_does_not_activate(): void
+    public function test_complete_without_signed_redirect_does_not_activate(): void
     {
         $this->configureFreemius();
         $this->makePlan();
@@ -454,10 +466,29 @@ class FreemiusBillingTest extends TenantTestCase
         $user = $this->makeUser();
         $this->attachOwner($user, $tenant);
 
-        // A spoofed/empty return must never grant access.
-        $this->getJson('/api/v1/subscriptions/freemius/complete', $this->authHeaders($user, $tenant))
-            ->assertOk()
-            ->assertJsonPath('status', 'pending');
+        // No signature at all → the redirect cannot be trusted → 422, nothing
+        // is activated.
+        $this->getJson('/api/v1/subscriptions/freemius/complete?license_id=LIC-X', $this->authHeaders($user, $tenant))
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'unverified');
+
+        $this->assertDatabaseCount('fs_entitlements', 0);
+    }
+
+    public function test_complete_rejects_tampered_redirect_signature(): void
+    {
+        $this->configureFreemius();
+        $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // Correct params but a forged signature.
+        $url = 'https://app.fahimni.test/checkout/success?license_id=LIC-T&email=owner%40academy.test&plan_id=1010&signature=deadbeef';
+
+        $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url), $this->authHeaders($user, $tenant))
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'unverified');
 
         $this->assertDatabaseCount('fs_entitlements', 0);
     }
@@ -471,26 +502,21 @@ class FreemiusBillingTest extends TenantTestCase
         $user = $this->makeUser(['email' => 'owner@academy.test']);
         $this->attachOwner($user, $tenant);
 
-        $other = $this->makeTenant();
-        $otherUser = $this->makeUser(['email' => 'other@academy.test']);
-        $this->attachOwner($otherUser, $other);
-
-        // License belongs to a DIFFERENT tenant.
-        Http::fake([
-            'api.freemius.test/v1/products/777/licenses/LIC-FOREIGN.json' => Http::response(
-                $this->makeLicensePayload('LIC-FOREIGN', 'other@academy.test')
-            ),
-            'api.freemius.test/v1/products/777/licenses/LIC-FOREIGN/subscription.json' => Http::response([
-                'id' => 'SUB-F', 'plan_id' => '1010', 'status' => 'active',
-            ]),
+        // A properly-SIGNED redirect, but for a DIFFERENT customer's email.
+        $url = $this->signedRedirect([
+            'license_id' => 'LIC-FOREIGN',
+            'email' => 'other@academy.test',
+            'plan_id' => '1010',
         ]);
 
-        $resp = $this->getJson('/api/v1/subscriptions/freemius/complete?license_id=LIC-FOREIGN', $this->authHeaders($user, $tenant));
-        $resp->assertOk()->assertJsonPath('status', 'pending');
+        $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url), $this->authHeaders($user, $tenant))
+            ->assertStatus(403)
+            ->assertJsonPath('status', 'mismatch');
 
-        // The entitlement was created for the OTHER tenant, not the caller.
-        $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-FOREIGN', 'tenant_id' => $other->id]);
-        $this->assertDatabaseMissing('fs_entitlements', ['fs_license_id' => 'LIC-FOREIGN', 'tenant_id' => $tenant->id]);
+        // Nothing bound to the caller (nor to anyone) — the email mismatch
+        // blocks binding entirely.
+        $this->assertDatabaseMissing('fs_entitlements', ['tenant_id' => $tenant->id]);
+        $this->assertDatabaseCount('fs_entitlements', 0);
     }
 
     public function test_cancel_requires_active_entitlement(): void
@@ -1185,15 +1211,15 @@ class FreemiusBillingTest extends TenantTestCase
         ], $body)->assertStatus(202);
         $this->assertDatabaseCount('fs_entitlements', 0);
 
-        // The documented reliable path: each platform is activated through its
-        // OWN authenticated session (overlay success callback -> trusted bind).
-        $this->postJson('/api/v1/subscriptions/freemius/bind', [
-            'license_id' => 'LIC-P1',
-        ], $this->authHeaders($user, $t1))->assertOk()->assertJsonPath('status', 'active');
+        // The reliable path: each platform is activated through its OWN signed
+        // Hosted-Checkout redirect, in its OWN authenticated session.
+        $url1 = $this->signedRedirect(['license_id' => 'LIC-P1', 'email' => 'owner@shared.test', 'plan_id' => '1010']);
+        $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url1), $this->authHeaders($user, $t1))
+            ->assertOk()->assertJsonPath('status', 'active');
 
-        $this->postJson('/api/v1/subscriptions/freemius/bind', [
-            'license_id' => 'LIC-P2',
-        ], $this->authHeaders($user, $t2))->assertOk()->assertJsonPath('status', 'active');
+        $url2 = $this->signedRedirect(['license_id' => 'LIC-P2', 'email' => 'owner@shared.test', 'plan_id' => '1010']);
+        $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url2), $this->authHeaders($user, $t2))
+            ->assertOk()->assertJsonPath('status', 'active');
 
         // Each license activates exactly its own platform.
         $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-P1', 'tenant_id' => $t1->id]);
@@ -1202,18 +1228,21 @@ class FreemiusBillingTest extends TenantTestCase
         $this->assertTrue(app(PlanEngine::class)->hasFeature($t2->id, 'courses_limit'));
     }
 
-    public function test_bind_refuses_to_move_a_license_to_another_tenant(): void
+    public function test_signed_redirect_refuses_to_move_a_license_to_another_tenant(): void
     {
         $this->configureFreemius();
         $plan = $this->makePlan();
 
+        // One user owning two platforms (same email on both).
+        $user = $this->makeUser(['email' => 'a@academy.test']);
+
         $t1 = $this->makeTenant();
-        $u1 = $this->makeUser(['email' => 'a@academy.test']);
-        $this->attachOwner($u1, $t1);
+        $this->attachToTenant($user, $t1, 'owner');
+        $t1->update(['owner_id' => $user->id]);
 
         $t2 = $this->makeTenant();
-        $u2 = $this->makeUser(['email' => 'b@academy.test']);
-        $this->attachOwner($u2, $t2);
+        $this->attachToTenant($user, $t2, 'owner');
+        $t2->update(['owner_id' => $user->id]);
 
         FsEntitlement::create([
             'id' => (string) Str::uuid(),
@@ -1226,10 +1255,15 @@ class FreemiusBillingTest extends TenantTestCase
             'is_canceled' => false,
         ]);
 
-        // Tenant 2 cannot steal a license already bound to tenant 1.
-        $this->postJson('/api/v1/subscriptions/freemius/bind', [
-            'license_id' => 'LIC-OWNED',
-        ], $this->authHeaders($u2, $t2))->assertStatus(409);
+        // A genuine pending intent for tenant 2 (so the request reaches bind).
+        $this->pendingIntent($t2, 'a@academy.test');
+
+        // Tenant 2 presents a validly-signed redirect for a license already
+        // bound to tenant 1 → must be refused (never moved).
+        $url = $this->signedRedirect(['license_id' => 'LIC-OWNED', 'email' => 'a@academy.test', 'plan_id' => '1010']);
+
+        $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url), $this->authHeaders($user, $t2))
+            ->assertStatus(409);
 
         $this->assertSame($t1->id, FsEntitlement::where('fs_license_id', 'LIC-OWNED')->value('tenant_id'));
     }
@@ -1264,6 +1298,73 @@ class FreemiusBillingTest extends TenantTestCase
         ], $body)->assertStatus(202)->assertJsonPath('result', 'no_tenant');
 
         $this->assertDatabaseCount('fs_entitlements', 0);
+    }
+
+    // ── Purchase ownership proof (signed redirect + session + intent) ─
+
+    public function test_signed_redirect_without_intent_does_not_activate(): void
+    {
+        $this->configureFreemius();
+        $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // Remove the intent created by attachOwner — the tenant never started
+        // a checkout for this, so a verified license must NOT bind.
+        TenantSubscription::withoutTenant()
+            ->where('tenant_id', $tenant->id)
+            ->where('billing_source', 'freemius')
+            ->delete();
+
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-NOINTENT.json' => Http::response(
+                $this->makeLicensePayload('LIC-NOINTENT', 'owner@academy.test')
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-NOINTENT/subscription.json' => Http::response([
+                'id' => 'SUB-NI', 'plan_id' => '1010', 'status' => 'active',
+            ]),
+        ]);
+
+        $url = $this->signedRedirect(['license_id' => 'LIC-NOINTENT', 'email' => 'owner@academy.test', 'plan_id' => '1010']);
+
+        $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url), $this->authHeaders($user, $tenant))
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'no_intent');
+
+        $this->assertDatabaseCount('fs_entitlements', 0);
+    }
+
+    public function test_complete_is_idempotent_and_never_double_binds(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-IDEM.json' => Http::response(
+                $this->makeLicensePayload('LIC-IDEM', 'owner@academy.test')
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-IDEM/subscription.json' => Http::response([
+                'id' => 'SUB-I', 'plan_id' => '1010', 'status' => 'active', 'billing_cycle' => 'monthly',
+            ]),
+        ]);
+
+        $url = $this->signedRedirect(['license_id' => 'LIC-IDEM', 'email' => 'owner@academy.test', 'plan_id' => '1010']);
+
+        // Two sequential (simulating concurrent) complete calls for the same
+        // license must never create a second entitlement or a duplicate plan.
+        $this->getJson('/api/v1/subscriptions/complete?x=1&redirect_url='.urlencode($url), $this->authHeaders($user, $tenant));
+        $r1 = $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url), $this->authHeaders($user, $tenant));
+        $r2 = $this->getJson('/api/v1/subscriptions/freemius/complete?redirect_url='.urlencode($url), $this->authHeaders($user, $tenant));
+
+        $r1->assertOk();
+        $r2->assertOk();
+
+        $this->assertSame(1, FsEntitlement::where('fs_license_id', 'LIC-IDEM')->count());
+        $this->assertSame(1, TenantSubscription::withoutTenant()->where('fs_license_id', 'LIC-IDEM')->where('status', 'active')->count());
     }
 
     // ── Content protection: never deleted on subscription expiry ──────

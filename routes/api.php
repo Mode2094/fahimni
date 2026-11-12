@@ -295,7 +295,6 @@ Route::prefix('v1')->group(function () {
             Route::post('videos/upload', [FileUploadController::class, 'uploadDirect'])->middleware('throttle:video-upload');
             Route::post('subscriptions/freemius/checkout', [FreemiusCheckoutController::class, 'initiate'])->middleware('throttle:checkout');
             Route::get('subscriptions/freemius/complete', [FreemiusCheckoutController::class, 'complete'])->middleware('throttle:checkout');
-            Route::post('subscriptions/freemius/bind', [FreemiusCheckoutController::class, 'bind'])->middleware('throttle:checkout');
             Route::post('subscriptions/freemius/portal', [FreemiusCheckoutController::class, 'portal']);
             Route::post('subscriptions/freemius/cancel', [FreemiusCheckoutController::class, 'cancel']);
 

@@ -131,19 +131,15 @@ class FreemiusCheckoutController extends Controller
             }
         }
 
-        // Fresh hosted checkout. The URL already carries product + plan; we
-        // only add the prefilled/read-only email. No price is ever passed
-        // (Freemius uses the plan's configured price).
+        // Fresh hosted checkout. The URL carries product + plan; we only add
+        // the prefilled/read-only email. No price is ever passed (Freemius uses
+        // the plan's configured price). The post-purchase redirect URL (with a
+        // Freemius-signed `signature`) is configured in the Freemius Dashboard
+        // (Plans → Customization → Redirect Checkout to a custom URL) and points
+        // to our /checkout/success page.
         $reference = $this->recordIntent($tenant, $plan, $cycle, (string) $email, $request->user()?->id);
 
-        // The redirect back to us carries the checkout reference so `complete`
-        // can reconcile ONLY the intent created by this very checkout.
-        $redirect = rtrim(config('app.frontend_url') ?: config('app.url'), '/')
-            .'/checkout/success?ref='.urlencode($reference);
-
-        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email, [
-            'redirect' => $redirect,
-        ]);
+        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email);
 
         AuditLogger::log($request, 'subscription.freemius_checkout', 'plan', $plan->id, ['cycle' => $cycle]);
 
@@ -157,12 +153,22 @@ class FreemiusCheckoutController extends Controller
     }
 
     /**
-     * Post-checkout return. The browser may land here after payment.
+     * Post-checkout return — the OFFICIAL Hosted Checkout signed redirect.
      *
-     * We NEVER trust the redirect: we re-fetch the license from Freemius by
-     * its id (if present) and re-derive the entitlement server-side. If no
-     * licence id is available we fall back to reconciling by the tenant's
-     * email via the API — still fully server-side.
+     * Freemius redirects the buyer back with purchase data plus a
+     * `signature` = HMAC-SHA256(fullUrlWithoutSignature, PRODUCT_SECRET_KEY).
+     * We therefore require, ALL of:
+     *  1. a VALID redirect signature (proves the data is authentic Freemius
+     *     output, not forged),
+     *  2. an AUTHENTICATED tenant session (the same browser that started the
+     *     checkout), and
+     *  3. the redirect `email` matching the authenticated user's email — this
+     *     is what proves the PURCHASE belongs to THIS user/tenant and prevents
+     *     binding someone else's license,
+     *  4. a matching server-side checkout intent for this tenant (plan match).
+     *
+     * Only then is the license bound to the tenant. Anything short of that
+     * activates nothing and reports a distinct status.
      */
     public function complete(Request $request): JsonResponse
     {
@@ -172,124 +178,152 @@ class FreemiusCheckoutController extends Controller
             return response()->json(['message' => 'Sales session expired.'], 401);
         }
 
-        $licenseId = (string) $request->query('license_id', '');
-        $reference = (string) $request->query('ref', '');
+        // 1) Verify the signed redirect (official algorithm). Nothing is
+        //    trusted before this passes. The signature is computed by Freemius
+        //    over the ORIGINAL redirect URL it sent to the buyer (our frontend
+        //    success page), so we verify against that exact URL. The frontend
+        //    forwards it as `redirect_url`.
+        $redirectUrl = (string) $request->query('redirect_url', '');
 
-        // If a checkout reference is supplied it MUST belong to this tenant —
-        // a license_id alone is never trusted from the browser.
-        if ($reference !== '') {
-            $intent = TenantSubscription::where('billing_source', 'freemius')
-                ->where('metadata->freemius_checkout_reference', $reference)
-                ->first();
-
-            if (! $intent || $intent->tenant_id !== $tenant->id) {
-                return response()->json(['message' => 'Unknown checkout reference.'], 422);
-            }
+        if ($redirectUrl === '') {
+            // Fall back to this request's own URL (works when the API itself is
+            // the configured redirect target).
+            $redirectUrl = $request->fullUrl();
         }
 
-        if ($licenseId !== '') {
-            try {
-                $result = $this->sync->syncByLicenseId($licenseId);
-            } catch (\App\Exceptions\FreemiusApiException) {
-                // Transient: report pending; the webhook will confirm.
-                return response()->json(['status' => 'pending']);
-            }
+        $params = FreemiusGateway::verifyCheckoutRedirect($redirectUrl);
 
-            $entitlement = $result['entitlement'] ?? null;
-
-            if ($entitlement && $entitlement->tenant_id === $tenant->id && $entitlement->isActive()) {
-                return response()->json([
-                    'status' => 'active',
-                    'entitlement' => [
-                        'license_id' => $entitlement->fs_license_id,
-                        'plan_id' => $entitlement->plan_id,
-                        'expiration' => $entitlement->expiration?->toIso8601String(),
-                    ],
-                ]);
-            }
+        if ($params === null) {
+            // No/invalid signature → keep for review; never activate.
+            return response()->json(['status' => 'unverified'], 422);
         }
 
-        // No license id (or it is not ours yet): report "pending". The
-        // verified webhook will land shortly and activate access. We do NOT
-        // activate anything from the browser.
-        return response()->json(['status' => 'pending']);
+        $licenseId = (string) ($params['license_id'] ?? '');
+
+        if ($licenseId === '') {
+            return response()->json(['status' => 'pending']);
+        }
+
+        // 2) The redirect email must match the signed-in user — this binds the
+        //    purchase to THIS account/tenant (a foreign customer's license
+        //    carries their email and is rejected here).
+        $redirectEmail = strtolower(trim((string) ($params['email'] ?? '')));
+        $sessionEmail = strtolower(trim((string) ($request->user()?->email ?? '')));
+
+        if ($redirectEmail === '' || $redirectEmail !== $sessionEmail) {
+            return response()->json(['status' => 'mismatch'], 403);
+        }
+
+        // 3) A server-side intent for THIS tenant must exist (created at
+        //    initiate). Prevents binding a genuinely-verified license that this
+        //    tenant never attempted to purchase.
+        $intentExists = TenantSubscription::withoutTenant()
+            ->where('tenant_id', $tenant->id)
+            ->where('billing_source', 'freemius')
+            ->where('status', 'pending')
+            ->exists();
+
+        if (! $intentExists && ! $this->tenantHasAnyEntitlement($tenant)) {
+            return response()->json(['status' => 'no_intent'], 422);
+        }
+
+        // 4) Verified + matched → bind (idempotent, lock-protected, refused if
+        //    the license is already another tenant's).
+        return $this->bindLicenseToTenant($tenant, $licenseId, $params);
     }
 
     /**
-     * Trusted purchase→tenant binding (overlay/integration callback path).
+     * Bind a VERIFIED license to a tenant. Callers must already have proven
+     * authenticity + ownership (signed redirect + session email + intent).
      *
-     * Called by our own BFF from the authenticated session AFTER the Freemius
-     * overlay checkout reports success. This is the officially-supported
-     * reliable link: the Freemius overlay `success` callback yields
-     * `purchase.license_id` in the logged-in user's session, and the server
-     * ties that license to the CURRENT tenant permanently.
-     *
-     * Safety:
-     *  - Requires an authenticated tenant session (never trusts the license id
-     *    alone from an anonymous caller).
-     *  - Re-fetches the license from the Freemius API server-side.
-     *  - If the license is already bound to a DIFFERENT tenant, the bind is
-     *    REFUSED (a license never moves tenants).
-     *  - Records license_id -> tenant_id permanently (on the entitlement; the
-     *    webhook's resolveTenant() honors it first).
+     * Concurrency-safe: a license already bound to a different tenant is
+     * refused (409); re-binding the SAME license to the SAME tenant is
+     * idempotent.
      */
-    public function bind(Request $request): JsonResponse
+    private function bindLicenseToTenant(Tenant $tenant, string $licenseId, array $redirectParams = []): JsonResponse
     {
-        $tenant = $request->current_tenant;
+        // A license already bound to a DIFFERENT tenant must never be moved.
+        // Check BEFORE any work (and again under lock after) so a caller can
+        // never steal another platform's license.
+        $ownedByAnother = FsEntitlement::where('fs_license_id', $licenseId)
+            ->whereNotNull('tenant_id')
+            ->where('tenant_id', '!=', $tenant->id)
+            ->exists();
 
-        if (! $tenant) {
-            return response()->json(['message' => 'Your session is no longer valid — please sign in again.'], 401);
-        }
-
-        $validated = $request->validate([
-            'license_id' => 'required|string|max:64',
-        ]);
-
-        $licenseId = $validated['license_id'];
-
-        $existing = FsEntitlement::where('fs_license_id', $licenseId)->first();
-
-        // A license already bound to another tenant must never be moved.
-        if ($existing && $existing->tenant_id && $existing->tenant_id !== $tenant->id) {
+        if ($ownedByAnother) {
             return response()->json([
                 'message' => 'This license is already linked to another platform.',
             ], 409);
         }
 
-        // Verify the license really exists in Freemius before binding.
+        // Fetch + verify the license OUTSIDE the lock (network call — must not
+        // hold a DB transaction open across I/O).
         try {
             $result = $this->sync->syncByLicenseId($licenseId);
         } catch (\App\Exceptions\FreemiusApiException) {
-            return response()->json(['message' => 'Could not verify the license right now — try again shortly.'], 502);
+            // Transient — the webhook / reconciliation will confirm later.
+            return response()->json(['status' => 'pending']);
         }
 
         if (($result['status'] ?? null) === 'not_found') {
-            return response()->json(['message' => 'Unknown license.'], 404);
+            return response()->json(['status' => 'unknown'], 404);
         }
 
-        // If sync could not auto-resolve (ambiguous/unknown customer), bind the
-        // (verified) license to the authenticated tenant explicitly.
         $entitlement = $result['entitlement'] ?? null;
 
+        // If auto-resolution was ambiguous/unknown, bind EXPLICITLY now that the
+        // caller has proven ownership (verified redirect + session + intent).
         if (! $entitlement || $entitlement->tenant_id !== $tenant->id) {
             $license = FreemiusGateway::getLicenseOrFail($licenseId);
 
             if (! $license) {
-                return response()->json(['message' => 'Unknown license.'], 404);
+                return response()->json(['status' => 'unknown'], 404);
             }
 
             $subscription = FreemiusGateway::getLatestSubscriptionOrFail($licenseId);
             $entitlement = $this->sync->applyLicense($tenant, $license, $subscription);
         }
 
-        AuditLogger::log($request, 'subscription.freemius_bound', 'entitlement', $entitlement->id, [
+        // Tie the purchase to the plan the buyer actually checked out with.
+        if (! empty($redirectParams['plan_id'])) {
+            $entitlement->update(['metadata' => array_merge($entitlement->metadata ?? [], [
+                'freemius_plan_id_at_purchase' => (string) $redirectParams['plan_id'],
+            ])]);
+        }
+
+        // Concurrency guard: re-read under a row lock and refuse a cross-tenant
+        // bind (a license never moves tenants). Idempotent for the same tenant.
+        $conflict = DB::transaction(function () use ($licenseId, $tenant) {
+            $locked = FsEntitlement::where('fs_license_id', $licenseId)->lockForUpdate()->first();
+
+            if ($locked && $locked->tenant_id && $locked->tenant_id !== $tenant->id) {
+                return true;
+            }
+
+            return false;
+        });
+
+        if ($conflict) {
+            return response()->json([
+                'message' => 'This license is already linked to another platform.',
+            ], 409);
+        }
+
+        AuditLogger::log(request(), 'subscription.freemius_bound', 'entitlement', $entitlement->id, [
             'license_id' => $licenseId,
         ]);
 
         return response()->json([
             'status' => $entitlement->isActive() ? 'active' : 'inactive',
             'license_id' => $entitlement->fs_license_id,
+            'plan_id' => $entitlement->plan_id,
+            'expiration' => $entitlement->expiration?->toIso8601String(),
         ]);
+    }
+
+    private function tenantHasAnyEntitlement(Tenant $tenant): bool
+    {
+        return FsEntitlement::where('tenant_id', $tenant->id)->exists();
     }
 
     /**
