@@ -11,6 +11,7 @@ use App\Jobs\Media\ReconcileMediaAssetsJob;
 use App\Jobs\Media\RecalculateCostsJob;
 use App\Jobs\Media\SyncProviderUsageJob;
 use App\Jobs\PurgeExpiredTenantContentJob;
+use App\Jobs\ReconcileFreemiusWebhooksJob;
 use App\Jobs\RenewalReminderJob;
 use App\Jobs\ReverifyTenantDomainsJob;
 use Illuminate\Foundation\Inspiring;
@@ -33,6 +34,10 @@ Schedule::job(new ExpiryFollowUpJob)->dailyAt('08:30');
 
 // Delete educational content 10 days after expiry without renewal.
 Schedule::job(new PurgeExpiredTenantContentJob)->dailyAt('03:00');
+
+// Retry Freemius webhook events that failed transiently (e.g. API timeout) so
+// a real payment/entitlement change is never lost. Idempotent + lock-guarded.
+Schedule::job(new ReconcileFreemiusWebhooksJob)->everyFiveMinutes()->name('freemius-reconcile')->withoutOverlapping();
 
 Schedule::job(new ExpireTeacherInvitationsJob)->hourly();
 

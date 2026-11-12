@@ -26,33 +26,46 @@ class FsEntitlementSyncService
     /**
      * Sync one license (by id) from the Freemius API into `fs_entitlements`.
      *
-     * @return FsEntitlement|null null when the license cannot be resolved
-     *                            or no local tenant matches its customer.
+     * Returns a structured outcome so the caller can tell apart:
+     *   - 'synced'    : entitlement applied (or removed)
+     *   - 'not_found' : Freemius definitively has no such license (404)
+     *   - 'no_tenant' : license exists but no local tenant matches (ack ok)
+     *
+     * THROWS FreemiusApiException on a transient API failure — the caller must
+     * NOT mark the webhook processed in that case (so it can be retried).
+     *
+     * @return array{status: string, entitlement: FsEntitlement|null}
      */
-    public function syncByLicenseId(string $licenseId): ?FsEntitlement
+    public function syncByLicenseId(string $licenseId): array
     {
-        $license = FreemiusGateway::getLicense($licenseId);
+        // Strict fetch: throws on transient failure, null only on 404.
+        $license = FreemiusGateway::getLicenseOrFail($licenseId);
 
         if (! $license) {
-            return null;
+            return ['status' => 'not_found', 'entitlement' => null];
         }
 
         // The license payload nests the user under `user` (email/id).
         $email = $license['user']['email'] ?? $license['email'] ?? null;
 
         if (! $email) {
-            return null;
+            // License has no resolvable customer — nothing to map. Ack.
+            return ['status' => 'no_tenant', 'entitlement' => null];
         }
 
-        $tenant = $this->resolveTenantByEmail($email);
+        // Resolve the tenant through the trustworthy mapping first, then fall
+        // back to email (see resolveTenant).
+        $tenant = $this->resolveTenant($license, (string) $email);
 
         if (! $tenant) {
-            return null;
+            return ['status' => 'no_tenant', 'entitlement' => null];
         }
 
-        $subscription = FreemiusGateway::getLatestSubscription($licenseId);
+        $subscription = FreemiusGateway::getLatestSubscriptionOrFail($licenseId);
 
-        return $this->applyLicense($tenant, $license, $subscription);
+        $entitlement = $this->applyLicense($tenant, $license, $subscription);
+
+        return ['status' => 'synced', 'entitlement' => $entitlement];
     }
 
     /**
@@ -84,6 +97,14 @@ class FsEntitlementSyncService
             $cycle = $this->stringOrNull($subscription['billing_cycle'] ?? null);
 
             $existing = FsEntitlement::where('fs_license_id', $licenseId)->first();
+
+            // A license already bound to a tenant is NEVER rebound to another
+            // tenant (e.g. because the customer email changed). The caller's
+            // resolveTenant() already honors this, but we enforce it here as a
+            // defensive invariant.
+            if ($existing && $existing->tenant_id && $existing->tenant_id !== $tenant->id) {
+                $tenant = Tenant::findOrFail($existing->tenant_id);
+            }
 
             $attributes = [
                 'tenant_id' => $tenant->id,
@@ -128,16 +149,73 @@ class FsEntitlementSyncService
 
     /**
      * Remove an entitlement (license.deleted). Never touches financial rows.
+     * Also cancels the local mirror so a stale active row can never revive
+     * access, and invalidates the plan cache immediately.
      */
     public function deleteByLicenseId(string $licenseId): void
     {
-        FsEntitlement::where('fs_license_id', $licenseId)->delete();
+        DB::transaction(function () use ($licenseId) {
+            FsEntitlement::where('fs_license_id', $licenseId)->delete();
+
+            // Revoke the local mirror: mark it expired (never active) so the
+            // legacy fallback cannot re-grant access after the license is gone.
+            TenantSubscription::where('fs_license_id', $licenseId)
+                ->update([
+                    'status' => 'expired',
+                    'auto_renew' => false,
+                    'cancelled_at' => now(),
+                ]);
+
+            \App\Plans\PlanEngine::bumpVersion();
+        });
     }
 
-    private function resolveTenantByEmail(string $email): ?Tenant
+    /**
+     * Resolve the tenant a license belongs to, using trustworthy signals in
+     * order of strength:
+     *
+     *  1. An existing entitlement binding (a license already mapped to a
+     *     tenant) — NEVER re-bound to another tenant by email change.
+     *  2. A checkout intent recorded server-side (tenant <-> license) via
+     *     metadata — established only by the server before checkout.
+     *  3. The licence's Freemius customer email, matched against the tenant
+     *     owner's email or the tenant billing email (last resort).
+     *
+     * @param  array<string, mixed>  $license
+     */
+    private function resolveTenant(array $license, string $email): ?Tenant
     {
-        // Tenant owner email is the canonical customer identity on the
-        // platform; fall back to a tenant billing email when present.
+        $licenseId = (string) ($license['id'] ?? '');
+
+        // 1) Existing binding wins — a bound license never moves tenants.
+        if ($licenseId !== '') {
+            $existing = FsEntitlement::where('fs_license_id', $licenseId)->first();
+
+            if ($existing && $existing->tenant_id) {
+                return Tenant::find($existing->tenant_id);
+            }
+        }
+
+        // 2) Server-side checkout intent (non-forgeable: written only by the
+        //    server at checkout initiation, keyed by the customer email the
+        //    checkout was created with).
+        $fsUserId = $license['user_id'] ?? ($license['user']['id'] ?? null);
+        $intent = TenantSubscription::where('billing_source', 'freemius')
+            ->where(function ($q) use ($licenseId, $fsUserId, $email) {
+                if ($licenseId !== '') {
+                    $q->orWhere('fs_license_id', $licenseId);
+                }
+                // metadata.freemius_intent_email is set server-side at checkout.
+                $q->orWhere('metadata->freemius_intent_email', $email);
+            })
+            ->latest('created_at')
+            ->first();
+
+        if ($intent && $intent->tenant_id) {
+            return Tenant::find($intent->tenant_id);
+        }
+
+        // 3) Last resort: match the licence customer email to a tenant owner.
         return Tenant::whereHas('owner', fn ($q) => $q->where('email', $email))->first()
             ?? Tenant::where('email', $email)->first();
     }

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\FreemiusApiException;
 use App\Models\PlatformSetting;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
@@ -140,6 +141,37 @@ class FreemiusGateway
     }
 
     /**
+     * Strict license fetch for webhook/reconciliation sync.
+     *
+     * Throws FreemiusApiException on a transient failure (network/timeout/5xx)
+     * so the caller can RETRY instead of silently treating it as "not found"
+     * (which would lose a real payment event). Returns null only on a
+     * definitive not-found (404).
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function getLicenseOrFail(string $licenseId): ?array
+    {
+        $productId = self::productId();
+
+        try {
+            $res = self::client()->get("/v1/products/{$productId}/licenses/{$licenseId}.json");
+        } catch (\Throwable $e) {
+            throw new FreemiusApiException('Freemius license fetch failed: '.$e->getMessage(), 0, $e);
+        }
+
+        if ($res->status() === 404) {
+            return null; // definitive: license does not exist
+        }
+
+        if (! $res->successful()) {
+            throw new FreemiusApiException('Freemius license fetch returned HTTP '.$res->status());
+        }
+
+        return $res->json() ?? null;
+    }
+
+    /**
      * Retrieve the latest subscription attached to a license.
      *
      * @return array<string, mixed>|null
@@ -155,6 +187,34 @@ class FreemiusGateway
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * Strict subscription fetch for webhook/reconciliation sync. A missing
+     * subscription (404) is a legitimate state (lifetime license) and returns
+     * null; a transient failure throws so the caller retries.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function getLatestSubscriptionOrFail(string $licenseId): ?array
+    {
+        $productId = self::productId();
+
+        try {
+            $res = self::client()->get("/v1/products/{$productId}/licenses/{$licenseId}/subscription.json");
+        } catch (\Throwable $e) {
+            throw new FreemiusApiException('Freemius subscription fetch failed: '.$e->getMessage(), 0, $e);
+        }
+
+        if ($res->status() === 404) {
+            return null;
+        }
+
+        if (! $res->successful()) {
+            throw new FreemiusApiException('Freemius subscription fetch returned HTTP '.$res->status());
+        }
+
+        return $res->json() ?? null;
     }
 
     /**

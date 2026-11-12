@@ -81,7 +81,15 @@ class FreemiusWebhookController extends Controller
 
                 if ($licenseId) {
                     // Re-fetch from the API — never trust the payload body.
-                    $this->sync->syncByLicenseId($licenseId);
+                    // syncByLicenseId THROWS on a transient API failure; only
+                    // a genuine success (or a definitive not-found) lets us
+                    // mark the event processed. This prevents losing a real
+                    // payment event on a timeout.
+                    $result = $this->sync->syncByLicenseId($licenseId);
+
+                    $recorded->markProcessed();
+
+                    return response()->json(['message' => 'OK', 'result' => $result['status']]);
                 }
             } elseif ($eventType === FreemiusGateway::DELETE_EVENT) {
                 $licenseId = (string) ($event['data']['license_id'] ?? '');
@@ -96,7 +104,8 @@ class FreemiusWebhookController extends Controller
             $recorded->markProcessed();
         } catch (\Throwable $e) {
             // Never leak gateway internals. Leave the event un-processed so
-            // Freemius retries — safer than dropping a billing signal.
+            // Freemius retries — safer than dropping a billing signal. The
+            // lock is released so a redelivery / reconciliation can retry.
             $recorded->markFailed($e->getMessage());
 
             Log::warning('freemius.webhook.processing_error', [

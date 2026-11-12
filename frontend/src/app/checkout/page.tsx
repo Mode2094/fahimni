@@ -8,8 +8,6 @@ import { useSettings } from '@/store/settings';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Loader2, ShieldCheck, CheckCircle2, Crown, ArrowLeft, ArrowRight, Lock, Zap, Headset, ExternalLink, CreditCard, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -29,7 +27,6 @@ function CheckoutInner() {
   const [gateway, setGateway] = useState<Gateway>({ enabled: false, configured: false });
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
-  const [coupon, setCoupon] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -74,7 +71,6 @@ function CheckoutInner() {
         body: JSON.stringify({
           plan_id: plan.id,
           billing_cycle: cycle,
-          coupon_code: coupon.trim() || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -197,17 +193,6 @@ function CheckoutInner() {
                     {gateway.sandbox && (
                       <Badge className="mt-3 bg-amber-100 text-amber-700 border-0">{t('وضع الاختبار', 'Test mode')}</Badge>
                     )}
-                  </div>
-
-                  <div className="mb-4">
-                    <Label htmlFor="coupon">{t('كود الخصم (اختياري)', 'Coupon code (optional)')}</Label>
-                    <Input
-                      id="coupon"
-                      value={coupon}
-                      onChange={(e) => setCoupon(e.target.value)}
-                      placeholder="SALE10"
-                      className="mt-1"
-                    />
                   </div>
 
                   <div className="border-t pt-4 mb-4">

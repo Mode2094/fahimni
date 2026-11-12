@@ -28,6 +28,7 @@ use App\Models\TenantSubscription;
  *     trial_ends_at: \DateTimeInterface|null,
  *     subscription_id: string|null,
  *     entitlement_id: string|null,
+ *     cancel_at_period_end: bool,
  * }
  */
 class SubscriptionState
@@ -57,12 +58,17 @@ class SubscriptionState
      */
     public function resolve(string $tenantId): array
     {
-        // 1) Freemius entitlement wins when active.
+        // 1) Freemius entitlement wins when it still grants access.
+        //
+        // IMPORTANT: a canceled entitlement (recurring billing stopped at
+        // period end) STILL grants access until `expiration`. We therefore do
+        // NOT filter on `is_canceled`; we filter on real access (expiration +
+        // non-revoked status), exactly like FsEntitlement::isActive().
         $entitlement = FsEntitlement::where('tenant_id', $tenantId)
-            ->where('is_canceled', false)
             ->where(function ($q) {
                 $q->whereNull('expiration')->orWhere('expiration', '>', now());
             })
+            ->whereNotIn('status', ['revoked', 'deactivated', 'deleted'])
             ->latest('synced_at')
             ->first();
 
@@ -76,12 +82,22 @@ class SubscriptionState
                 'trial_ends_at' => null,
                 'subscription_id' => $entitlement->fs_subscription_id,
                 'entitlement_id' => $entitlement->id,
+                'cancel_at_period_end' => (bool) $entitlement->is_canceled,
             ];
         }
 
         // 2) Legacy local subscription (historic rows, pre-Freemius).
+        //
+        // EXCLUDE Freemius-owned rows: a Freemius subscription's local mirror
+        // must never re-grant access on its own (that would "revive" access
+        // after the license expired or was deleted). Only genuinely legacy
+        // rows (no billing_source / non-freemius) are consulted here.
         $subscription = TenantSubscription::where('tenant_id', $tenantId)
             ->whereIn('status', ['active', 'trialing'])
+            ->where(function ($q) {
+                $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
+            })
+            ->whereNull('fs_license_id')
             ->latest('starts_at')
             ->first();
 
@@ -110,6 +126,7 @@ class SubscriptionState
             'trial_ends_at' => $subscription->trial_ends_at,
             'subscription_id' => $subscription->id,
             'entitlement_id' => null,
+            'cancel_at_period_end' => false,
         ];
     }
 
@@ -132,6 +149,7 @@ class SubscriptionState
             'trial_ends_at' => null,
             'subscription_id' => null,
             'entitlement_id' => null,
+            'cancel_at_period_end' => false,
         ];
     }
 

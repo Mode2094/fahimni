@@ -44,12 +44,20 @@ class FsEntitlement extends Model
     }
 
     /**
-     * An entitlement is active when it is not canceled and not expired.
-     * Mirrors Freemius' own `getActiveEntitlement` semantics.
+     * Whether the license currently grants access.
+     *
+     * IMPORTANT semantics (per Freemius): `is_canceled` means the recurring
+     * billing was stopped (the subscription is canceled at period end). It
+     * does NOT revoke the current paid period — access must continue until
+     * `expiration`. Only an expired or revoked license stops access.
+     *
+     * A `revoked`/`deactivated` status (license pulled by Freemius) does stop
+     * access regardless of expiration.
      */
     public function isActive(): bool
     {
-        if ($this->is_canceled) {
+        // A license explicitly revoked by Freemius stops access immediately.
+        if (in_array((string) $this->status, ['revoked', 'deactivated', 'deleted'], true)) {
             return false;
         }
 
@@ -58,6 +66,16 @@ class FsEntitlement extends Model
             return true;
         }
 
+        // Cancellation does NOT end access — only the expiry date does.
         return $this->expiration->isFuture();
+    }
+
+    /**
+     * True when the recurring billing has been stopped (cancelled at period
+     * end) but the paid period may still be running.
+     */
+    public function isCancelledAtPeriodEnd(): bool
+    {
+        return $this->is_canceled && $this->isActive();
     }
 }

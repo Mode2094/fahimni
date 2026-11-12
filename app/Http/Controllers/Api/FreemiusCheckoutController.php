@@ -134,7 +134,7 @@ class FreemiusCheckoutController extends Controller
         // Fresh hosted checkout. The URL already carries product + plan; we
         // only add the prefilled/read-only email. No price is ever passed
         // (Freemius uses the plan's configured price).
-        $this->recordIntent($tenant, $plan, $cycle);
+        $this->recordIntent($tenant, $plan, $cycle, (string) $email);
 
         $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email);
 
@@ -167,9 +167,16 @@ class FreemiusCheckoutController extends Controller
         $licenseId = (string) $request->query('license_id', '');
 
         if ($licenseId !== '') {
-            $entitlement = $this->sync->syncByLicenseId($licenseId);
+            try {
+                $result = $this->sync->syncByLicenseId($licenseId);
+            } catch (\App\Exceptions\FreemiusApiException) {
+                // Transient: report pending; the webhook will confirm.
+                return response()->json(['status' => 'pending']);
+            }
 
-            if ($entitlement && $entitlement->tenant_id === $tenant->id) {
+            $entitlement = $result['entitlement'] ?? null;
+
+            if ($entitlement && $entitlement->tenant_id === $tenant->id && $entitlement->isActive()) {
                 return response()->json([
                     'status' => 'active',
                     'entitlement' => [
@@ -278,12 +285,15 @@ class FreemiusCheckoutController extends Controller
     }
 
     /**
-     * Persist a pending intent row for archival/observability. Never grants
-     * access and never conflicts with the active-subscription unique index.
+     * Persist a pending intent row for archival/observability AND as a
+     * server-side, non-forgeable link between this tenant and the customer
+     * email the checkout was created with. This lets the webhook bind the
+     * resulting license to the correct tenant even if the email later changes
+     * to match another tenant. Never grants access on its own.
      */
-    private function recordIntent(Tenant $tenant, SubscriptionPlan $plan, string $cycle): void
+    private function recordIntent(Tenant $tenant, SubscriptionPlan $plan, string $cycle, string $email): void
     {
-        DB::transaction(function () use ($tenant, $plan, $cycle) {
+        DB::transaction(function () use ($tenant, $plan, $cycle, $email) {
             TenantSubscription::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $tenant->id,
@@ -293,6 +303,9 @@ class FreemiusCheckoutController extends Controller
                 'billing_cycle' => $cycle,
                 'starts_at' => now(),
                 'auto_renew' => true,
+                'metadata' => [
+                    'freemius_intent_email' => strtolower(trim($email)),
+                ],
             ]);
         });
     }
