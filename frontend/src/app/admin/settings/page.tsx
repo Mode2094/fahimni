@@ -45,7 +45,7 @@ export default function AdminSettingsPage() {
     { id: 'student_app', label: t('تطبيق الطلاب', 'Student App'), icon: Smartphone },
   ];
 
-  const TestButton = ({ gateway }: { gateway: 'paytabs' | 'paypal' | 'paddle' | 'lemonsqueezy' }) => {
+  const TestButton = ({ gateway }: { gateway: 'paytabs' | 'paypal' }) => {
     const [testing, setTesting] = useState(false);
     const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
     return (
@@ -53,7 +53,7 @@ export default function AdminSettingsPage() {
         <Button variant="outline" size="sm" className="gap-1.5 rounded-full" disabled={testing} onClick={async () => {
           setTesting(true); setResult(null);
           try {
-            const res = await fetch(`${API}/payment-gateway-test`, {
+            const res = await fetch(`${API}/admin/payment-gateway-test`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
               body: JSON.stringify({ gateway }),
@@ -107,16 +107,14 @@ export default function AdminSettingsPage() {
         ...(form.paypal_secret?.trim() ? { paypal_secret: form.paypal_secret } : {}),
         paypal_enabled: form.paypal_enabled,
         paypal_test_mode: form.paypal_test_mode,
-        manual_payment_enabled: form.manual_payment_enabled,
-        manual_payment_label: form.manual_payment_label,
-        manual_payment_account: form.manual_payment_account,
-        manual_payment_instructions: form.manual_payment_instructions,
-        paddle_enabled: form.paddle_enabled,
-        paddle_environment: form.paddle_environment || 'sandbox',
-        // Secrets are never sent empty: the server keeps the stored value.
-        ...(form.paddle_client_token?.trim() ? { paddle_client_token: form.paddle_client_token } : {}),
-        ...(form.paddle_api_key?.trim() ? { paddle_api_key: form.paddle_api_key } : {}),
-        ...(form.paddle_webhook_secret?.trim() ? { paddle_webhook_secret: form.paddle_webhook_secret } : {}),
+        // Freemius — the only platform-subscription gateway. Secrets (API
+        // token / secret key / public key) live ONLY in the environment and
+        // are never sent from here.
+        freemius_enabled: form.freemius_enabled,
+        freemius_product_id: form.freemius_product_id,
+        freemius_api_url: form.freemius_api_url,
+        freemius_checkout_url: form.freemius_checkout_url,
+        freemius_sandbox: form.freemius_sandbox,
         student_mobile_app: form.student_mobile_app,
         student_app_hidden: form.student_app_hidden,
         student_app_android_url: form.student_app_android_url,
@@ -239,8 +237,45 @@ export default function AdminSettingsPage() {
               <Card><CardContent className="p-6 space-y-5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="font-semibold text-lg">PayTabs</h2>
-                    <p className="text-sm text-gray-400">{t('قبول مدى وفيزا وماستركارد عبر PayTabs', 'Accept Mada, Visa & Mastercard via PayTabs')}</p>
+                    <h2 className="font-semibold text-lg">Freemius</h2>
+                    <p className="text-sm text-gray-400">{t('بوابة اشتراكات المنصة الوحيدة (تتولى الضرائب والتحصيل والتجديد)', 'The only platform-subscription gateway (MoR: tax, billing & renewals)')}</p>
+                  </div>
+                  <Switch checked={!!form.freemius_enabled} onCheckedChange={(v) => setForm({ ...form, freemius_enabled: v })} label="Freemius" />
+                </div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>Product ID</Label><Input value={form.freemius_product_id || ''} onChange={(e) => setForm({ ...form, freemius_product_id: e.target.value })} className="h-11" dir="ltr" placeholder="12345" /></div>
+                  <div className="space-y-2"><Label>{t('بيئة الاختبار', 'Sandbox')}</Label>
+                    <div className="flex items-center h-11"><Switch checked={!!form.freemius_sandbox} onCheckedChange={(v) => setForm({ ...form, freemius_sandbox: v })} label={t('Sandbox', 'Sandbox')} /></div>
+                  </div>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>API URL</Label><Input value={form.freemius_api_url || 'https://api.freemius.com'} onChange={(e) => setForm({ ...form, freemius_api_url: e.target.value })} className="h-11" dir="ltr" /></div>
+                  <div className="space-y-2"><Label>{t('رابط الدفع (Checkout URL)', 'Checkout URL')}</Label><Input value={form.freemius_checkout_url || 'https://checkout.freemius.com'} onChange={(e) => setForm({ ...form, freemius_checkout_url: e.target.value })} className="h-11" dir="ltr" /></div>
+                </div>
+                <div className="space-y-1">
+                  <Label>{t('المفاتيح السرية (من البيئة فقط)', 'Secrets (from environment only)')}</Label>
+                  <div className="grid sm:grid-cols-3 gap-2 text-xs font-mono">
+                    <div className="p-3 rounded-xl border bg-gray-50">{form.freemius_api_token_set ? 'FREEMIUS_API_TOKEN ✓' : 'FREEMIUS_API_TOKEN ✗'}</div>
+                    <div className="p-3 rounded-xl border bg-gray-50">{form.freemius_secret_key_set ? 'FREEMIUS_PRODUCT_SECRET_KEY ✓' : 'FREEMIUS_PRODUCT_SECRET_KEY ✗'}</div>
+                    <div className="p-3 rounded-xl border bg-gray-50">{form.freemius_public_key_set ? 'FREEMIUS_PUBLIC_KEY ✓' : 'FREEMIUS_PUBLIC_KEY ✗'}</div>
+                  </div>
+                  <p className="text-xs text-gray-400">{t('تُضاف في ملف .env على الخادم ولا تُخزَّن في قاعدة البيانات. راجع FREEMIUS_SETUP.md.', 'Set in the server .env — never stored in the database. See FREEMIUS_SETUP.md.')}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button onClick={() => saveForm(t('تم حفظ إعدادات Freemius', 'Freemius settings saved'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ وتفعيل', 'Save & activate')}</Button>
+                  {form.freemius_enabled && form.freemius_product_id && form.freemius_api_token_set && form.freemius_secret_key_set && <Badge className="bg-green-100 text-green-700 border-0">{t('جاهز للربط', 'Ready to connect')}</Badge>}
+                </div>
+              </CardContent></Card>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 text-sm text-blue-900/80">
+                {t('ملاحظة: مدفوعات الطلاب وحجوزات المعلمين (PayTabs / PayPal أدناه) منفصلة تمامًا عن اشتراكات المنصة ولا تمر عبر Freemius.', 'Note: student payments and teacher bookings (PayTabs / PayPal below) are completely separate from platform subscriptions and never routed through Freemius.')}
+              </div>
+
+              <Card><CardContent className="p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-semibold text-lg">PayTabs — {t('الحجوزات', 'Bookings')}</h2>
+                    <p className="text-sm text-gray-400">{t('قبول مدى وفيزا وماستركارد لدفع حجوزات الطلاب', 'Accept Mada, Visa & Mastercard for student booking payments')}</p>
                   </div>
                   <Switch checked={!!form.paytabs_enabled} onCheckedChange={(v) => setForm({ ...form, paytabs_enabled: v })} label="PayTabs" />
                 </div>
@@ -262,8 +297,8 @@ export default function AdminSettingsPage() {
               <Card><CardContent className="p-6 space-y-5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="font-semibold text-lg">PayPal</h2>
-                    <p className="text-sm text-gray-400">{t('استقبل فيزا وماستركارد من خلال حساب PayPal الخاص بك', 'Receive Visa & Mastercard through your own PayPal account')}</p>
+                    <h2 className="font-semibold text-lg">PayPal — {t('الحجوزات', 'Bookings')}</h2>
+                    <p className="text-sm text-gray-400">{t('استقبل فيزا وماستركارد لدفع حجوزات الطلاب عبر PayPal', 'Accept Visa & Mastercard for student booking payments via PayPal')}</p>
                   </div>
                   <Switch checked={!!form.paypal_enabled} onCheckedChange={(v) => setForm({ ...form, paypal_enabled: v })} label="PayPal" />
                 </div>
@@ -278,143 +313,8 @@ export default function AdminSettingsPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <Button onClick={() => saveForm(t('تم حفظ إعدادات PayPal', 'PayPal settings saved'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ وتفعيل', 'Save & activate')}</Button>
                   <TestButton gateway="paypal" />
-                  {form.paypal_enabled && (form.paypal_client_id && form.paypal_secret) && <Badge className="bg-green-100 text-green-700 border-0">{t('جاهز للربط — يستقبل فيزا وماستركارد', 'Ready — accepts Visa & Mastercard')}</Badge>}
+                  {form.paypal_enabled && (form.paypal_client_id && form.paypal_secret) && <Badge className="bg-green-100 text-green-700 border-0">{t('جاهز للربط', 'Ready to connect')}</Badge>}
                 </div>
-
-              </CardContent></Card>
-
-              <Card><CardContent className="p-6 space-y-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-semibold text-lg">Paddle</h2>
-                    <p className="text-sm text-gray-400">{t('بطاقة / محفظة / طرق دفع محلية عبر Paddle (تتولى الضرائب والتحصيل)', 'Card / wallet / local methods via Paddle (MoR handles tax & payouts)')}</p>
-                  </div>
-                  <Switch checked={!!form.paddle_enabled} onCheckedChange={(v) => setForm({ ...form, paddle_enabled: v })} label="Paddle" />
-                </div>
-                <div className="flex items-center justify-between p-3 rounded-xl border">
-                  <div><p className="text-sm font-medium">{t('البيئة', 'Environment')}</p><p className="text-xs text-gray-400">{t('Sandbox للاختبار قبل الربط الفعلي', 'Sandbox for testing before going live')}</p></div>
-                  <Select value={form.paddle_environment || 'sandbox'} onChange={(e) => setForm({ ...form, paddle_environment: e.target.value })} className="h-11">
-                    <option value="sandbox">{t('Sandbox (اختبار)', 'Sandbox (test)')}</option>
-                    <option value="live">{t('Live (إنتاج)', 'Live (production)')}</option>
-                  </Select>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2"><Label>{t('Client-side token', 'Client-side token')}</Label><Input type="password" value={form.paddle_client_token || ''} onChange={(e) => setForm({ ...form, paddle_client_token: e.target.value })} className="h-11" dir="ltr" placeholder="test_..." /></div>
-                  <div className="space-y-2"><Label>{t('API Key (خلفي فقط)', 'API Key (backend only)')}</Label><Input type="password" value={form.paddle_api_key || ''} onChange={(e) => setForm({ ...form, paddle_api_key: e.target.value })} className="h-11" dir="ltr" placeholder="pdl_sdbx_apikey_..." /></div>
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('Webhook Secret (مفتاح توقيع الإشعارات)', 'Webhook Secret (notification signing key)')}</Label>
-                  <Input type="password" value={form.paddle_webhook_secret || ''} onChange={(e) => setForm({ ...form, paddle_webhook_secret: e.target.value })} className="h-11" dir="ltr" placeholder="pdl_ntfset_..." />
-                  <p className="text-xs text-gray-400">{t('انسخه من Paddle → Developer tools → Notifications → Edit destination', 'Copy it from Paddle → Developer tools → Notifications → Edit destination')}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button onClick={() => saveForm(t('تم حفظ إعدادات Paddle', 'Paddle settings saved'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ وتفعيل', 'Save & activate')}</Button>
-                  <TestButton gateway="paddle" />
-                  {form.paddle_enabled && (form.paddle_client_token && form.paddle_api_key && form.paddle_webhook_secret) && <Badge className="bg-green-100 text-green-700 border-0">{t('جاهز للربط', 'Ready to connect')}</Badge>}
-                </div>
-              </CardContent></Card>
-
-              <Card><CardContent className="p-6 space-y-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-semibold text-lg">Lemon Squeezy</h2>
-                    <p className="text-sm text-gray-400">{t('بطاقة / Apple Pay / Google Pay عبر Lemon Squeezy (تتولى الضرائب والتحصيل)', 'Card / Apple Pay / Google Pay via Lemon Squeezy (MoR handles tax & payouts)')}</p>
-                  </div>
-                  <Switch checked={!!form.lemon_enabled} onCheckedChange={(v) => setForm({ ...form, lemon_enabled: v })} label="Lemon Squeezy" />
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2"><Label>{t('Store ID', 'Store ID')}</Label><Input value={form.lemon_store_id || ''} onChange={(e) => setForm({ ...form, lemon_store_id: e.target.value })} className="h-11" dir="ltr" placeholder="123456" /></div>
-                  <div className="space-y-2"><Label>{t('API URL', 'API URL')}</Label><Input value={form.lemon_api_url || 'https://api.lemonsqueezy.com'} onChange={(e) => setForm({ ...form, lemon_api_url: e.target.value })} className="h-11" dir="ltr" placeholder="https://api.lemonsqueezy.com" /></div>
-                </div>
-                <div className="space-y-1">
-                  <Label>{t('API Key (من البيئة — LEMON_SQUEEZY_API_KEY)', 'API Key (from env — LEMON_SQUEEZY_API_KEY)')}</Label>
-                  <div className="p-3 rounded-xl border bg-gray-50 text-sm font-mono">
-                    {form.lemon_api_key_set ? '••••••••••••••••••••••••' : t('غير مضبوط — أضف LEMON_SQUEEZY_API_KEY إلى .env', 'Not set — add LEMON_SQUEEZY_API_KEY to .env')}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>{t('Webhook Signing Secret (من البيئة — LEMON_SQUEEZY_SIGNING_SECRET)', 'Webhook Signing Secret (from env — LEMON_SQUEEZY_SIGNING_SECRET)')}</Label>
-                  <div className="p-3 rounded-xl border bg-gray-50 text-sm font-mono">
-                    {form.lemon_signing_secret_set ? '••••••••••••••••••••••••' : t('غير مضبوط — أضف LEMON_SQUEEZY_SIGNING_SECRET إلى .env', 'Not set — add LEMON_SQUEEZY_SIGNING_SECRET to .env')}
-                  </div>
-                  <p className="text-xs text-gray-400">{t('الأسرار تُدار من البيئة فقط ولا تُخزن في قاعدة البيانات', 'Secrets are managed from the environment only — never stored in the database')}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button onClick={() => saveForm(t('تم حفظ إعدادات Lemon Squeezy', 'Lemon Squeezy settings saved'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ وتفعيل', 'Save & activate')}</Button>
-                  <TestButton gateway="lemonsqueezy" />
-                  {form.lemon_enabled && form.lemon_api_key_set && form.lemon_signing_secret_set && form.lemon_store_id && <Badge className="bg-green-100 text-green-700 border-0">{t('جاهز للربط', 'Ready to connect')}</Badge>}
-                </div>
-              </CardContent></Card>
-
-              <Card><CardContent className="p-6 space-y-5">
-                {/* ─── Manual payment (Click / wallet) ─── */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-semibold text-lg">{t('الدفع اليدوي (كليك / محفظة)', 'Manual payment (Click / wallet)')}</h2>
-                    <p className="text-sm text-gray-400">{t('المعلم يحوّل يدويًا ويرفع إثبات الدفع وتقبله من لوحة المدفوعات', 'Teacher transfers manually, uploads proof — you approve it from the payments panel')}</p>
-                  </div>
-                  <Switch checked={!!form.manual_payment_enabled} onCheckedChange={(v) => setForm({ ...form, manual_payment_enabled: v })} label={t('الدفع اليدوي', 'Manual payment')} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('اسم طريقة الدفع (يظهر للمعلم)', 'Payment method name (shown to teacher)')}</Label>
-                  <Input value={form.manual_payment_label || ''} onChange={(e) => setForm({ ...form, manual_payment_label: e.target.value })} className="h-11" placeholder={t('مثال: كليك / محفظة', 'e.g. Click / wallet')} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('بيانات الحساب / المحفظة (رقم المحفظة، الاسم...)', 'Account / wallet details (wallet no., name...)')}</Label>
-                  <Input value={form.manual_payment_account || ''} onChange={(e) => setForm({ ...form, manual_payment_account: e.target.value })} className="h-11" dir="ltr" placeholder={t('مثال: Click wallet — 079 1234 567 · الاسم', 'e.g. Click wallet — 079 1234 567 · name')} />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('إرشادات التحويل (تظهر للمعلم في صفحة الدفع)', 'Transfer instructions (shown on the checkout page)')}</Label>
-                  <textarea
-                    value={form.manual_payment_instructions || ''}
-                    onChange={(e) => setForm({ ...form, manual_payment_instructions: e.target.value })}
-                    rows={4}
-                    className="w-full rounded-xl border border-input bg-background px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-teal-600/30"
-                    placeholder={t('1. حوّل المبلغ إلى الحساب أعلاه\n2. احتفظ برقم العملية\n3. املأ النموذج وارفع صورة الوصل', '1. Transfer the amount to the account above\n2. Keep the transaction number\n3. Fill the form and upload the receipt image')}
-                  />
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button onClick={() => saveForm(t('تم حفظ إعدادات الدفع اليدوي', 'Manual payment settings saved'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ وتفعيل', 'Save & activate')}</Button>
-                  {form.manual_payment_enabled && form.manual_payment_account && <Badge className="bg-green-100 text-green-700 border-0">{t('مفعّل — المعلم يرى خيار الدفع اليدوي', 'Enabled — teachers see the manual option')}</Badge>}
-                </div>
-
-                {/* ─── PayPal setup guide ─────────────────── */}
-                <details className="rounded-xl border border-teal-100 bg-teal-50/50 p-4 group">
-                  <summary className="flex items-center gap-2 cursor-pointer text-sm font-bold text-teal-700 list-none">
-                    <BookOpen className="h-4 w-4" />{t('دليل إعداد PayPal الكامل (خطوة بخطوة)', 'Full PayPal setup guide (step by step)')}
-                    <ChevronDown className="h-4 w-4 ms-auto group-open:rotate-180 transition-transform" />
-                  </summary>
-                  <div className="mt-4 space-y-3 text-sm">
-                    <p className="text-teal-900/80 text-xs leading-relaxed">
-                      {t('بعد الربط، يستطيع طلابك الدفع بـ: حساب PayPal، أو بطاقة فيزا / ماستركارد مباشرة دون حساب PayPal.', 'Once connected, your students can pay with: a PayPal account, or a Visa / Mastercard directly without a PayPal account.')}
-                    </p>
-                    {[
-                      { step: 1, title: t('أنشئ حساب PayPal Business', 'Create a PayPal Business account'), body: t('سجّل حساب أعمال (Business) — أو حدّث حسابك الشخصي إلى Business من داخل PayPal.', 'Sign up for a Business account — or upgrade your personal account inside PayPal.'), link: 'https://www.paypal.com/business', linkLabel: 'paypal.com/business' },
-                      { step: 2, title: t('افتح PayPal Developer واربط حسابك', 'Open PayPal Developer and link your account'), body: t('ادخل ببيانات حسابك نفسه ثم اربط حسابك التجاري.', 'Log in with the same account and link your business account.'), link: 'https://developer.paypal.com', linkLabel: 'developer.paypal.com' },
-                      { step: 3, title: t('أنشئ تطبيقًا واحصل على بيانات الاعتماد', 'Create an app and get your credentials'), body: t('من Apps & Credentials → Create App. ستظهر Client ID و Secret — انسخهما.', 'From Apps & Credentials → Create App. Client ID and Secret will appear — copy them.'), link: 'https://developer.paypal.com/dashboard/applications', linkLabel: 'Apps & Credentials' },
-                      { step: 4, title: t('الصق Client ID و Secret في الحقلين أعلاه', 'Paste Client ID and Secret into the fields above'), body: t('ثم اضغط "حفظ وتفعيل" ثم "اختبار الاتصال" للتحقق.', 'Then click Save & activate, then Test connection to verify.'), link: null },
-                      { step: 5, title: t('جرّب بوضع الاختبار (Sandbox)', 'Test with Sandbox mode'), body: t('استخدم حسابات Sandbox التجريبية وبطاقات الاختبار من PayPal Developer قبل تفعيل الدفع الحقيقي.', 'Use PayPal Developer sandbox accounts and test cards before going live.'), link: 'https://developer.paypal.com/dashboard/accounts', linkLabel: 'Sandbox accounts' },
-                      { step: 6, title: t('فعّل الدفع الفعلي', 'Go live'), body: t('عطّل "وضع الاختبار" في الحقل أعلاه — أي دفع سابقًا في وضع الاختبار لن يُحصَّل فعليًا!', 'Turn OFF "Test mode" above — payments made in test mode are NOT actually charged!'), link: null },
-                    ].map((s) => (
-                      <div key={s.step} className="flex gap-3">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-600 text-white text-xs font-bold shrink-0">{s.step}</span>
-                        <div className="flex-1">
-                          <p className="font-semibold text-gray-800">{s.title}</p>
-                          <p className="text-gray-500 text-xs mt-0.5">{s.body}</p>
-                          {s.link && (
-                            <a href={s.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-1 text-teal-700 text-xs font-medium hover:underline">
-                              {s.linkLabel} <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs leading-relaxed">
-                      <b>{t('مهم لاستقبال الفيزا دون حساب PayPal:', 'Important for accepting cards without a PayPal account:')}</b>{' '}
-                      {t('من حسابك في PayPal: Account Settings → Payment preferences → تأكد أن "Allow customers to pay with their credit card without a PayPal account" مفعّلة.', 'In your PayPal account: Settings → Payments → ensure "Allow customers to pay with their credit card without a PayPal account" is enabled.')}
-                    </div>
-                  </div>
-                </details>
               </CardContent></Card>
             </div>
           )}

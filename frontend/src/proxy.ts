@@ -44,9 +44,9 @@ function generateNonce(): string {
 
 /**
  * Strict CSP with a per-request nonce. `'strict-dynamic'` lets the nonced
- * Next.js runtime load the dynamically-injected SDKs (Paddle, PayPal, KaTeX)
- * while blocking injected inline scripts. `'unsafe-eval'` is dev-only
- * (Turbopack/React Refresh); the production build does not need it.
+ * Next.js runtime load the dynamically-injected SDKs (Freemius, PayPal for
+ * bookings, KaTeX) while blocking injected inline scripts. `'unsafe-eval'` is
+ * dev-only (Turbopack/React Refresh); the production build does not need it.
  */
 function buildCsp(nonce: string): string {
   const isDev = process.env.NODE_ENV !== 'production';
@@ -56,23 +56,23 @@ function buildCsp(nonce: string): string {
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
-    "form-action 'self' https://*.paddle.com https://checkout.paddle.com https://www.paypal.com https://*.paypal.com",
-    `connect-src 'self' https://cdn.jsdelivr.net wss: https://*.b-cdn.net https://video.bunnycdn.com https://*.bunnycdn.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com https://*.paypalobjects.com https://*.paddle.com https://checkout.paddle.com`,
+    "form-action 'self' https://checkout.freemius.com https://*.freemius.com https://www.paypal.com https://*.paypal.com",
+    `connect-src 'self' https://cdn.jsdelivr.net wss: https://*.b-cdn.net https://video.bunnycdn.com https://*.bunnycdn.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com https://*.paypalobjects.com https://api.freemius.com https://*.freemius.com https://checkout.freemius.com`,
     [
       "script-src 'self' 'nonce-" + nonce + "' 'strict-dynamic'",
       isDev ? "'unsafe-eval'" : '',
       'https://cdn.jsdelivr.net',
       'https://www.paypal.com https://www.paypalobjects.com https://www.sandbox.paypal.com',
       'https://*.paypal.com https://*.paypalobjects.com',
-      'https://cdn.paddle.com https://*.paddle.com',
+      'https://checkout.freemius.com https://*.freemius.com',
     ]
       .filter(Boolean)
       .join(' '),
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com https://*.paddle.com",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com https://*.freemius.com",
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https: https://*.b-cdn.net https://video.bunnycdn.com",
     "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
-    "frame-src 'self' https://www.youtube.com https://player.vimeo.com https://www.google.com https://meet.jit.si https://iframe.videodelivery.net https://www.paypal.com https://*.paypal.com https://*.paddle.com https://checkout.paddle.com",
+    "frame-src 'self' https://www.youtube.com https://player.vimeo.com https://www.google.com https://meet.jit.si https://iframe.videodelivery.net https://www.paypal.com https://*.paypal.com https://checkout.freemius.com https://*.freemius.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
   ].join('; ');

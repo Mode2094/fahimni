@@ -3,15 +3,18 @@
 namespace Tests\Feature;
 
 use App\Models\PlatformSetting;
-use App\Services\PaddleGateway;
 use App\Services\PayPalGateway;
 use App\Services\PayTabsGateway;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * Payment gateway secrets must be encrypted at rest (Crypt) with a version
+ * Booking-gateway secrets must be encrypted at rest (Crypt) with a version
  * marker, readable during the migration transition, and never exposed.
+ *
+ * Freemius secrets (api token / signing secret) live ONLY in the environment
+ * and are never stored in the database — only booking-gateway secrets
+ * (paytabs / paypal) are persisted here.
  */
 class SettingsSecretEncryptionTest extends TestCase
 {
@@ -39,55 +42,58 @@ class SettingsSecretEncryptionTest extends TestCase
 
     public function test_migration_command_encrypts_once_and_is_idempotent(): void
     {
-        PlatformSetting::set('paddle_api_key', 'plain-api-key');
-        PlatformSetting::set('paddle_webhook_secret', 'plain-webhook-secret');
+        PlatformSetting::set('paypal_secret', 'plain-api-key');
         PlatformSetting::set('paytabs_server_key', ''); // empty stays empty
 
         $this->artisan('settings:encrypt-secrets')->assertExitCode(0);
 
-        $first = PlatformSetting::get('paddle_api_key');
+        $first = PlatformSetting::get('paypal_secret');
         $this->assertTrue(PlatformSetting::isEncryptedSecret($first));
-        $this->assertSame('plain-api-key', PlatformSetting::getSecret('paddle_api_key'));
-        $this->assertSame('plain-webhook-secret', PlatformSetting::getSecret('paddle_webhook_secret'));
+        $this->assertSame('plain-api-key', PlatformSetting::getSecret('paypal_secret'));
 
         // Second run must not re-encrypt (ciphertext identical).
         $this->artisan('settings:encrypt-secrets')->assertExitCode(0);
 
-        $this->assertSame($first, PlatformSetting::get('paddle_api_key'));
-        $this->assertSame('plain-api-key', PlatformSetting::getSecret('paddle_api_key'));
+        $this->assertSame($first, PlatformSetting::get('paypal_secret'));
+        $this->assertSame('plain-api-key', PlatformSetting::getSecret('paypal_secret'));
     }
 
     public function test_gateways_read_decrypted_secrets(): void
     {
         PlatformSetting::setSecret('paypal_secret', 'pp-secret');
         PlatformSetting::setSecret('paytabs_server_key', 'pt-secret');
-        PlatformSetting::setSecret('paddle_client_token', 'pd-client');
-        PlatformSetting::setSecret('paddle_api_key', 'pd-api');
-        PlatformSetting::setSecret('paddle_webhook_secret', 'pd-wh');
 
         $this->assertSame('pp-secret', PayPalGateway::config()['secret']);
         $this->assertSame('pt-secret', PayTabsGateway::config()['server_key']);
-
-        $paddle = PaddleGateway::config();
-        $this->assertSame('pd-client', $paddle['client_token']);
-        $this->assertSame('pd-api', $paddle['api_key']);
-        $this->assertSame('pd-wh', $paddle['webhook_secret']);
-        $this->assertSame('pd-client', PaddleGateway::clientToken());
     }
 
     public function test_settings_response_never_returns_secret_values(): void
     {
         PlatformSetting::setSecret('paypal_secret', 'must-not-leak');
-        PlatformSetting::setSecret('paddle_api_key', 'must-not-leak-either');
+        PlatformSetting::setSecret('paytabs_server_key', 'must-not-leak-either');
 
         $settings = app(\App\Http\Controllers\Api\PlatformSettingController::class)
             ->show(request())
             ->getData(true)['settings'];
 
         $this->assertSame('', $settings['paypal_secret']);
-        $this->assertSame('', $settings['paddle_api_key']);
+        $this->assertSame('', $settings['paytabs_server_key']);
         $this->assertTrue($settings['paypal_secret_set']);
-        $this->assertTrue($settings['paddle_api_key_set']);
+        $this->assertTrue($settings['paytabs_server_key_set']);
         $this->assertStringNotContainsString('must-not-leak', json_encode($settings));
+    }
+
+    public function test_freemius_secrets_are_never_returned_from_settings(): void
+    {
+        // Freemius secrets live in the environment; the settings payload must
+        // only ever expose presence booleans, never the values.
+        $settings = app(\App\Http\Controllers\Api\PlatformSettingController::class)
+            ->show(request())
+            ->getData(true)['settings'];
+
+        $this->assertArrayHasKey('freemius_api_token_set', $settings);
+        $this->assertArrayHasKey('freemius_secret_key_set', $settings);
+        $this->assertArrayNotHasKey('freemius_api_token', $settings);
+        $this->assertArrayNotHasKey('freemius_secret_key', $settings);
     }
 }

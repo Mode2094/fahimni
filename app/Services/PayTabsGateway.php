@@ -2,11 +2,15 @@
 
 namespace App\Services;
 
-use App\Contracts\AutoChargeGateway;
 use App\Models\PlatformSetting;
 use Illuminate\Support\Facades\Http;
 
-class PayTabsGateway implements AutoChargeGateway
+/**
+ * PayTabs gateway — used ONLY for paid teacher bookings / student purchases
+ * (one-off charges). It is never used for platform subscriptions: those are
+ * collected exclusively by Freemius.
+ */
+class PayTabsGateway
 {
     private const LIVE_URL = 'https://secure.paytabs.sa/payment/request';
 
@@ -163,34 +167,5 @@ class PayTabsGateway implements AutoChargeGateway
             ]);
 
         return $response->json() ?? [];
-    }
-
-    public static function chargeSaved(string $token, array $params): array
-    {
-        return self::chargeToken($token, $params);
-    }
-
-    /**
-     * @param  array<string, mixed>  $result  callback / query payload
-     * @return array{token: string, brand: string|null, last4: string|null}|null
-     */
-    public static function extractSavedMethod(array $result): ?array
-    {
-        $token = $result['token'] ?? null;
-
-        if (! is_string($token) || $token === '') {
-            return null;
-        }
-
-        $info = is_array($result['payment_info'] ?? null) ? $result['payment_info'] : [];
-        $brand = $info['card_scheme'] ?? ($info['payment_method'] ?? null);
-        $pan = (string) ($info['pan'] ?? '');
-        $last4 = strlen($pan) >= 4 ? substr($pan, -4) : null;
-
-        return [
-            'token' => $token,
-            'brand' => is_string($brand) && $brand !== '' ? $brand : null,
-            'last4' => ctype_digit((string) $last4) ? $last4 : null,
-        ];
     }
 }

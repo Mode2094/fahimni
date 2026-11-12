@@ -33,6 +33,8 @@ class WebhookEvent extends Model
 
     public const PROVIDER_LEMON_SQUEEZY = 'lemonsqueezy';
 
+    public const PROVIDER_FREEMIUS = 'freemius';
+
     public const STATUS_PENDING = 'pending';
 
     public const STATUS_PROCESSED = 'processed';

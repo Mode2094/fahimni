@@ -71,7 +71,7 @@ export default function AdminPlansPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [profitWarning, setProfitWarning] = useState<any>(null);
   const [showAllFeatures, setShowAllFeatures] = useState(false);
-  const [form, setForm] = useState<any>({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'JOD', trial_days: '7', is_active: true, is_popular: false });
+  const [form, setForm] = useState<any>({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false });
   const [feats, setFeats] = useState<Record<string, { enabled: boolean; value: string }>>({});
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -98,7 +98,7 @@ export default function AdminPlansPage() {
   useEffect(() => { if (check()) { loadSettings(); loadCatalog(); load(); } }, [check()]);
 
   const resetForm = () => {
-    setForm({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'JOD', trial_days: '7', is_active: true, is_popular: false, paddle_price_id_monthly: '', paddle_price_id_yearly: '', lemon_variant_id_monthly: '', lemon_variant_id_yearly: '' });
+    setForm({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false, freemius_monthly_plan_id: '', freemius_yearly_plan_id: '', freemius_monthly_pricing_id: '', freemius_yearly_pricing_id: '' });
     setFeats({});
   };
 
@@ -110,14 +110,14 @@ export default function AdminPlansPage() {
       description: p.description || '',
       monthly_price: p.monthly_price ?? '',
       yearly_price: p.yearly_price ?? '',
-      currency: p.currency || 'JOD',
+      currency: p.currency || 'USD',
       trial_days: p.trial_days ?? '14',
       is_active: p.is_active ?? true,
       is_popular: p.is_popular ?? false,
-      paddle_price_id_monthly: p.paddle_price_id_monthly || '',
-      paddle_price_id_yearly: p.paddle_price_id_yearly || '',
-      lemon_variant_id_monthly: p.lemon_variant_id_monthly || '',
-      lemon_variant_id_yearly: p.lemon_variant_id_yearly || '',
+      freemius_monthly_plan_id: p.freemius_monthly_plan_id || '',
+      freemius_yearly_plan_id: p.freemius_yearly_plan_id || '',
+      freemius_monthly_pricing_id: p.freemius_monthly_pricing_id || '',
+      freemius_yearly_pricing_id: p.freemius_yearly_pricing_id || '',
     });
     const init: Record<string, { enabled: boolean; value: string }> = {};
     const existing = (p.features || []).reduce((acc: any, f: any) => { acc[f.feature_key] = f; return acc; }, {});
@@ -181,10 +181,10 @@ export default function AdminPlansPage() {
         trial_days: Number(form.trial_days) || 0,
         is_active: form.is_active,
         is_popular: !!form.is_popular,
-        paddle_price_id_monthly: form.paddle_price_id_monthly?.trim() || null,
-        paddle_price_id_yearly: form.paddle_price_id_yearly?.trim() || null,
-        lemon_variant_id_monthly: form.lemon_variant_id_monthly?.trim() || null,
-        lemon_variant_id_yearly: form.lemon_variant_id_yearly?.trim() || null,
+        freemius_monthly_plan_id: form.freemius_monthly_plan_id?.trim() || null,
+        freemius_yearly_plan_id: form.freemius_yearly_plan_id?.trim() || null,
+        freemius_monthly_pricing_id: form.freemius_monthly_pricing_id?.trim() || null,
+        freemius_yearly_pricing_id: form.freemius_yearly_pricing_id?.trim() || null,
       };
       let planId = editing?.id;
       let warning: any = null;
@@ -350,25 +350,18 @@ export default function AdminPlansPage() {
               <div className="space-y-2"><Label>{t('الوصف', 'Description')}</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="h-11" /></div>
               <div className="space-y-2"><Label>{t('السعر الشهري', 'Monthly price')} *</Label><Input type="number" value={form.monthly_price} onChange={(e) => setForm({ ...form, monthly_price: e.target.value })} className="h-11" /></div>
               <div className="space-y-2"><Label>{t('السعر السنوي', 'Yearly price')}</Label><Input type="number" value={form.yearly_price} onChange={(e) => setForm({ ...form, yearly_price: e.target.value })} className="h-11" /></div>
-              <div className="space-y-2"><Label>{t('العملة', 'Currency')}</Label><div className="h-11 flex items-center px-3 rounded-lg border border-gray-200 bg-gray-50 text-sm font-medium text-gray-600">JOD — {t('دينار أردني', 'Jordanian Dinar')}</div></div>
+              <div className="space-y-2"><Label>{t('العملة', 'Currency')}</Label><div className="h-11 flex items-center px-3 rounded-lg border border-gray-200 bg-gray-50 text-sm font-medium text-gray-600">USD — {t('دولار أمريكي (ثابت لاشتراكات المنصة)', 'US Dollar (fixed for platform subscriptions)')}</div></div>
               <div className="space-y-2"><Label>{t('أيام التجربة', 'Trial days')}</Label><Input type="number" value={form.trial_days} onChange={(e) => setForm({ ...form, trial_days: e.target.value })} className="h-11" /></div>
             </div>
 
             <div className="p-3 rounded-xl border border-gray-100 bg-gray-50/60">
-              <p className="font-medium text-sm mb-1">Paddle — {t('ربط أسعار Paddle (اختياري)', 'Paddle price mapping (optional)')}</p>
-              <p className="text-xs text-gray-400 mb-3">{t('الصق معرفات الأسعار من لوحة Paddle لكل دورة فوترة. الخطة نفسها تبقى مصدر السعر؛ هذا مجرد ربط. إذا تُركا فارغين، لن تظهر Paddle كخيار لهذه الخطة.', 'Paste the Paddle price IDs for each billing cycle. The plan itself stays the price source — this is only a mapping. Leave empty and Paddle will not be offered for this plan.')}</p>
+              <p className="font-medium text-sm mb-1">Freemius — {t('ربط خطة Freemius (اختياري)', 'Freemius plan mapping (optional)')}</p>
+              <p className="text-xs text-gray-400 mb-3">{t('الصق معرّفات الخطة من لوحة Freemius لكل دورة فوترة. الخطة نفسها تبقى مصدر الميزات والحصص؛ هذا مجرد ربط للفوترة. إذا تُركت فارغة، سيُستخدم الربط الافتراضي من متغيرات البيئة، وإن غاب أيضًا فلن تتوفر الخطة للشراء.', 'Paste the Freemius plan IDs for each billing cycle. The plan itself stays the source of features & quotas — this is only a billing mapping. Leave empty to fall back to the environment defaults; if neither is set the plan is not purchasable.')}</p>
               <div className="grid sm:grid-cols-2 gap-3">
-                <div className="space-y-2"><Label>{t('Paddle Price ID — شهري', 'Paddle Price ID — monthly')}</Label><Input value={form.paddle_price_id_monthly || ''} onChange={(e) => setForm({ ...form, paddle_price_id_monthly: e.target.value })} className="h-11" dir="ltr" placeholder="pri_..." /></div>
-                <div className="space-y-2"><Label>{t('Paddle Price ID — سنوي', 'Paddle Price ID — yearly')}</Label><Input value={form.paddle_price_id_yearly || ''} onChange={(e) => setForm({ ...form, paddle_price_id_yearly: e.target.value })} className="h-11" dir="ltr" placeholder="pri_..." /></div>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl border border-gray-100 bg-gray-50/60">
-              <p className="font-medium text-sm mb-1">Lemon Squeezy — {t('ربط أصناف (Variants) Lemon Squeezy (اختياري)', 'Lemon Squeezy variant mapping (optional)')}</p>
-              <p className="text-xs text-gray-400 mb-3">{t('الصق أرقام الـ Variant من لوحة Lemon Squeezy لكل دورة فوترة. الخطة نفسها تبقى مصدر السعر؛ هذا مجرد ربط. إذا تُركا فارغين، لن تظهر Lemon Squeezy كخيار لهذه الخطة.', 'Paste the Lemon Squeezy variant IDs for each billing cycle. The plan itself stays the price source — this is only a mapping. Leave empty and Lemon Squeezy will not be offered for this plan.')}</p>
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div className="space-y-2"><Label>{t('Lemon Squeezy Variant ID — شهري', 'Lemon Squeezy Variant ID — monthly')}</Label><Input value={form.lemon_variant_id_monthly || ''} onChange={(e) => setForm({ ...form, lemon_variant_id_monthly: e.target.value })} className="h-11" dir="ltr" placeholder="123456" /></div>
-                <div className="space-y-2"><Label>{t('Lemon Squeezy Variant ID — سنوي', 'Lemon Squeezy Variant ID — yearly')}</Label><Input value={form.lemon_variant_id_yearly || ''} onChange={(e) => setForm({ ...form, lemon_variant_id_yearly: e.target.value })} className="h-11" dir="ltr" placeholder="123456" /></div>
+                <div className="space-y-2"><Label>{t('Freemius Plan ID — شهري', 'Freemius Plan ID — monthly')}</Label><Input value={form.freemius_monthly_plan_id || ''} onChange={(e) => setForm({ ...form, freemius_monthly_plan_id: e.target.value })} className="h-11" dir="ltr" placeholder="12345" /></div>
+                <div className="space-y-2"><Label>{t('Freemius Plan ID — سنوي', 'Freemius Plan ID — yearly')}</Label><Input value={form.freemius_yearly_plan_id || ''} onChange={(e) => setForm({ ...form, freemius_yearly_plan_id: e.target.value })} className="h-11" dir="ltr" placeholder="12345" /></div>
+                <div className="space-y-2"><Label>{t('Pricing ID — شهري (اختياري)', 'Pricing ID — monthly (optional)')}</Label><Input value={form.freemius_monthly_pricing_id || ''} onChange={(e) => setForm({ ...form, freemius_monthly_pricing_id: e.target.value })} className="h-11" dir="ltr" placeholder="67890" /></div>
+                <div className="space-y-2"><Label>{t('Pricing ID — سنوي (اختياري)', 'Pricing ID — yearly (optional)')}</Label><Input value={form.freemius_yearly_pricing_id || ''} onChange={(e) => setForm({ ...form, freemius_yearly_pricing_id: e.target.value })} className="h-11" dir="ltr" placeholder="67890" /></div>
               </div>
             </div>
 
@@ -445,8 +438,8 @@ export default function AdminPlansPage() {
           {/* ─── تحليل الربحية الحي ─────────────────── */}
           {(() => {
             const price = Number(form.monthly_price) || 0;
-            const rate = Number(settings.currency_rate) || 1.41;
-            const priceUsd = price * rate;
+            // Platform-subscription prices are stored in USD — no conversion.
+            const priceUsd = price;
             const storageMb = Number(feats['storage_limit_mb']?.value) || 0;
             const storageGb = storageMb > 0 ? storageMb / 1024 : 0;
             const liveMinutes = Number(feats['live_minutes_limit']?.value) || 0;
@@ -469,8 +462,7 @@ export default function AdminPlansPage() {
                   </Badge>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                  <div className="rounded-xl bg-white/70 p-2.5"><p className="text-[10px] text-gray-400">{t('السعر', 'Price')}</p><p className="font-bold">{price} JOD</p></div>
-                  <div className="rounded-xl bg-white/70 p-2.5"><p className="text-[10px] text-gray-400">{t('بالدولار', 'In USD')}</p><p className="font-bold">{priceUsd.toFixed(2)} $</p></div>
+                  <div className="rounded-xl bg-white/70 p-2.5"><p className="text-[10px] text-gray-400">{t('السعر', 'Price')}</p><p className="font-bold">{price} USD</p></div>
                   <div className="rounded-xl bg-white/70 p-2.5"><p className="text-[10px] text-gray-400">{t('التكلفة المتوقعة', 'Expected cost')}</p><p className="font-bold">{cost.toFixed(2)} $</p></div>
                   <div className="rounded-xl bg-white/70 p-2.5"><p className="text-[10px] text-gray-400">{t('نسبة الربح ROI', 'ROI')}</p><p className={`font-bold ${status === 'good' ? 'text-emerald-600' : status === 'warn' ? 'text-amber-600' : 'text-red-600'}`}>{roi}%</p></div>
                 </div>

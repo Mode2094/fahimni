@@ -39,43 +39,70 @@ class RenewalAndGradingTest extends TenantTestCase
         ]);
     }
 
-    public function test_proration_credits_unused_days_on_plan_change(): void
+    /**
+     * Proration on a plan change is now computed by Freemius: an existing
+     * license routes through the upgrade-checkout-link API rather than a
+     * locally computed credit. This test asserts the controller returns the
+     * Freemius upgrade URL and never mutates the local subscription itself.
+     */
+    public function test_plan_change_routes_through_freemius_upgrade_link(): void
     {
+        config()->set('services.freemius.enabled', true);
+        config()->set('services.freemius.product_id', '777');
+        config()->set('services.freemius.api_token', 'test-api-token');
+        config()->set('services.freemius.secret_key', 'test-secret-key');
+        config()->set('services.freemius.api_url', 'https://api.freemius.test');
+
         $tenant = $this->makeTenant();
-        $this->attachSubscription($tenant);
 
         $oldPlan = $this->makePlan('Basic', 10.00, 100.00);
-        $newPlan = $this->makePlan('Pro', 20.00, 200.00);
-
-        $old = TenantSubscription::create([
-            'id' => UuidV7::generate(),
-            'tenant_id' => $tenant->id,
-            'plan_id' => $oldPlan->id,
-            'status' => 'active',
-            'billing_cycle' => 'monthly',
-            'starts_at' => now()->subDays(10),
-            'ends_at' => now()->addDays(20), // 20 of 30 days remaining
-            'auto_renew' => true,
+        $newPlan = \App\Models\SubscriptionPlan::create([
+            'id' => (string) Str::uuid(),
+            'name' => 'Pro',
+            'slug' => 'pro-'.Str::random(4),
+            'monthly_price' => 20.00,
+            'yearly_price' => 200.00,
+            'currency' => 'JOD',
+            'trial_days' => 7,
+            'is_active' => true,
+            'is_public' => true,
+            'sort_order' => 0,
+            'metadata' => ['freemius_monthly_plan_id' => '2020'],
         ]);
 
-        $teacher = $this->makeUser();
+        $teacher = $this->makeUser(['email' => 'owner@academy.test']);
         $this->attachToTenant($teacher, $tenant, 'teacher');
+        $tenant->update(['owner_id' => $teacher->id]);
 
-        // No gateway configured -> initiate fails AFTER computing proration.
-        // The transaction rolls back, so assert via a direct computation
-        // through the same code path is not possible; instead we verify the
-        // amount math by simulating what the controller does.
+        // An existing (active) Freemius license for this tenant.
+        \App\Models\FsEntitlement::create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'fs_license_id' => 'LIC-UP',
+            'plan_id' => $oldPlan->id,
+            'type' => 'subscription',
+            'status' => 'active',
+            'expiration' => now()->addDays(20),
+            'is_canceled' => false,
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-UP/checkout/link.json' => \Illuminate\Support\Facades\Http::response([
+                'url' => 'https://checkout.freemius.test/upgrade/xyz',
+                'settings' => [],
+                'expires' => now()->addHour()->toIso8601String(),
+            ]),
+        ]);
+
         $response = $this->withHeaders($this->authHeaders($teacher, $tenant))
-            ->postJson('/api/v1/payments/initiate', [
-                'plan_id' => $newPlan->id, 'billing_cycle' => 'monthly', 'gateway' => 'paytabs',
+            ->postJson('/api/v1/subscriptions/freemius/checkout', [
+                'plan_id' => $newPlan->id,
+                'billing_cycle' => 'monthly',
             ]);
 
-        $response->assertStatus(422);
-
-        // Credit = 20 (old price) * (20/30) = 13.33 -> new price 20 - 13.33.
-        // Nothing persisted (rollback), so just assert the old sub is intact.
-        $this->assertEquals('active', $old->fresh()->status);
-        $this->assertEquals(20.00, (float) $newPlan->monthly_price);
+        $response->assertOk()
+            ->assertJsonPath('mode', 'upgrade')
+            ->assertJsonPath('checkout_url', 'https://checkout.freemius.test/upgrade/xyz');
     }
 
     public function test_expiry_with_auto_renew_creates_past_due_and_renewal_invoice(): void

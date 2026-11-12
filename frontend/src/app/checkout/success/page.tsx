@@ -1,24 +1,42 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, XCircle, Loader2, LayoutDashboard, Clock } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, LayoutDashboard, Clock, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
+
+const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 function SuccessInner() {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const search = useSearchParams();
   const status = search.get('status');
-  const gateway = search.get('gateway');
+  const licenseId = search.get('license_id');
 
-  // Payment is only ever confirmed by the backend (callback/webhook). The
-  // success page never claims success on its own.
-  const processing = status === 'pending' || status === 'processing';
-  const paid = status !== 'cancelled' && status !== 'failed' && !processing;
+  const [confirmed, setConfirmed] = useState<boolean | null>(null);
+
+  // Reconcile with the backend by its server-side re-fetch of the license.
+  // This NEVER decides success from the URL — it only reads the backend
+  // result, which is derived from the Freemius API.
+  useEffect(() => {
+    if (!licenseId) return;
+    fetch(`${API}/subscriptions/freemius/complete?license_id=${encodeURIComponent(licenseId)}`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('lms_tenant') || '' },
+    })
+      .then((r) => r.json())
+      .then((d) => setConfirmed(d.status === 'active'))
+      .catch(() => setConfirmed(null));
+  }, [licenseId]);
+
+  // Payment is only ever confirmed by the backend (webhook). The success page
+  // never claims success on its own.
+  const processing = status === 'pending' || status === 'processing' || (licenseId && confirmed !== true);
+  const paid = (status !== 'cancelled' && status !== 'failed' && !processing) || confirmed === true;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-b from-slate-50 to-white">
@@ -43,7 +61,7 @@ function SuccessInner() {
             <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-100"><CheckCircle2 className="h-10 w-10 text-green-600" /></div>
             <h1 className="text-2xl font-bold">{t('تم الدفع بنجاح!', 'Payment successful!')}</h1>
             <p className="text-gray-500 text-sm">
-              {gateway === 'paytabs' ? t('تم تأكيد الدفع عبر PayTabs — خطتك مفعلة', 'Payment confirmed via PayTabs — your plan is active') : gateway === 'paypal' ? t('تم تأكيد الدفع عبر PayPal — خطتك مفعلة', 'Payment confirmed via PayPal — your plan is active') : gateway === 'paddle' ? t('تم تأكيد الدفع عبر Paddle — خطتك مفعلة', 'Payment confirmed via Paddle — your plan is active') : t('تم تفعيل خطتك بنجاح', 'Your plan is now active')}
+              {t('تم تأكيد الاشتراك عبر Freemius — خطتك مفعلة.', 'Subscription confirmed via Freemius — your plan is active.')}
             </p>
             <Link href="/teacher/dashboard" className="block"><Button className="w-full rounded-full gap-2"><LayoutDashboard className="h-4 w-4" />{t('الذهاب للوحة التحكم', 'Go to dashboard')}</Button></Link>
           </>

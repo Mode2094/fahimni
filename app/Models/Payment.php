@@ -16,6 +16,7 @@ class Payment extends Model
     protected $fillable = [
         'tenant_id', 'tenant_subscription_id', 'booking_id', 'transaction_id', 'gateway',
         'amount', 'currency', 'status', 'payment_method', 'gateway_data', 'paid_at',
+        'fs_license_id',
     ];
 
     protected $casts = [
