@@ -139,18 +139,34 @@ FREEMIUS_PLAN_ENTERPRISE_YEARLY_ID=12350
 
 ## 6. اختبار التكامل (Sandbox)
 
-Freemius يوفّر بيئة اختبار (Sandbox) مطابقة للإنتاج:
+Freemius يوفّر بيئة اختبار (Sandbox) مطابقة للإنتاج.
 
+> **مهم (وفق التوثيق الرسمي):** `FREEMIUS_SANDBOX=true` **وحده لا يفتح الـCheckout في وضع Sandbox**. Freemius يتطلب تمرير **Sandbox Token + Context** المولّدين رسميًا إلى الـCheckout.
+
+### الآلية الرسمية للـSandbox (مطبَّقة تلقائيًا في النظام)
+عند تفعيل `freemius_sandbox` (من `.env` أو لوحة الأدمن)، يضيف النظام تلقائيًا إلى رابط Hosted Checkout الوسيطين الرسميين:
+- `sandbox` = الرمز
+- `s_ctx_ts` = السياق
+
+ووفق التوثيق الرسمي:
+```
+ctx           = time()  (أو أي سلسلة عشوائية فريدة)
+sandbox_token = md5(ctx . product_id . secret_key . public_key . 'checkout')
+```
+هذا مطبَّق في `FreemiusGateway::getSandboxParams()`، ويُدمج في `hostedCheckoutLink()` — فلا حاجة لبناء الرابط يدويًا. (الرمز مشتق وغير سرّي، ولا يُسجَّل في اللوجز.)
+
+### خطوات الاختبار
 1. في `Dashboard → Settings → Sandbox` فعّل بيئة الاختبار.
-2. اضبط `FREEMIUS_SANDBOX=true` في `.env` (أو من لوحة الأدمن).
-3. استخدم بطاقات الاختبار المتاحة في Freemius لإتمام عملية شراء تجريبية.
+2. اضبط `FREEMIUS_SANDBOX=true` في `.env` (أو من لوحة الأدمن) — سيُمرَّر الـSandbox token تلقائيًا.
+3. افتح الشراء من `/checkout` بشخصية Sandbox، وأكمل الدفع ببطاقة اختبار رسمية:
+   `4242 4242 4242 4242` (Visa)، أو `5555 5555 5555 4444` (Mastercard)، أو باستخدام زر **Prefill Form** الظاهر في Sandbox.
 4. تأكد أن:
    - الـWebhook يصل ويُسجَّل في `webhook_events`.
    - يظهر صف في `fs_entitlements` للمستأجر الصحيح.
    - تظهر ميزات الخطة (PlanEngine) للطالب.
 5. بعد التأكد، عطّل Sandbox واستخدم مفاتيح الإنتاج.
 
-> **ملاحظة:** اختباراتنا الآلية تحاكي (mock) واجهة Freemius ولا تحتاج حسابًا حقيقيًا. التحقق النهائي من التكامل الحقيقي (Checkout + Webhook فعليان) **يتطلب حساب Freemius حقيقيًا/بيئة Sandbox فعلية** — لا يمكن إثباته بأي اختبار آلي وحده.
+> **ملاحظة:** اختباراتنا الآلية تحاكي (mock) واجهة Freemius ولا تحتاج حسابًا حقيقيًا، لكنها **لا تُثبت** التكامل الحيّ. التحقق النهائي (Checkout + Webhook + token/context فعليًا على HTTPS عام) **يتطلب حساب Freemius حقيقيًا/بيئة Sandbox فعلية ونطاقًا عامًا** — لا يمكن إثباته بأي اختبار آلي أو على بيئة محلية.
 
 ### ✅ قائمة متطلبات اختبار Sandbox الحقيقي (يجب اجتيازها قبل الإنتاج)
 

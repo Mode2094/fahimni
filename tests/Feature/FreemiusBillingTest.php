@@ -161,6 +161,76 @@ class FreemiusBillingTest extends TenantTestCase
             ->assertUnauthorized();
     }
 
+    // ── Sandbox: official token/context mechanism ────────────────────
+
+    public function test_sandbox_params_follow_official_algorithm(): void
+    {
+        $this->configureFreemius();
+
+        $params = \App\Services\FreemiusGateway::getSandboxParams();
+
+        $this->assertNotNull($params);
+        $this->assertArrayHasKey('token', $params);
+        $this->assertArrayHasKey('ctx', $params);
+
+        // token = md5(ctx . product_id . secret_key . public_key . 'checkout')
+        $expected = md5($params['ctx'].'777'.'test-secret-key'.'test-public-key'.'checkout');
+        $this->assertSame($expected, $params['token']);
+    }
+
+    public function test_sandbox_params_null_when_keys_missing(): void
+    {
+        $this->configureFreemius();
+        config()->set('services.freemius.public_key', '');
+
+        $this->assertNull(\App\Services\FreemiusGateway::getSandboxParams());
+    }
+
+    public function test_hosted_checkout_link_includes_sandbox_params_when_enabled(): void
+    {
+        $this->configureFreemius();
+        config()->set('services.freemius.sandbox', true);
+
+        $url = \App\Services\FreemiusGateway::hostedCheckoutLink('1010', 'owner@academy.test');
+
+        $this->assertStringContainsString('sandbox=', $url);
+        $this->assertStringContainsString('s_ctx_ts=', $url);
+        $this->assertStringContainsString('readonly_user=true', $url);
+    }
+
+    public function test_hosted_checkout_link_omits_sandbox_params_when_disabled(): void
+    {
+        $this->configureFreemius();
+        config()->set('services.freemius.sandbox', false);
+
+        $url = \App\Services\FreemiusGateway::hostedCheckoutLink('1010', 'owner@academy.test');
+
+        $this->assertStringNotContainsString('sandbox=', $url);
+        $this->assertStringNotContainsString('s_ctx_ts=', $url);
+    }
+
+    public function test_checkout_endpoint_opens_sandbox_when_enabled(): void
+    {
+        $this->configureFreemius();
+        config()->set('services.freemius.sandbox', true);
+
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        $res = $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($user, $tenant));
+
+        $res->assertOk()->assertJsonPath('mode', 'checkout');
+
+        $url = $res->json('checkout_url');
+        $this->assertStringContainsString('sandbox=', $url);
+        $this->assertStringContainsString('s_ctx_ts=', $url);
+    }
+
     public function test_checkout_returns_hosted_checkout_url_with_prefilled_email(): void
     {
         $this->configureFreemius();

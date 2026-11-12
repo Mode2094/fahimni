@@ -108,6 +108,12 @@ class FreemiusGateway
      *
      * The email is prefilled and marked read-only so the purchase is made
      * with the same customer email as in our system.
+     *
+     * When sandbox is enabled, the official sandbox parameters
+     * (`sandbox` token + `s_ctx_ts` context) are appended so the Checkout
+     * actually opens in Sandbox mode — `FREEMIUS_SANDBOX=true` alone does NOT
+     * switch the checkout; Freemius requires these signed params (see the
+     * official "Testing the Freemius Checkout via Sandbox" docs).
      */
     public static function hostedCheckoutLink(string $planId, string $email, array $extra = []): string
     {
@@ -119,7 +125,50 @@ class FreemiusGateway
             'readonly_user' => 'true',
         ], array_filter($extra, fn ($v) => $v !== null && $v !== ''));
 
+        // Sandbox: append the official sandbox token + context. These are
+        // non-secret derived values (md5 of ctx+ids+keys), but we never log
+        // them; they only appear in the checkout URL returned to the browser.
+        if (self::config()['sandbox']) {
+            $sandbox = self::getSandboxParams();
+
+            if ($sandbox !== null) {
+                $query['sandbox'] = $sandbox['token'];
+                $query['s_ctx_ts'] = $sandbox['ctx'];
+            }
+        }
+
         return $url.'?'.http_build_query($query);
+    }
+
+    /**
+     * Generate the official Hosted-Checkout sandbox parameters.
+     *
+     * Per Freemius docs:
+     *   ctx           = time() (or any random unique string)
+     *   sandbox_token = md5(ctx . product_id . secret_key . public_key . 'checkout')
+     *
+     * Returns null when the required values are missing. The resulting token
+     * is a derived, non-secret value; it is never logged.
+     *
+     * @return array{token: string, ctx: string}|null
+     */
+    public static function getSandboxParams(): ?array
+    {
+        $c = self::config();
+
+        $productId = $c['product_id'];
+        $secretKey = $c['secret_key'];
+        $publicKey = $c['public_key'];
+
+        if ($productId === '' || $secretKey === '' || $publicKey === '') {
+            return null;
+        }
+
+        $ctx = (string) time();
+
+        $token = md5($ctx.$productId.$secretKey.$publicKey.'checkout');
+
+        return ['token' => $token, 'ctx' => $ctx];
     }
 
     /**
