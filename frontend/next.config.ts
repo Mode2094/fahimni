@@ -28,7 +28,7 @@ const nextConfig: NextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'geolocation=(),midi=(),sync-xhr=(),camera=(self),microphone=(self),magnetometer=(),gyroscope=(),fullscreen=(self),payment=(self "https://*.paddle.com")' },
+          { key: 'Permissions-Policy', value: 'geolocation=(),midi=(),sync-xhr=(),camera=(self),microphone=(self),magnetometer=(),gyroscope=(),fullscreen=(self),payment=(self "https://checkout.freemius.com")' },
           // Content-Security-Policy is set per-request with a nonce in
           // src/proxy.ts (middleware) — never here, to avoid a second
           // conflicting policy.

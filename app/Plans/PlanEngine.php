@@ -98,35 +98,30 @@ class PlanEngine
     {
         $sub = $this->snapshot($tenantId)['subscription'];
 
-        return $sub ? TenantSubscription::find($sub['id']) : null;
+        // Entitlement-backed tenants have no local subscription row.
+        if (! $sub || ($sub['billing_source'] ?? null) === SubscriptionState::SOURCE_FREEMIUS) {
+            return null;
+        }
+
+        return TenantSubscription::find($sub['id']);
     }
 
     private function resolve(string $tenantId): array
     {
-        $subscription = TenantSubscription::with('plan.features')
-            ->where('tenant_id', $tenantId)
-            ->whereIn('status', ['active', 'trialing'])
-            ->latest('starts_at')
-            ->first();
+        // Single source of truth: Freemius entitlement OR legacy subscription.
+        $state = SubscriptionState::make()->resolve($tenantId);
 
-        if (! $subscription || ! $subscription->plan) {
+        if ($state['source'] === SubscriptionState::SOURCE_NONE || ! $state['plan_id']) {
             return ['active' => false, 'subscription' => null, 'features' => []];
         }
 
-        // Trial / paid period must still be valid.
-        if ($subscription->status === 'trialing'
-            && $subscription->trial_ends_at
-            && now()->gt($subscription->trial_ends_at)) {
+        $plan = \App\Models\SubscriptionPlan::with('features')->find($state['plan_id']);
+
+        if (! $plan) {
             return ['active' => false, 'subscription' => null, 'features' => []];
         }
 
-        if ($subscription->status === 'active'
-            && $subscription->ends_at
-            && now()->gt($subscription->ends_at)) {
-            return ['active' => false, 'subscription' => null, 'features' => []];
-        }
-
-        $features = $subscription->plan->features
+        $features = $plan->features
             ->pluck('feature_value', 'feature_key')
             ->map(fn ($v) => (string) $v)
             ->all();
@@ -134,16 +129,17 @@ class PlanEngine
         return [
             'active' => true,
             'subscription' => [
-                'id' => $subscription->id,
-                'plan_id' => $subscription->plan_id,
-                'plan_name' => $subscription->plan->name,
-                'plan_slug' => $subscription->plan->slug,
-                'monthly_price' => (float) $subscription->plan->monthly_price,
-                'annual_price' => $subscription->plan->annual_price,
-                'status' => $subscription->status,
-                'billing_cycle' => $subscription->billing_cycle,
-                'trial_ends_at' => $subscription->trial_ends_at?->toIso8601String(),
-                'ends_at' => $subscription->ends_at?->toIso8601String(),
+                'id' => $state['subscription_id'],
+                'plan_id' => $plan->id,
+                'plan_name' => $plan->name,
+                'plan_slug' => $plan->slug,
+                'monthly_price' => (float) $plan->monthly_price,
+                'annual_price' => $plan->annual_price,
+                'status' => $state['status'],
+                'billing_cycle' => $state['billing_cycle'],
+                'trial_ends_at' => $state['trial_ends_at']?->toIso8601String(),
+                'ends_at' => $state['ends_at']?->toIso8601String(),
+                'billing_source' => $state['source'],
             ],
             'features' => $features,
         ];

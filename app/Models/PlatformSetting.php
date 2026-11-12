@@ -29,11 +29,9 @@ class PlatformSetting extends Model
     public static function secretKeys(): array
     {
         return [
+            // Booking gateways (student ↔ teacher one-off payments).
             'paytabs_server_key',
             'paypal_secret',
-            'paddle_client_token',
-            'paddle_api_key',
-            'paddle_webhook_secret',
         ];
     }
 

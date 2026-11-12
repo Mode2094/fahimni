@@ -10,7 +10,7 @@ use App\Jobs\Media\HealthCheckProviderJob;
 use App\Jobs\Media\ReconcileMediaAssetsJob;
 use App\Jobs\Media\RecalculateCostsJob;
 use App\Jobs\Media\SyncProviderUsageJob;
-use App\Jobs\PurgeExpiredTenantContentJob;
+use App\Jobs\ReconcileFreemiusWebhooksJob;
 use App\Jobs\RenewalReminderJob;
 use App\Jobs\ReverifyTenantDomainsJob;
 use Illuminate\Foundation\Inspiring;
@@ -28,11 +28,17 @@ Schedule::job(new ExpireSubscriptionsJob)->hourly();
 // Reminders 3/2/1 days before subscription expiry (in-app + email).
 Schedule::job(new RenewalReminderJob)->dailyAt('08:00');
 
-// Daily post-expiry countdown inside the 10-day grace window.
+// Daily post-expiry countdown inside the grace window.
 Schedule::job(new ExpiryFollowUpJob)->dailyAt('08:30');
 
-// Delete educational content 10 days after expiry without renewal.
-Schedule::job(new PurgeExpiredTenantContentJob)->dailyAt('03:00');
+// NOTE: automatic deletion of tenant content on subscription expiry is
+// DISABLED by policy. Teacher/student content is never destroyed because a
+// payment lapsed. The PurgeExpiredTenantContentJob is intentionally no longer
+// scheduled (kept as an inert class).
+
+// Retry Freemius webhook events that failed transiently (e.g. API timeout) so
+// a real payment/entitlement change is never lost. Idempotent + lock-guarded.
+Schedule::job(new ReconcileFreemiusWebhooksJob)->everyFiveMinutes()->name('freemius-reconcile')->withoutOverlapping();
 
 Schedule::job(new ExpireTeacherInvitationsJob)->hourly();
 
