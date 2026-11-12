@@ -216,6 +216,83 @@ class FreemiusCheckoutController extends Controller
     }
 
     /**
+     * Trusted purchase→tenant binding (overlay/integration callback path).
+     *
+     * Called by our own BFF from the authenticated session AFTER the Freemius
+     * overlay checkout reports success. This is the officially-supported
+     * reliable link: the Freemius overlay `success` callback yields
+     * `purchase.license_id` in the logged-in user's session, and the server
+     * ties that license to the CURRENT tenant permanently.
+     *
+     * Safety:
+     *  - Requires an authenticated tenant session (never trusts the license id
+     *    alone from an anonymous caller).
+     *  - Re-fetches the license from the Freemius API server-side.
+     *  - If the license is already bound to a DIFFERENT tenant, the bind is
+     *    REFUSED (a license never moves tenants).
+     *  - Records license_id -> tenant_id permanently (on the entitlement; the
+     *    webhook's resolveTenant() honors it first).
+     */
+    public function bind(Request $request): JsonResponse
+    {
+        $tenant = $request->current_tenant;
+
+        if (! $tenant) {
+            return response()->json(['message' => 'Your session is no longer valid — please sign in again.'], 401);
+        }
+
+        $validated = $request->validate([
+            'license_id' => 'required|string|max:64',
+        ]);
+
+        $licenseId = $validated['license_id'];
+
+        $existing = FsEntitlement::where('fs_license_id', $licenseId)->first();
+
+        // A license already bound to another tenant must never be moved.
+        if ($existing && $existing->tenant_id && $existing->tenant_id !== $tenant->id) {
+            return response()->json([
+                'message' => 'This license is already linked to another platform.',
+            ], 409);
+        }
+
+        // Verify the license really exists in Freemius before binding.
+        try {
+            $result = $this->sync->syncByLicenseId($licenseId);
+        } catch (\App\Exceptions\FreemiusApiException) {
+            return response()->json(['message' => 'Could not verify the license right now — try again shortly.'], 502);
+        }
+
+        if (($result['status'] ?? null) === 'not_found') {
+            return response()->json(['message' => 'Unknown license.'], 404);
+        }
+
+        // If sync could not auto-resolve (ambiguous/unknown customer), bind the
+        // (verified) license to the authenticated tenant explicitly.
+        $entitlement = $result['entitlement'] ?? null;
+
+        if (! $entitlement || $entitlement->tenant_id !== $tenant->id) {
+            $license = FreemiusGateway::getLicenseOrFail($licenseId);
+
+            if (! $license) {
+                return response()->json(['message' => 'Unknown license.'], 404);
+            }
+
+            $subscription = FreemiusGateway::getLatestSubscriptionOrFail($licenseId);
+            $entitlement = $this->sync->applyLicense($tenant, $license, $subscription);
+        }
+
+        AuditLogger::log($request, 'subscription.freemius_bound', 'entitlement', $entitlement->id, [
+            'license_id' => $licenseId,
+        ]);
+
+        return response()->json([
+            'status' => $entitlement->isActive() ? 'active' : 'inactive',
+            'license_id' => $entitlement->fs_license_id,
+        ]);
+    }
+
+    /**
      * Freemius hosted customer portal magic link.
      */
     public function portal(Request $request): JsonResponse

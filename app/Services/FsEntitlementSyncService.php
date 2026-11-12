@@ -87,38 +87,34 @@ class FsEntitlementSyncService
             $localPlan = $fsPlanId ? FreemiusPlanMapper::localPlanForFreemiusPlanId($fsPlanId) : null;
 
             // ── Canonical license state (per Freemius documented fields) ──
-            // `expiration`  : string or null (null = lifetime). AUTHORITATIVE.
-            // `is_cancelled` (API, double-L): license hard-cancelled from the
-            //                Developer Dashboard → INVALID (revoked).
+            // `expiration`   : string or null (null = lifetime). AUTHORITATIVE.
+            // `is_cancelled` (API, double-L): license HARD-cancelled from the
+            //                 Developer Dashboard → invalid immediately.
             // `is_canceled`  (SaaS webhook, single-L): recurring billing
-            //                stopped; current paid period may still run.
-            // `source`/`environment` etc. are ignored for access.
+            //                 stopped; the current paid period still runs.
+            // Subscription status can also indicate refund/chargeback (hard).
             $licenseStatus = $this->stringOrNull($license['status'] ?? null);
             $subscriptionStatus = $this->stringOrNull($subscription['status'] ?? null);
 
-            $hardCancelled = (bool) (
-                $license['is_cancelled']      // API hard-cancel (revoked)
-                ?? $license['is_canceled']    // SaaS guide field
-                ?? false
-            );
+            $hardCancelled = (bool) ($license['is_cancelled'] ?? false)
+                || in_array($subscriptionStatus, ['refunded', 'chargeback'], true);
+
             $renewalCancelled = (bool) ($license['is_canceled'] ?? false);
 
             $expiration = $this->parseDate($license['expiration'] ?? $subscription['next_payment'] ?? null);
 
-            // Revoked statuses stop access immediately; otherwise access is
-            // governed by expiration alone (a "cancel at period end" keeps a
-            // future expiration and therefore keeps access).
-            $revokedStatuses = ['revoked', 'deactivated', 'deleted', 'cancelled', 'canceled', 'expired'];
-
-            $status = 'active';
-            if ($hardCancelled && $licenseStatus === null && $subscriptionStatus === null) {
+            // Determine the stored status. A hard cancel/revoke wins; otherwise
+            // prefer the reported license/subscription status; otherwise active.
+            if ($hardCancelled || in_array($licenseStatus, FsEntitlement::REVOKED_STATUSES, true)) {
                 $status = 'revoked';
-            } elseif (in_array($licenseStatus, $revokedStatuses, true) && $licenseStatus !== 'cancelled') {
-                $status = $licenseStatus;
+            } elseif ($renewalCancelled && $subscriptionStatus === null && $licenseStatus === null) {
+                $status = 'cancelled';
             } elseif ($licenseStatus !== null) {
                 $status = $licenseStatus;
             } elseif ($subscriptionStatus !== null) {
                 $status = $subscriptionStatus;
+            } else {
+                $status = 'active';
             }
 
             // Derive the billing cycle from the pricing/plan when reported.
@@ -206,24 +202,35 @@ class FsEntitlementSyncService
      * signals only. Returns null when the binding is ambiguous (which sends the
      * event to manual review) rather than guessing.
      *
+     * IMPORTANT: a Freemius customer (`fs_user_id`) is NOT a tenant identity.
+     * One Freemius customer can own several licenses — one per Fahimni
+     * platform — so we NEVER map a license to a tenant via the shared customer
+     * id alone, nor assume a customer owns a single tenant.
+     *
      * Order of strength:
-     *  1. An EXISTING entitlement binding (license or Freemius customer id
-     *     already mapped) — never re-bound to another tenant.
-     *  2. A UNIQUE pending checkout intent for the licence's Freemius customer
-     *     id (stored server-side; not forgeable from the browser).
-     *  3. A UNIQUE pending checkout intent for the licence's customer email —
-     *     only when exactly ONE tenant has a pending intent for that email.
-     *     Multiple matches (a user owning several platforms) → null → review.
+     *  1. An EXISTING binding for THIS license (license_id -> tenant_id),
+     *     stored permanently and never moved (not by email, not by customer id).
+     *  2. A server-side checkout intent that is tied to THIS purchase. The
+     *     intent is created by the server before checkout; it is matched only
+     *     when exactly ONE pending intent exists for the customer identity of
+     *     this purchase (by checkout reference when available, else by the
+     *     unique customer email). Multiple matches → null → manual review.
      *
      * We deliberately do NOT fall back to "any tenant whose owner happens to
-     * share the email": that is how a license gets bound to the wrong tenant.
+     * share the email" and do NOT reuse a binding across licenses of the same
+     * customer: that is how a license gets bound to the wrong tenant.
+     *
+     * Official limitation: Freemius Hosted Checkout does not echo a
+     * custom/integration reference into license webhooks, so the strongest
+     * signal available server-side is the (server-created) intent matched by
+     * the purchase's customer identity. When it is ambiguous we hold for
+     * review; we never invent a binding.
      *
      * @param  array<string, mixed>  $license
      */
     private function resolveTenant(array $license, string $email): ?Tenant
     {
         $licenseId = (string) ($license['id'] ?? '');
-        $fsUserId = $this->stringOrNull($license['user_id'] ?? ($license['user']['id'] ?? null));
 
         // 1) Existing binding wins — a bound license never moves tenants.
         if ($licenseId !== '') {
@@ -234,33 +241,40 @@ class FsEntitlementSyncService
             }
         }
 
-        // 1b) A Freemius customer id already bound to a tenant is authoritative
-        //     for that customer (supports a customer with several licenses on
-        //     the SAME tenant; cross-tenant reuse is never allowed).
-        if ($fsUserId !== null) {
-            $boundByUser = FsEntitlement::where('fs_user_id', $fsUserId)
+        // 2) A checkout intent that has ALREADY been tied to this license
+        //    (e.g. recorded via the overlay callback / server reconciliation).
+        if ($licenseId !== '') {
+            $tiedIntent = TenantSubscription::withoutTenant()
+                ->where('billing_source', 'freemius')
+                ->where('fs_license_id', $licenseId)
                 ->whereNotNull('tenant_id')
-                ->latest('synced_at')
                 ->first();
 
-            if ($boundByUser && $boundByUser->tenant_id) {
-                return Tenant::find($boundByUser->tenant_id);
+            if ($tiedIntent && $tiedIntent->tenant_id) {
+                return Tenant::find($tiedIntent->tenant_id);
             }
         }
 
-        // 2) Unique pending intent for this Freemius customer id.
-        if ($fsUserId !== null) {
-            $byUser = TenantSubscription::withoutTenant()->where('billing_source', 'freemius')
-                ->where('metadata->freemius_intent_user_id', $fsUserId)
+        // 3) A checkout intent tied to this purchase's checkout reference.
+        //    (Only present when the client completed an overlay/integration
+        //     flow that recorded the reference server-side.)
+        $reference = $this->stringOrNull($license['checkout_reference'] ?? ($license['custom_reference'] ?? null));
+
+        if ($reference !== null) {
+            $byRef = TenantSubscription::withoutTenant()
+                ->where('billing_source', 'freemius')
+                ->where('metadata->freemius_checkout_reference', $reference)
                 ->pluck('tenant_id')
                 ->unique();
 
-            if ($byUser->count() === 1) {
-                return Tenant::find($byUser->first());
+            if ($byRef->count() === 1) {
+                return Tenant::find($byRef->first());
             }
         }
 
-        // 3) Unique pending intent for this customer email.
+        // 4) Unique pending intent for this purchase's customer email.
+        //    A customer owning several platforms shares the email, so this
+        //    only resolves when EXACTLY ONE pending intent matches.
         $byEmail = TenantSubscription::withoutTenant()->where('billing_source', 'freemius')
             ->where('metadata->freemius_intent_email', strtolower(trim($email)))
             ->pluck('tenant_id')

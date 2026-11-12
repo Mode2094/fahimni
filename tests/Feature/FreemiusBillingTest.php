@@ -603,7 +603,84 @@ class FreemiusBillingTest extends TenantTestCase
         $this->assertFalse(app(PlanEngine::class)->hasFeature($tenant->id, 'courses_limit'));
     }
 
-    // ── No revival of expired/deleted licenses from stale local rows ─
+    public function test_hard_cancelled_license_with_future_expiry_stops_access(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // The API reports is_cancelled = true (hard cancel from the dashboard)
+        // while the license still carries a FUTURE expiration.
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-HARD.json' => Http::response(
+                $this->makeLicensePayload('LIC-HARD', 'owner@academy.test', [
+                    'expiration' => now()->addMonth()->toIso8601String(),
+                    'is_cancelled' => true,
+                ])
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-HARD/subscription.json' => Http::response([
+                'id' => 'SUB-H', 'plan_id' => '1010', 'status' => 'active',
+            ]),
+        ]);
+
+        $body = json_encode(['id' => 'evt_hard', 'type' => 'license.cancelled', 'objects' => ['license' => ['id' => 'LIC-HARD']]]);
+        $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
+            'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
+        ], $body)->assertOk();
+
+        // Entitlement exists but is revoked → no access despite the future date.
+        $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-HARD', 'status' => 'revoked']);
+        $this->assertFalse(app(PlanEngine::class)->hasFeature($tenant->id, 'courses_limit'));
+    }
+
+    public function test_renewal_after_cancel_restores_access(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // Cancelled at period end but the paid period already elapsed → no access.
+        FsEntitlement::create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'fs_license_id' => 'LIC-REACT',
+            'plan_id' => $plan->id,
+            'type' => 'subscription',
+            'status' => 'cancelled',
+            'expiration' => now()->subDay(),
+            'is_canceled' => true,
+        ]);
+        PlanEngine::bumpVersion();
+        $this->assertFalse(app(PlanEngine::class)->hasFeature($tenant->id, 'courses_limit'));
+
+        // The customer renews: a license.extended event with a fresh future
+        // expiration and renewal re-enabled.
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-REACT.json' => Http::response(
+                $this->makeLicensePayload('LIC-REACT', 'owner@academy.test', [
+                    'expiration' => now()->addMonth()->toIso8601String(),
+                    'is_canceled' => false,
+                ])
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-REACT/subscription.json' => Http::response([
+                'id' => 'SUB-R', 'plan_id' => '1010', 'status' => 'active', 'billing_cycle' => 'monthly',
+            ]),
+        ]);
+
+        $body = json_encode(['id' => 'evt_react', 'type' => 'license.extended', 'objects' => ['license' => ['id' => 'LIC-REACT']]]);
+        $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
+            'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
+        ], $body)->assertOk();
+
+        $this->assertTrue(app(PlanEngine::class)->hasFeature($tenant->id, 'courses_limit'));
+        $ent = FsEntitlement::where('fs_license_id', 'LIC-REACT')->first();
+        $this->assertFalse($ent->is_canceled);
+        $this->assertTrue($ent->expiration->isFuture());
+    }
 
     public function test_expired_freemius_local_row_does_not_revive_access(): void
     {
@@ -1065,44 +1142,96 @@ class FreemiusBillingTest extends TenantTestCase
 
     // ── Multi-platform ownership: ambiguous email → review, no misbind ─
 
-    public function test_same_email_two_tenants_binds_by_unique_freemius_user_id(): void
+    public function test_one_freemius_customer_owns_two_licenses_on_two_platforms(): void
     {
         $this->configureFreemius();
         $plan = $this->makePlan();
 
-        // One person owning TWO platforms: a single user account attached to
-        // two tenants.
-        $u = $this->makeUser(['email' => 'owner@shared.test']);
+        // One Freemius customer, a SINGLE Fahimni user account, TWO platforms
+        // (tenants) — each with its own license.
+        $user = $this->makeUser(['email' => 'owner@shared.test']);
 
         $t1 = $this->makeTenant();
-        $this->attachToTenant($u, $t1, 'owner');
-        $t1->update(['owner_id' => $u->id]);
-        $this->pendingIntent($t1, 'owner@shared.test', fsUserId: '111');
+        $this->attachToTenant($user, $t1, 'owner');
+        $t1->update(['owner_id' => $user->id]);
+        $this->pendingIntent($t1, 'owner@shared.test', fsUserId: '555');
 
         $t2 = $this->makeTenant();
-        $this->attachToTenant($u, $t2, 'owner');
-        $t2->update(['owner_id' => $u->id]);
-        $this->pendingIntent($t2, 'owner@shared.test', fsUserId: '222');
+        $this->attachToTenant($user, $t2, 'owner');
+        $t2->update(['owner_id' => $user->id]);
+        $this->pendingIntent($t2, 'owner@shared.test', fsUserId: '555');
 
-        // License for the SECOND platform's Freemius customer id.
+        // Two distinct licenses for the SAME Freemius customer.
         Http::fake([
-            'api.freemius.test/v1/products/777/licenses/LIC-MULTI.json' => Http::response(
-                $this->makeLicensePayload('LIC-MULTI', 'owner@shared.test', ['user_id' => '222', 'user' => ['id' => '222', 'email' => 'owner@shared.test']])
+            'api.freemius.test/v1/products/777/licenses/LIC-P1.json' => Http::response(
+                $this->makeLicensePayload('LIC-P1', 'owner@shared.test', ['user_id' => '555', 'user' => ['id' => '555', 'email' => 'owner@shared.test']])
             ),
-            'api.freemius.test/v1/products/777/licenses/LIC-MULTI/subscription.json' => Http::response([
-                'id' => 'SUB-M', 'plan_id' => '1010', 'status' => 'active',
+            'api.freemius.test/v1/products/777/licenses/LIC-P1/subscription.json' => Http::response([
+                'id' => 'SUB-P1', 'plan_id' => '1010', 'status' => 'active', 'billing_cycle' => 'monthly',
+            ]),
+            'api.freemius.test/v1/products/777/licenses/LIC-P2.json' => Http::response(
+                $this->makeLicensePayload('LIC-P2', 'owner@shared.test', ['user_id' => '555', 'user' => ['id' => '555', 'email' => 'owner@shared.test']])
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-P2/subscription.json' => Http::response([
+                'id' => 'SUB-P2', 'plan_id' => '1010', 'status' => 'active', 'billing_cycle' => 'monthly',
             ]),
         ]);
 
-        $body = json_encode(['id' => 'evt_multi', 'type' => 'license.created', 'objects' => ['license' => ['id' => 'LIC-MULTI']]]);
+        // Email alone is ambiguous (two pending intents share it): the webhook
+        // must NOT guess and must hold for review.
+        $body = json_encode(['id' => 'evt_p1', 'type' => 'license.created', 'objects' => ['license' => ['id' => 'LIC-P1']]]);
         $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
             'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
-        ], $body)->assertOk();
+        ], $body)->assertStatus(202);
+        $this->assertDatabaseCount('fs_entitlements', 0);
 
-        // Bound to the platform matching the Freemius customer id, not the
-        // other platform sharing the email.
-        $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-MULTI', 'tenant_id' => $t2->id]);
-        $this->assertDatabaseMissing('fs_entitlements', ['fs_license_id' => 'LIC-MULTI', 'tenant_id' => $t1->id]);
+        // The documented reliable path: each platform is activated through its
+        // OWN authenticated session (overlay success callback -> trusted bind).
+        $this->postJson('/api/v1/subscriptions/freemius/bind', [
+            'license_id' => 'LIC-P1',
+        ], $this->authHeaders($user, $t1))->assertOk()->assertJsonPath('status', 'active');
+
+        $this->postJson('/api/v1/subscriptions/freemius/bind', [
+            'license_id' => 'LIC-P2',
+        ], $this->authHeaders($user, $t2))->assertOk()->assertJsonPath('status', 'active');
+
+        // Each license activates exactly its own platform.
+        $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-P1', 'tenant_id' => $t1->id]);
+        $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-P2', 'tenant_id' => $t2->id]);
+        $this->assertTrue(app(PlanEngine::class)->hasFeature($t1->id, 'courses_limit'));
+        $this->assertTrue(app(PlanEngine::class)->hasFeature($t2->id, 'courses_limit'));
+    }
+
+    public function test_bind_refuses_to_move_a_license_to_another_tenant(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+
+        $t1 = $this->makeTenant();
+        $u1 = $this->makeUser(['email' => 'a@academy.test']);
+        $this->attachOwner($u1, $t1);
+
+        $t2 = $this->makeTenant();
+        $u2 = $this->makeUser(['email' => 'b@academy.test']);
+        $this->attachOwner($u2, $t2);
+
+        FsEntitlement::create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $t1->id,
+            'fs_license_id' => 'LIC-OWNED',
+            'plan_id' => $plan->id,
+            'type' => 'subscription',
+            'status' => 'active',
+            'expiration' => now()->addMonth(),
+            'is_canceled' => false,
+        ]);
+
+        // Tenant 2 cannot steal a license already bound to tenant 1.
+        $this->postJson('/api/v1/subscriptions/freemius/bind', [
+            'license_id' => 'LIC-OWNED',
+        ], $this->authHeaders($u2, $t2))->assertStatus(409);
+
+        $this->assertSame($t1->id, FsEntitlement::where('fs_license_id', 'LIC-OWNED')->value('tenant_id'));
     }
 
     public function test_same_email_two_tenants_without_user_id_needs_review(): void

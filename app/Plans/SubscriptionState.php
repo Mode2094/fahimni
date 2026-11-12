@@ -61,18 +61,18 @@ class SubscriptionState
         // 1) Freemius entitlement wins when it still grants access.
         //
         // IMPORTANT: a canceled entitlement (recurring billing stopped at
-        // period end) STILL grants access until `expiration`. We therefore do
-        // NOT filter on `is_canceled`; we filter on real access (expiration +
-        // non-revoked status), exactly like FsEntitlement::isActive().
+        // period end) STILL grants access until `expiration`. A HARD
+        // cancellation/refund/revocation stops access immediately, regardless
+        // of expiration. We reuse the model's single access rule so there is
+        // no duplicated logic. A tenant may legitimately hold more than one
+        // license, so we pick the most recent one that grants access.
         $entitlement = FsEntitlement::where('tenant_id', $tenantId)
-            ->where(function ($q) {
-                $q->whereNull('expiration')->orWhere('expiration', '>', now());
-            })
-            ->whereNotIn('status', ['revoked', 'deactivated', 'deleted'])
+            ->whereNotNull('plan_id')
             ->latest('synced_at')
-            ->first();
+            ->get()
+            ->first(fn (FsEntitlement $e) => $e->isActive());
 
-        if ($entitlement && $entitlement->plan_id) {
+        if ($entitlement) {
             return [
                 'source' => self::SOURCE_FREEMIUS,
                 'plan_id' => $entitlement->plan_id,
