@@ -44,24 +44,27 @@ class FsEntitlement extends Model
     }
 
     /**
-     * Whether the license currently grants access.
+     * Whether the license currently grants access, derived ONLY from the
+     * documented Freemius license fields:
      *
-     * IMPORTANT semantics (per Freemius): `is_canceled` means the recurring
-     * billing was stopped (the subscription is canceled at period end). It
-     * does NOT revoke the current paid period — access must continue until
-     * `expiration`. Only an expired or revoked license stops access.
-     *
-     * A `revoked`/`deactivated` status (license pulled by Freemius) does stop
-     * access regardless of expiration.
+     *   - `expiration` (nullable; null = lifetime) is AUTHORITATIVE.
+     *   - A hard cancellation / revocation (`status` in the revoked set, or
+     *     metadata.hard_cancelled) stops access immediately.
+     *   - `is_canceled` (renewal stopped / cancel-at-period-end) does NOT stop
+     *     access — only the expiry date does.
      */
     public function isActive(): bool
     {
-        // A license explicitly revoked by Freemius stops access immediately.
+        // Hard revocation stops access regardless of expiration.
         if (in_array((string) $this->status, ['revoked', 'deactivated', 'deleted'], true)) {
             return false;
         }
 
-        // Null expiration = non-expiring entitlement (lifetime).
+        if (($this->metadata['hard_cancelled'] ?? false) === true && ! $this->expiration) {
+            return false;
+        }
+
+        // Null expiration = non-expiring (lifetime) license.
         if ($this->expiration === null) {
             return true;
         }

@@ -86,12 +86,40 @@ class FsEntitlementSyncService
 
             $localPlan = $fsPlanId ? FreemiusPlanMapper::localPlanForFreemiusPlanId($fsPlanId) : null;
 
-            $expiration = $this->parseDate($license['expiration'] ?? $subscription['next_payment'] ?? null);
-            $isCanceled = (bool) ($license['is_canceled'] ?? false);
+            // ── Canonical license state (per Freemius documented fields) ──
+            // `expiration`  : string or null (null = lifetime). AUTHORITATIVE.
+            // `is_cancelled` (API, double-L): license hard-cancelled from the
+            //                Developer Dashboard → INVALID (revoked).
+            // `is_canceled`  (SaaS webhook, single-L): recurring billing
+            //                stopped; current paid period may still run.
+            // `source`/`environment` etc. are ignored for access.
+            $licenseStatus = $this->stringOrNull($license['status'] ?? null);
+            $subscriptionStatus = $this->stringOrNull($subscription['status'] ?? null);
 
-            // Prefer the subscription's own status; fall back to license.
-            $status = $this->stringOrNull($subscription['status'] ?? null)
-                ?? ($isCanceled ? 'cancelled' : 'active');
+            $hardCancelled = (bool) (
+                $license['is_cancelled']      // API hard-cancel (revoked)
+                ?? $license['is_canceled']    // SaaS guide field
+                ?? false
+            );
+            $renewalCancelled = (bool) ($license['is_canceled'] ?? false);
+
+            $expiration = $this->parseDate($license['expiration'] ?? $subscription['next_payment'] ?? null);
+
+            // Revoked statuses stop access immediately; otherwise access is
+            // governed by expiration alone (a "cancel at period end" keeps a
+            // future expiration and therefore keeps access).
+            $revokedStatuses = ['revoked', 'deactivated', 'deleted', 'cancelled', 'canceled', 'expired'];
+
+            $status = 'active';
+            if ($hardCancelled && $licenseStatus === null && $subscriptionStatus === null) {
+                $status = 'revoked';
+            } elseif (in_array($licenseStatus, $revokedStatuses, true) && $licenseStatus !== 'cancelled') {
+                $status = $licenseStatus;
+            } elseif ($licenseStatus !== null) {
+                $status = $licenseStatus;
+            } elseif ($subscriptionStatus !== null) {
+                $status = $subscriptionStatus;
+            }
 
             // Derive the billing cycle from the pricing/plan when reported.
             $cycle = $this->stringOrNull($subscription['billing_cycle'] ?? null);
@@ -116,11 +144,14 @@ class FsEntitlementSyncService
                 'type' => $subscription ? 'subscription' : 'lifetime',
                 'status' => $status,
                 'expiration' => $expiration,
-                'is_canceled' => $isCanceled,
+                'is_canceled' => $renewalCancelled,
                 'synced_at' => now(),
                 'metadata' => [
                     'billing_cycle' => $cycle,
                     'raw_status' => $status,
+                    'license_status' => $licenseStatus,
+                    'subscription_status' => $subscriptionStatus,
+                    'hard_cancelled' => $hardCancelled,
                 ],
             ];
 
@@ -137,7 +168,7 @@ class FsEntitlementSyncService
             // Mirror onto a local subscription row (archival + PlanEngine's
             // legacy path + invoice FK) without ever conflicting with the
             // partial unique index (active/trialing).
-            $this->mirrorSubscription($tenant, $entitlement, $localPlan, $cycle, $expiration, $isCanceled);
+            $this->mirrorSubscription($tenant, $entitlement, $localPlan, $cycle, $expiration, $renewalCancelled, $status);
 
             // Invalidate the plan cache so the entitlement change is visible
             // immediately (no 5-minute staleness window).
@@ -159,7 +190,7 @@ class FsEntitlementSyncService
 
             // Revoke the local mirror: mark it expired (never active) so the
             // legacy fallback cannot re-grant access after the license is gone.
-            TenantSubscription::where('fs_license_id', $licenseId)
+            TenantSubscription::withoutTenant()->where('fs_license_id', $licenseId)
                 ->update([
                     'status' => 'expired',
                     'auto_renew' => false,
@@ -171,21 +202,28 @@ class FsEntitlementSyncService
     }
 
     /**
-     * Resolve the tenant a license belongs to, using trustworthy signals in
-     * order of strength:
+     * Resolve the tenant a license belongs to using trustworthy, non-forgeable
+     * signals only. Returns null when the binding is ambiguous (which sends the
+     * event to manual review) rather than guessing.
      *
-     *  1. An existing entitlement binding (a license already mapped to a
-     *     tenant) — NEVER re-bound to another tenant by email change.
-     *  2. A checkout intent recorded server-side (tenant <-> license) via
-     *     metadata — established only by the server before checkout.
-     *  3. The licence's Freemius customer email, matched against the tenant
-     *     owner's email or the tenant billing email (last resort).
+     * Order of strength:
+     *  1. An EXISTING entitlement binding (license or Freemius customer id
+     *     already mapped) — never re-bound to another tenant.
+     *  2. A UNIQUE pending checkout intent for the licence's Freemius customer
+     *     id (stored server-side; not forgeable from the browser).
+     *  3. A UNIQUE pending checkout intent for the licence's customer email —
+     *     only when exactly ONE tenant has a pending intent for that email.
+     *     Multiple matches (a user owning several platforms) → null → review.
+     *
+     * We deliberately do NOT fall back to "any tenant whose owner happens to
+     * share the email": that is how a license gets bound to the wrong tenant.
      *
      * @param  array<string, mixed>  $license
      */
     private function resolveTenant(array $license, string $email): ?Tenant
     {
         $licenseId = (string) ($license['id'] ?? '');
+        $fsUserId = $this->stringOrNull($license['user_id'] ?? ($license['user']['id'] ?? null));
 
         // 1) Existing binding wins — a bound license never moves tenants.
         if ($licenseId !== '') {
@@ -196,34 +234,51 @@ class FsEntitlementSyncService
             }
         }
 
-        // 2) Server-side checkout intent (non-forgeable: written only by the
-        //    server at checkout initiation, keyed by the customer email the
-        //    checkout was created with).
-        $fsUserId = $license['user_id'] ?? ($license['user']['id'] ?? null);
-        $intent = TenantSubscription::where('billing_source', 'freemius')
-            ->where(function ($q) use ($licenseId, $fsUserId, $email) {
-                if ($licenseId !== '') {
-                    $q->orWhere('fs_license_id', $licenseId);
-                }
-                // metadata.freemius_intent_email is set server-side at checkout.
-                $q->orWhere('metadata->freemius_intent_email', $email);
-            })
-            ->latest('created_at')
-            ->first();
+        // 1b) A Freemius customer id already bound to a tenant is authoritative
+        //     for that customer (supports a customer with several licenses on
+        //     the SAME tenant; cross-tenant reuse is never allowed).
+        if ($fsUserId !== null) {
+            $boundByUser = FsEntitlement::where('fs_user_id', $fsUserId)
+                ->whereNotNull('tenant_id')
+                ->latest('synced_at')
+                ->first();
 
-        if ($intent && $intent->tenant_id) {
-            return Tenant::find($intent->tenant_id);
+            if ($boundByUser && $boundByUser->tenant_id) {
+                return Tenant::find($boundByUser->tenant_id);
+            }
         }
 
-        // 3) Last resort: match the licence customer email to a tenant owner.
-        return Tenant::whereHas('owner', fn ($q) => $q->where('email', $email))->first()
-            ?? Tenant::where('email', $email)->first();
+        // 2) Unique pending intent for this Freemius customer id.
+        if ($fsUserId !== null) {
+            $byUser = TenantSubscription::withoutTenant()->where('billing_source', 'freemius')
+                ->where('metadata->freemius_intent_user_id', $fsUserId)
+                ->pluck('tenant_id')
+                ->unique();
+
+            if ($byUser->count() === 1) {
+                return Tenant::find($byUser->first());
+            }
+        }
+
+        // 3) Unique pending intent for this customer email.
+        $byEmail = TenantSubscription::withoutTenant()->where('billing_source', 'freemius')
+            ->where('metadata->freemius_intent_email', strtolower(trim($email)))
+            ->pluck('tenant_id')
+            ->unique();
+
+        if ($byEmail->count() === 1) {
+            return Tenant::find($byEmail->first());
+        }
+
+        // Ambiguous or unknown customer → manual review (never guess).
+        return null;
     }
 
     /**
      * Keep a local archival subscription row in sync with the entitlement
      * so billing history/reports still have a row to point at. Cancelled /
-     * prior rows are preserved.
+     * prior rows are preserved. This row is NOT consulted for access (the
+     * legacy path excludes Freemius-owned rows) — it is archival only.
      */
     private function mirrorSubscription(
         Tenant $tenant,
@@ -231,22 +286,28 @@ class FsEntitlementSyncService
         ?\App\Models\SubscriptionPlan $localPlan,
         ?string $cycle,
         ?\DateTimeInterface $expiration,
-        bool $isCanceled
+        bool $renewalCancelled,
+        string $licenseStatus
     ): void {
         if (! $localPlan) {
             return;
         }
 
-        $status = $isCanceled ? 'cancelled' : 'active';
-
-        // An expired license must not grant access even if not cancelled.
-        if ($status === 'active' && $expiration !== null && $expiration <= new \DateTimeImmutable) {
+        // Derive the archival status from the entitlement's effective access.
+        if (! $entitlement->isActive()) {
             $status = 'expired';
+        } elseif ($renewalCancelled) {
+            $status = 'cancelled';
+        } else {
+            $status = 'active';
         }
+
+        // Keep switch statements exhaustive for future statuses (no-op now).
+        unset($licenseStatus);
 
         if ($status === 'active') {
             // Supersede other active local rows first (partial unique index).
-            TenantSubscription::where('tenant_id', $tenant->id)
+            TenantSubscription::withoutTenant()->where('tenant_id', $tenant->id)
                 ->whereIn('status', ['active', 'trialing'])
                 ->where(function ($q) use ($entitlement) {
                     $q->whereNull('fs_license_id')
@@ -255,7 +316,7 @@ class FsEntitlementSyncService
                 ->update(['status' => 'cancelled', 'cancelled_at' => now(), 'auto_renew' => false]);
         }
 
-        TenantSubscription::updateOrCreate(
+        TenantSubscription::withoutTenant()->updateOrCreate(
             ['fs_license_id' => $entitlement->fs_license_id],
             [
                 'tenant_id' => $tenant->id,
@@ -265,8 +326,8 @@ class FsEntitlementSyncService
                 'billing_cycle' => $cycle === 'annual' || $cycle === 'yearly' ? 'yearly' : 'monthly',
                 'starts_at' => $entitlement->created_at ?? now(),
                 'ends_at' => $expiration,
-                'cancelled_at' => $isCanceled ? now() : null,
-                'auto_renew' => ! $isCanceled,
+                'cancelled_at' => $renewalCancelled ? now() : null,
+                'auto_renew' => ! $renewalCancelled && $status === 'active',
                 'fs_subscription_id' => $entitlement->fs_subscription_id,
                 'fs_pricing_id' => $entitlement->fs_pricing_id,
             ]

@@ -134,15 +134,23 @@ class FreemiusCheckoutController extends Controller
         // Fresh hosted checkout. The URL already carries product + plan; we
         // only add the prefilled/read-only email. No price is ever passed
         // (Freemius uses the plan's configured price).
-        $this->recordIntent($tenant, $plan, $cycle, (string) $email);
+        $reference = $this->recordIntent($tenant, $plan, $cycle, (string) $email, $request->user()?->id);
 
-        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email);
+        // The redirect back to us carries the checkout reference so `complete`
+        // can reconcile ONLY the intent created by this very checkout.
+        $redirect = rtrim(config('app.frontend_url') ?: config('app.url'), '/')
+            .'/checkout/success?ref='.urlencode($reference);
+
+        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email, [
+            'redirect' => $redirect,
+        ]);
 
         AuditLogger::log($request, 'subscription.freemius_checkout', 'plan', $plan->id, ['cycle' => $cycle]);
 
         return response()->json([
             'mode' => 'checkout',
             'checkout_url' => $url,
+            'checkout_reference' => $reference,
             'public_key' => FreemiusGateway::publicKey(),
             'product_id' => FreemiusGateway::productId(),
         ]);
@@ -165,6 +173,19 @@ class FreemiusCheckoutController extends Controller
         }
 
         $licenseId = (string) $request->query('license_id', '');
+        $reference = (string) $request->query('ref', '');
+
+        // If a checkout reference is supplied it MUST belong to this tenant —
+        // a license_id alone is never trusted from the browser.
+        if ($reference !== '') {
+            $intent = TenantSubscription::where('billing_source', 'freemius')
+                ->where('metadata->freemius_checkout_reference', $reference)
+                ->first();
+
+            if (! $intent || $intent->tenant_id !== $tenant->id) {
+                return response()->json(['message' => 'Unknown checkout reference.'], 422);
+            }
+        }
 
         if ($licenseId !== '') {
             try {
@@ -287,13 +308,21 @@ class FreemiusCheckoutController extends Controller
     /**
      * Persist a pending intent row for archival/observability AND as a
      * server-side, non-forgeable link between this tenant and the customer
-     * email the checkout was created with. This lets the webhook bind the
-     * resulting license to the correct tenant even if the email later changes
-     * to match another tenant. Never grants access on its own.
+     * identity the checkout was created with. It carries:
+     *   - a unique, random checkout reference (audit + redirect reconciliation)
+     *   - the customer email (lowercased) the checkout was created with
+     *   - the authenticated user's id (server-trusted)
+     *
+     * The webhook binds the resulting license to a tenant through this intent
+     * ONLY when it is unambiguous (see FsEntitlementSyncService::resolveTenant).
+     * Never grants access on its own and never conflicts with the
+     * active-subscription unique index (status = pending).
      */
-    private function recordIntent(Tenant $tenant, SubscriptionPlan $plan, string $cycle, string $email): void
+    private function recordIntent(Tenant $tenant, SubscriptionPlan $plan, string $cycle, string $email, ?string $userId): string
     {
-        DB::transaction(function () use ($tenant, $plan, $cycle, $email) {
+        $reference = 'fs_'.bin2hex(random_bytes(20)); // unique, non-guessable
+
+        DB::transaction(function () use ($tenant, $plan, $cycle, $email, $userId, $reference) {
             TenantSubscription::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $tenant->id,
@@ -304,9 +333,13 @@ class FreemiusCheckoutController extends Controller
                 'starts_at' => now(),
                 'auto_renew' => true,
                 'metadata' => [
+                    'freemius_checkout_reference' => $reference,
                     'freemius_intent_email' => strtolower(trim($email)),
+                    'freemius_intent_user_id' => $userId,
                 ],
             ]);
         });
+
+        return $reference;
     }
 }

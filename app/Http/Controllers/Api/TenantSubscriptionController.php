@@ -32,20 +32,36 @@ class TenantSubscriptionController extends Controller
     {
         $this->authorize('viewAny', TenantSubscription::class);
 
-        $tenantId = $request->header('X-Tenant-Id');
+        $tenantId = (string) $request->header('X-Tenant-Id');
 
-        $subscription = TenantSubscription::where('tenant_id', $tenantId)
-            ->whereIn('status', ['active', 'trialing'])
-            ->with('plan.features')
-            ->latest('starts_at')
-            ->first();
+        // Single source of truth: the effective state (Freemius entitlement OR
+        // legacy local subscription). Never report a stale local row as the
+        // current subscription when a Freemius license actually governs access.
+        $state = \App\Plans\SubscriptionState::make()->resolve($tenantId);
 
-        if (! $subscription) {
+        if ($state['source'] === \App\Plans\SubscriptionState::SOURCE_NONE || ! $state['plan_id']) {
+            return response()->json(['subscription' => null]);
+        }
+
+        $plan = \App\Models\SubscriptionPlan::with('features')->find($state['plan_id']);
+
+        if (! $plan) {
             return response()->json(['subscription' => null]);
         }
 
         return response()->json([
-            'subscription' => new TenantSubscriptionResource($subscription),
+            'subscription' => [
+                'id' => $state['subscription_id'],
+                'plan_id' => $plan->id,
+                'plan' => new \App\Http\Resources\SubscriptionPlanResource($plan),
+                'status' => $state['status'],
+                'billing_cycle' => $state['billing_cycle'],
+                'billing_source' => $state['source'],
+                'cancel_at_period_end' => $state['cancel_at_period_end'] ?? false,
+                'starts_at' => null,
+                'ends_at' => $state['ends_at']?->toIso8601String(),
+                'trial_ends_at' => $state['trial_ends_at']?->toIso8601String(),
+            ],
         ]);
     }
 

@@ -54,6 +54,7 @@ class ReconcileFreemiusWebhooksJob implements ShouldQueue
 
         $reconciled = 0;
         $stillFailed = 0;
+        $needsReview = 0;
 
         foreach ($stuck as $event) {
             // Re-claim under the lock (skips events another worker holds).
@@ -67,18 +68,44 @@ class ReconcileFreemiusWebhooksJob implements ShouldQueue
             }
 
             try {
+                $status = 'ignored';
+
                 if (in_array($claimed->event_type, FreemiusGateway::ENTITLEMENT_EVENTS, true)) {
                     $licenseId = $this->licenseIdFromPayload($claimed->payload ?? []);
 
-                    if ($licenseId) {
-                        $sync->syncByLicenseId($licenseId);
+                    if (! $licenseId) {
+                        $claimed->markFailed('missing_license_id');
+                        $needsReview++;
+
+                        continue;
                     }
+
+                    $result = $sync->syncByLicenseId($licenseId);
+                    $status = $result['status'];
                 } elseif ($claimed->event_type === FreemiusGateway::DELETE_EVENT) {
                     $licenseId = (string) ($claimed->payload['data']['license_id'] ?? '');
 
                     if ($licenseId !== '') {
                         $sync->deleteByLicenseId($licenseId);
                     }
+
+                    $status = 'deleted';
+                }
+
+                if ($status === 'no_tenant') {
+                    // Needs manual review — keep it unresolved (bounded by
+                    // MAX_ATTEMPTS) so an operator can bind the customer.
+                    $claimed->markFailed('no_tenant');
+                    $needsReview++;
+
+                    Log::warning('freemius.reconcile.needs_review', [
+                        'event_id' => $claimed->event_id,
+                        'event_type' => $claimed->event_type,
+                        'attempts' => $claimed->attempts,
+                        'reason' => 'no_tenant',
+                    ]);
+
+                    continue;
                 }
 
                 $claimed->markProcessed();
@@ -106,6 +133,7 @@ class ReconcileFreemiusWebhooksJob implements ShouldQueue
         Log::info('freemius.reconcile.done', [
             'reconciled' => $reconciled,
             'still_failed' => $stillFailed,
+            'needs_review' => $needsReview,
             'exhausted' => $exhausted,
         ]);
     }

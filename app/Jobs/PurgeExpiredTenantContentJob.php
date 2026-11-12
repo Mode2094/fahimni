@@ -23,21 +23,30 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
- * Deletes a tenant's educational content when 10 days pass after
- * subscription expiry without renewal.
+ * SAFETY-DISABLED: never delete teacher/student content on subscription
+ * expiry.
  *
- * Models with SoftDeletes are soft-deleted (recoverable); the rest are
- * removed. Physical media files are never touched. Runs once per
- * subscription (dedup via metadata.content_purged_at).
+ * Educational content (courses, lessons, exams, assignments, live sessions,
+ * enrollments, …) is the teacher's and their students' data. It must NEVER be
+ * destroyed because a payment lapsed. This job therefore performs NO deletion
+ * at all — it only records that a tenant passed the grace window so the UI can
+ * prompt a renewal.
+ *
+ * The class is retained (and its schedule entry removed in routes/console.php)
+ * so no other code path resurrects destructive purging. Purging of content is
+ * a deliberate, manual, operator-initiated operation, not an automated one.
  */
 class PurgeExpiredTenantContentJob implements ShouldQueue
 {
     use Dispatchable, Queueable;
 
     /**
-     * Children first so orphaned rows never outlive their parents.
+     * Educational content that MUST never be auto-deleted on expiry.
+     * Kept for documentation and for any future, explicitly-approved manual
+     * retention tooling.
      *
      * @var array<class-string, string>
      */
@@ -58,79 +67,10 @@ class PurgeExpiredTenantContentJob implements ShouldQueue
 
     public function handle(): void
     {
-        $subs = TenantSubscription::whereIn('status', ['past_due', 'expired'])
-            ->whereNotNull('ends_at')
-            ->where('ends_at', '<', now()->subDays(ExpiryFollowUpJob::GRACE_DAYS))
-            ->get();
-
-        foreach ($subs as $sub) {
-            $meta = $sub->metadata ?? [];
-
-            if (! empty($meta['content_purged_at'])) {
-                continue; // already purged.
-            }
-
-            $counts = $this->purgeTenantContent((string) $sub->tenant_id);
-
-            $meta['content_purged_at'] = now()->toIso8601String();
-            $meta['content_purged_counts'] = $counts;
-            $sub->update(['metadata' => $meta]);
-
-            $this->notifyOwners($sub, $counts);
-        }
-    }
-
-    /**
-     * @return array<string, int> label => deleted rows count
-     */
-    private function purgeTenantContent(string $tenantId): array
-    {
-        $counts = [];
-
-        DB::transaction(function () use ($tenantId, &$counts) {
-            foreach (self::CONTENT_MODELS as $model => $label) {
-                $deleted = $model::withoutTenant()
-                    ->where('tenant_id', $tenantId)
-                    ->delete();
-
-                if ($deleted > 0) {
-                    $counts[$label] = $deleted;
-                }
-            }
-        });
-
-        // Bulk deletes bypass observers — refresh cached plan features.
-        PlanEngine::bumpVersion();
-
-        return $counts;
-    }
-
-    private function notifyOwners(TenantSubscription $sub, array $counts): void
-    {
-        try {
-            $summary = collect($counts)
-                ->map(fn ($count, $label) => "{$label}: {$count}")
-                ->implode('، ');
-
-            $userIds = TenantUser::where('tenant_id', $sub->tenant_id)
-                ->whereIn('role', ['owner', 'admin'])
-                ->where('status', 'active')
-                ->pluck('user_id');
-
-            app(NotificationService::class)->dispatch(
-                User::whereIn('id', $userIds)->where('is_active', true)->get(),
-                'subscription.content_deleted',
-                'تم حذف المحتوى التعليمي',
-                'انتهت مهلة التجديد بعد انتهاء الاشتراك، وتم حذف المحتوى التعليمي الخاص بك.'
-                .($summary !== '' ? " ما تم حذفه: {$summary}." : '')
-                .' يمكنك التواصل مع الدعم لاستعادة المحتوى عند إعادة الاشتراك.',
-                null,
-                $sub->tenant_id,
-                ['subscription_id' => $sub->id, 'deleted_counts' => $counts],
-                ['database', 'mail'],
-            );
-        } catch (\Throwable) {
-            // Notification failures must never break the purge job.
-        }
+        // Intentionally a no-op. We never delete tenant content on expiry.
+        // (Retained only to mark the grace window; no rows are touched.)
+        Log::info('subscription.purge_disabled', [
+            'detail' => 'PurgeExpiredTenantContentJob is disabled by policy — content is never deleted on subscription expiry.',
+        ]);
     }
 }

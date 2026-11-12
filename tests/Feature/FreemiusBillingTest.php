@@ -90,6 +90,36 @@ class FreemiusBillingTest extends TenantTestCase
     {
         $this->attachToTenant($user, $tenant, 'owner');
         $tenant->update(['owner_id' => $user->id]);
+        // Record a server-side checkout intent (as the real checkout does) so
+        // the webhook can bind a license to this tenant.
+        $this->pendingIntent($tenant, (string) $user->email);
+    }
+
+    /**
+     * Record a server-side Freemius checkout intent for a tenant (as the
+     * checkout controller does). Required for the webhook to bind a license
+     * to a tenant — email alone is no longer sufficient.
+     */
+    private function pendingIntent(Tenant $tenant, string $email, string $fsUserId = '9001'): TenantSubscription
+    {
+        $plan = SubscriptionPlan::query()->first() ?? $this->makePlan();
+
+        // withoutTenant + explicit tenant_id: the tenant global scope would
+        // otherwise stamp the ambient request tenant onto the row.
+        return TenantSubscription::withoutTenant()->create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'plan_id' => $plan->id,
+            'status' => 'pending',
+            'billing_source' => 'freemius',
+            'billing_cycle' => 'monthly',
+            'starts_at' => now(),
+            'auto_renew' => true,
+            'metadata' => [
+                'freemius_intent_email' => strtolower(trim($email)),
+                'freemius_intent_user_id' => $fsUserId,
+            ],
+        ]);
     }
 
     // ── Checkout initiation ──────────────────────────────────────────
@@ -455,9 +485,8 @@ class FreemiusBillingTest extends TenantTestCase
             ]),
         ]);
 
-        $this->getJson('/api/v1/subscriptions/freemius/complete?license_id=LIC-FOREIGN', $this->authHeaders($user, $tenant))
-            ->assertOk()
-            ->assertJsonPath('status', 'pending');
+        $resp = $this->getJson('/api/v1/subscriptions/freemius/complete?license_id=LIC-FOREIGN', $this->authHeaders($user, $tenant));
+        $resp->assertOk()->assertJsonPath('status', 'pending');
 
         // The entitlement was created for the OTHER tenant, not the caller.
         $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-FOREIGN', 'tenant_id' => $other->id]);
@@ -953,9 +982,12 @@ class FreemiusBillingTest extends TenantTestCase
         $body = json_encode(['id' => 'evt_x', 'type' => 'license.created', 'objects' => ['license' => ['id' => 'LIC-X']]]);
         $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
             'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
-        ], $body)->assertOk();
+        ], $body)->assertStatus(202)->assertJsonPath('result', 'no_tenant');
 
+        // No entitlement is created AND the event is left for review (NOT
+        // marked processed) so it can be bound manually / reconciled.
         $this->assertDatabaseCount('fs_entitlements', 0);
+        $this->assertSame('failed', WebhookEvent::where('event_id', 'evt_x')->first()->processing_status);
     }
 
     // ── Signature verification unit ──────────────────────────────────
@@ -1029,5 +1061,165 @@ class FreemiusBillingTest extends TenantTestCase
 
         $this->assertSame('888', FreemiusPlanMapper::planId($plan->fresh(), 'monthly'));
         $this->assertSame('889', FreemiusPlanMapper::planId($plan->fresh(), 'yearly'));
+    }
+
+    // ── Multi-platform ownership: ambiguous email → review, no misbind ─
+
+    public function test_same_email_two_tenants_binds_by_unique_freemius_user_id(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+
+        // One person owning TWO platforms: a single user account attached to
+        // two tenants.
+        $u = $this->makeUser(['email' => 'owner@shared.test']);
+
+        $t1 = $this->makeTenant();
+        $this->attachToTenant($u, $t1, 'owner');
+        $t1->update(['owner_id' => $u->id]);
+        $this->pendingIntent($t1, 'owner@shared.test', fsUserId: '111');
+
+        $t2 = $this->makeTenant();
+        $this->attachToTenant($u, $t2, 'owner');
+        $t2->update(['owner_id' => $u->id]);
+        $this->pendingIntent($t2, 'owner@shared.test', fsUserId: '222');
+
+        // License for the SECOND platform's Freemius customer id.
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-MULTI.json' => Http::response(
+                $this->makeLicensePayload('LIC-MULTI', 'owner@shared.test', ['user_id' => '222', 'user' => ['id' => '222', 'email' => 'owner@shared.test']])
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-MULTI/subscription.json' => Http::response([
+                'id' => 'SUB-M', 'plan_id' => '1010', 'status' => 'active',
+            ]),
+        ]);
+
+        $body = json_encode(['id' => 'evt_multi', 'type' => 'license.created', 'objects' => ['license' => ['id' => 'LIC-MULTI']]]);
+        $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
+            'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
+        ], $body)->assertOk();
+
+        // Bound to the platform matching the Freemius customer id, not the
+        // other platform sharing the email.
+        $this->assertDatabaseHas('fs_entitlements', ['fs_license_id' => 'LIC-MULTI', 'tenant_id' => $t2->id]);
+        $this->assertDatabaseMissing('fs_entitlements', ['fs_license_id' => 'LIC-MULTI', 'tenant_id' => $t1->id]);
+    }
+
+    public function test_same_email_two_tenants_without_user_id_needs_review(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+
+        $u = $this->makeUser(['email' => 'owner@shared.test']);
+
+        $t1 = $this->makeTenant();
+        $this->attachToTenant($u, $t1, 'owner');
+        $t1->update(['owner_id' => $u->id]);
+        $this->pendingIntent($t1, 'owner@shared.test', fsUserId: '');
+
+        $t2 = $this->makeTenant();
+        $this->attachToTenant($u, $t2, 'owner');
+        $t2->update(['owner_id' => $u->id]);
+        $this->pendingIntent($t2, 'owner@shared.test', fsUserId: '');
+
+        // License with NO customer id and an ambiguous email → manual review.
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-AMB.json' => Http::response(
+                $this->makeLicensePayload('LIC-AMB', 'owner@shared.test', ['user_id' => null, 'user' => ['email' => 'owner@shared.test']])
+            ),
+        ]);
+
+        $body = json_encode(['id' => 'evt_amb', 'type' => 'license.created', 'objects' => ['license' => ['id' => 'LIC-AMB']]]);
+        $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
+            'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
+        ], $body)->assertStatus(202)->assertJsonPath('result', 'no_tenant');
+
+        $this->assertDatabaseCount('fs_entitlements', 0);
+    }
+
+    // ── Content protection: never deleted on subscription expiry ──────
+
+    public function test_purge_job_never_deletes_tenant_content(): void
+    {
+        $tenant = $this->makeTenant();
+        $plan = $this->makePlan();
+
+        $course = \App\Models\Course::create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'title' => 'Protected Course',
+            'slug' => 'protected-'.Str::random(5),
+            'price' => 0,
+            'currency' => 'USD',
+            'is_published' => true,
+        ]);
+
+        \App\Models\TenantSubscription::withoutTenant()->create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'plan_id' => $plan->id,
+            'status' => 'expired',
+            'billing_cycle' => 'monthly',
+            'starts_at' => now()->subMonths(2),
+            'ends_at' => now()->subDays(30), // long past the grace window
+            'auto_renew' => false,
+        ]);
+
+        (new \App\Jobs\PurgeExpiredTenantContentJob)->handle();
+
+        // The course (and all tenant content) must still exist.
+        $this->assertDatabaseHas('courses', ['id' => $course->id]);
+    }
+
+    public function test_renewal_restores_access_and_keeps_content(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // Expired legacy subscription + a course.
+        \App\Models\TenantSubscription::withoutTenant()->create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'plan_id' => $plan->id,
+            'status' => 'expired',
+            'billing_cycle' => 'monthly',
+            'starts_at' => now()->subMonths(2),
+            'ends_at' => now()->subDays(5),
+            'auto_renew' => false,
+        ]);
+
+        $course = \App\Models\Course::create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'title' => 'Kept Course',
+            'slug' => 'kept-'.Str::random(5),
+            'price' => 0,
+            'currency' => 'USD',
+            'is_published' => true,
+        ]);
+
+        $this->assertFalse(app(PlanEngine::class)->hasFeature($tenant->id, 'courses_limit'));
+
+        // Renew via Freemius — entitlement arrives.
+        Http::fake([
+            'api.freemius.test/v1/products/777/licenses/LIC-RENEW.json' => Http::response(
+                $this->makeLicensePayload('LIC-RENEW', 'owner@academy.test')
+            ),
+            'api.freemius.test/v1/products/777/licenses/LIC-RENEW/subscription.json' => Http::response([
+                'id' => 'SUB-R', 'plan_id' => '1010', 'status' => 'active', 'billing_cycle' => 'monthly',
+            ]),
+        ]);
+
+        $body = json_encode(['id' => 'evt_renew', 'type' => 'license.created', 'objects' => ['license' => ['id' => 'LIC-RENEW']]]);
+        $this->call('POST', '/api/v1/payments/freemius-webhook', [], [], [], [
+            'HTTP_X_SIGNATURE' => $this->sign($body), 'CONTENT_TYPE' => 'application/json',
+        ], $body)->assertOk();
+
+        // Access restored AND the content was never deleted at any point.
+        $this->assertTrue(app(PlanEngine::class)->hasFeature($tenant->id, 'courses_limit'));
+        $this->assertDatabaseHas('courses', ['id' => $course->id]);
     }
 }

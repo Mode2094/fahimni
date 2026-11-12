@@ -16,22 +16,26 @@ function SuccessInner() {
   const search = useSearchParams();
   const status = search.get('status');
   const licenseId = search.get('license_id');
+  const ref = search.get('ref');
 
   const [confirmed, setConfirmed] = useState<boolean | null>(null);
 
   // Reconcile with the backend by its server-side re-fetch of the license.
   // This NEVER decides success from the URL — it only reads the backend
-  // result, which is derived from the Freemius API.
+  // result, which is derived from the Freemius API. The checkout reference
+  // (when present) is verified server-side to belong to this tenant.
   useEffect(() => {
     if (!licenseId) return;
-    fetch(`${API}/subscriptions/freemius/complete?license_id=${encodeURIComponent(licenseId)}`, {
+    const params = new URLSearchParams({ license_id: licenseId });
+    if (ref) params.set('ref', ref);
+    fetch(`${API}/subscriptions/freemius/complete?${params.toString()}`, {
       credentials: 'include',
       headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('lms_tenant') || '' },
     })
       .then((r) => r.json())
       .then((d) => setConfirmed(d.status === 'active'))
       .catch(() => setConfirmed(null));
-  }, [licenseId]);
+  }, [licenseId, ref]);
 
   // Payment is only ever confirmed by the backend (webhook). The success page
   // never claims success on its own.

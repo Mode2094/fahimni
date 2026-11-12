@@ -79,29 +79,52 @@ class FreemiusWebhookController extends Controller
             if (in_array($eventType, FreemiusGateway::ENTITLEMENT_EVENTS, true)) {
                 $licenseId = $this->extractLicenseId($event);
 
-                if ($licenseId) {
-                    // Re-fetch from the API — never trust the payload body.
-                    // syncByLicenseId THROWS on a transient API failure; only
-                    // a genuine success (or a definitive not-found) lets us
-                    // mark the event processed. This prevents losing a real
-                    // payment event on a timeout.
-                    $result = $this->sync->syncByLicenseId($licenseId);
-
-                    $recorded->markProcessed();
-
-                    return response()->json(['message' => 'OK', 'result' => $result['status']]);
+                if (! $licenseId) {
+                    // A license.* event with no resolvable license id is
+                    // malformed for our purposes: keep it for manual review
+                    // instead of silently marking it processed.
+                    return $this->holdForReview(
+                        $recorded,
+                        'missing_license_id',
+                        422,
+                    );
                 }
-            } elseif ($eventType === FreemiusGateway::DELETE_EVENT) {
+
+                // Re-fetch from the API — never trust the payload body.
+                // syncByLicenseId THROWS on a transient API failure.
+                $result = $this->sync->syncByLicenseId($licenseId);
+
+                return match ($result['status']) {
+                    // Fully applied — safe to mark processed.
+                    'synced' => $this->acknowledge($recorded, $result['status']),
+
+                    // Definitive: Freemius has no such license (404). Nothing
+                    // to apply and nothing to retry → mark processed.
+                    'not_found' => $this->acknowledge($recorded, $result['status']),
+
+                    // License exists but no local tenant matches (unknown
+                    // customer, or a customer with no/mismatched local
+                    // account). This needs MANUAL REVIEW — never mark
+                    // processed, never lose the event.
+                    'no_tenant' => $this->holdForReview($recorded, 'no_tenant', 202),
+
+                    default => $this->holdForReview($recorded, 'unresolved', 202),
+                };
+            }
+
+            if ($eventType === FreemiusGateway::DELETE_EVENT) {
                 $licenseId = (string) ($event['data']['license_id'] ?? '');
 
                 if ($licenseId !== '') {
                     $this->sync->deleteByLicenseId($licenseId);
                 }
+
+                return $this->acknowledge($recorded, 'deleted');
             }
+
             // All other event types (incl. subscription.*) are acknowledged
             // and ignored for entitlements.
-
-            $recorded->markProcessed();
+            return $this->acknowledge($recorded, 'ignored');
         } catch (\Throwable $e) {
             // Never leak gateway internals. Leave the event un-processed so
             // Freemius retries — safer than dropping a billing signal. The
@@ -116,8 +139,39 @@ class FreemiusWebhookController extends Controller
 
             return response()->json(['message' => 'Processing error.'], 500);
         }
+    }
 
-        return response()->json(['message' => 'OK']);
+    /**
+     * Mark an event fully resolved and acknowledge it to the sender.
+     */
+    private function acknowledge(WebhookEvent $event, string $result): JsonResponse
+    {
+        $event->markProcessed();
+
+        return response()->json(['message' => 'OK', 'result' => $result]);
+    }
+
+    /**
+     * Keep an event in an unresolved state for reconciliation/manual review.
+     *
+     * It is NOT marked processed (so it is never treated as a success), the
+     * lock is released so the reconciliation job can retry it a bounded number
+     * of times, and it is surfaced via `failed` + a recognizable reason for
+     * operator review. We still return 2xx so Freemius does not spam-retry a
+     * situation that only a human can resolve.
+     */
+    private function holdForReview(WebhookEvent $event, string $reason, int $status): JsonResponse
+    {
+        $event->markFailed($reason);
+
+        Log::warning('freemius.webhook.needs_review', [
+            'payment.provider' => 'freemius',
+            'payment.event' => $event->event_type,
+            'event_id' => $event->event_id,
+            'reason' => $reason,
+        ]);
+
+        return response()->json(['message' => 'Pending review.', 'result' => $reason], $status);
     }
 
     /**
