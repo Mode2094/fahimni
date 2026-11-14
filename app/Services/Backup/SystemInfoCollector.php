@@ -55,7 +55,7 @@ class SystemInfoCollector
         }
 
         return [
-            'platform' => 'Tadreesly',
+            'platform' => 'Fahimni',
             'app_version' => $appVersion,
             'laravel_version' => $laravel,
             'php_version' => $phpVersion,

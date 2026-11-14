@@ -115,7 +115,9 @@ export default function PricingClient() {
               const disc = yearlyDiscount(p);
               const popular = p.popular === true || i === Math.floor(plans.length / 2);
               const isCurrent = currentPlan?.id === p.id;
-              const price = String(formatPrice(priceOf(p))).split(' ')[0];
+              // Platform-subscription prices are always USD; show the plan's
+              // own currency, never the platform (booking) currency.
+              const price = Number(priceOf(p)).toLocaleString('en-US', { maximumFractionDigits: 2 });
               const kf = keyFeatures(p);
               const all = allFeatures(p);
               const appF = (p.features || []).find((x: any) => (x.feature_key || x.key) === 'student_mobile_app');
@@ -156,7 +158,7 @@ export default function PricingClient() {
                   </div>
                   <div className="text-4xl font-extrabold mb-1">
                     {price}
-                    <span className="text-sm font-normal text-gray-400 ms-1">{currencyLabel('JOD', locale === 'ar')} / {cycle === 'yearly' ? t('سنة', 'year') : t('شهر', 'mo')}</span>
+                    <span className="text-sm font-normal text-gray-400 ms-1">{currencyLabel(p.currency || 'USD', locale === 'ar')} / {cycle === 'yearly' ? t('سنة', 'year') : t('شهر', 'mo')}</span>
                   </div>
                   {cycle === 'yearly' && disc !== null ? (
                     <p className="text-xs font-bold text-green-600 mb-6">{t('وفّرت', 'You save')} {disc}%</p>

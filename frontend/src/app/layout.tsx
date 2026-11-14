@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { connection } from 'next/server';
 import { Providers } from '@/components/providers';
 import { SITE_NAME, getSiteOrigin, DEFAULT_OG_IMAGE, absoluteUrl } from '@/lib/seo';
 import './globals.css';
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
     template: `%s | ${SITE_NAME}`,
   },
   description:
-    'منصة Tadreesly — أنشئ منصتك التعليمية، انشر دوراتك، أدر طلابك وامتحاناتك وبثّ حصصك مباشرة. Online teaching platform, LMS and live classes for independent teachers.',
+    'منصة فهمني — أنشئ منصتك التعليمية، انشر دوراتك، أدر طلابك وامتحاناتك وبثّ حصصك مباشرة. Online teaching platform, LMS and live classes for independent teachers.',
   applicationName: SITE_NAME,
   robots: {
     index: true,
@@ -32,16 +33,20 @@ export const metadata: Metadata = {
     description:
       'أنشئ منصتك التعليمية، انشر دوراتك، أدر طلابك وامتحاناتك وبثّ حصصك مباشرة — كل ذلك في مكان واحد.',
     locale: 'ar_AR',
-    images: [{ url: absoluteUrl(DEFAULT_OG_IMAGE), width: 512, height: 512, alt: SITE_NAME }],
+    images: [{ url: absoluteUrl(DEFAULT_OG_IMAGE), width: 1200, height: 630, alt: SITE_NAME }],
   },
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: `${SITE_NAME} — منصة تعليمية لكل معلم`,
     description: 'منصة تعليمية متكاملة لكل معلم: دورات، طلاب، امتحانات، وبث مباشر.',
     images: [absoluteUrl(DEFAULT_OG_IMAGE)],
   },
   icons: {
-    icon: [{ url: '/icon.png', sizes: 'any', type: 'image/png' }],
+    icon: [
+      { url: '/icon.png', sizes: 'any', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
     apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
   },
   manifest: '/manifest.webmanifest',
@@ -53,7 +58,14 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // CSP nonces are injected during server-side rendering from the request
+  // headers (see src/proxy.ts). A statically prerendered page is built once,
+  // with no request and therefore no nonce, so every script would be blocked
+  // by the strict `'strict-dynamic'` policy. Awaiting a dynamic API opts the
+  // whole app into per-request rendering so the nonce is always present.
+  await connection();
+
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>

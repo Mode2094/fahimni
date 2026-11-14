@@ -6,12 +6,12 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const title = 'التحقق من الشهادة';
   return {
     title,
-    description: 'تحقق من صحة شهادة تعليمية صادرة عبر منصة Tadreesly.',
+    description: 'تحقق من صحة شهادة تعليمية صادرة عبر منصة فهمني.',
     alternates: { canonical: `/certificates/${id}` },
     robots: { index: true, follow: true },
     openGraph: {
       title,
-      description: 'تحقق من صحة شهادة تعليمية صادرة عبر منصة Tadreesly.',
+      description: 'تحقق من صحة شهادة تعليمية صادرة عبر منصة فهمني.',
       type: 'website',
       siteName: SITE_NAME,
       url: absoluteUrl(`/certificates/${id}`),

@@ -1,0 +1,21 @@
+[Unit]
+Description=Fahimni — re-apply additive Caddy vhosts after a LooksLoop redeploy
+Documentation=file:/opt/fahimni/deploy/README.md
+# Reconciles: re-attaches the Caddy container to the shared proxy network and
+# reloads the merged (LooksLoop + Fahimni) config. Idempotent and cheap: it
+# re-reads the current container's Caddyfile and only reloads when it changed.
+After=docker.service
+Wants=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=fahimni
+Group=fahimni
+Environment=FAHIMNI_STATE_DIR=/var/lib/fahimni
+# A staging-only deploy has NO production/current release, so the reconcile must
+# not hard-code that path. Pick whichever release exists (production preferred,
+# staging used when production is absent), then run its script. This makes the
+# unit work during a staging-only launch without requiring production/current.
+ExecStart=/bin/sh -c 'for d in /opt/fahimni/production/current /opt/fahimni/staging/current; do s="$d/deploy/scripts/caddy-docker-integrate.sh"; if [ -x "$s" ]; then exec "$s" --reconcile --yes; fi; done; echo "fahimni-caddy-reconcile: no release found under /opt/fahimni/{production,staging}/current" >&2; exit 1'
+Nice=10

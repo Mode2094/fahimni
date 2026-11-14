@@ -99,7 +99,7 @@
     </table>
 
     <div class="footer">
-        <span>{{ config('app.name', 'Tadreesly') }}</span>
+        <span>{{ config('app.name', 'منصة فهمني') }}</span>
         <span>تم الإنشاء / Generated: {{ $generated_at->format('Y-m-d H:i') }}</span>
     </div>
 </body>

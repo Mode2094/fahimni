@@ -7,11 +7,8 @@ use App\Http\Requests\Subscription\SubscribeRequest;
 use App\Http\Resources\TenantSubscriptionResource;
 use App\Models\SubscriptionPlan;
 use App\Models\TenantSubscription;
-use App\Services\PaddleGateway;
-use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Symfony\Component\Uid\UuidV7;
 
 class TenantSubscriptionController extends Controller
 {
@@ -35,20 +32,36 @@ class TenantSubscriptionController extends Controller
     {
         $this->authorize('viewAny', TenantSubscription::class);
 
-        $tenantId = $request->header('X-Tenant-Id');
+        $tenantId = (string) $request->header('X-Tenant-Id');
 
-        $subscription = TenantSubscription::where('tenant_id', $tenantId)
-            ->whereIn('status', ['active', 'trialing'])
-            ->with('plan.features')
-            ->latest('starts_at')
-            ->first();
+        // Single source of truth: the effective state (Freemius entitlement OR
+        // legacy local subscription). Never report a stale local row as the
+        // current subscription when a Freemius license actually governs access.
+        $state = \App\Plans\SubscriptionState::make()->resolve($tenantId);
 
-        if (! $subscription) {
+        if ($state['source'] === \App\Plans\SubscriptionState::SOURCE_NONE || ! $state['plan_id']) {
+            return response()->json(['subscription' => null]);
+        }
+
+        $plan = \App\Models\SubscriptionPlan::with('features')->find($state['plan_id']);
+
+        if (! $plan) {
             return response()->json(['subscription' => null]);
         }
 
         return response()->json([
-            'subscription' => new TenantSubscriptionResource($subscription),
+            'subscription' => [
+                'id' => $state['subscription_id'],
+                'plan_id' => $plan->id,
+                'plan' => new \App\Http\Resources\SubscriptionPlanResource($plan),
+                'status' => $state['status'],
+                'billing_cycle' => $state['billing_cycle'],
+                'billing_source' => $state['source'],
+                'cancel_at_period_end' => $state['cancel_at_period_end'] ?? false,
+                'starts_at' => null,
+                'ends_at' => $state['ends_at']?->toIso8601String(),
+                'trial_ends_at' => $state['trial_ends_at']?->toIso8601String(),
+            ],
         ]);
     }
 
@@ -63,10 +76,10 @@ class TenantSubscriptionController extends Controller
             return response()->json(['message' => 'Plan is not active.'], 422);
         }
 
-        // The legacy subscribe endpoint never cuts service before payment:
-        // the active subscription keeps running until a payment completes
-        // through the checkout flow (payments/initiate -> markPaid), which
-        // supersedes it atomically.
+        // Platform subscriptions are collected exclusively via Freemius. This
+        // legacy endpoint no longer provisions a paid subscription locally:
+        // it only reports the current state so the client can start the
+        // Freemius checkout (POST subscriptions/freemius/checkout).
         $active = TenantSubscription::where('tenant_id', $tenantId)
             ->whereIn('status', ['active', 'trialing'])
             ->latest('starts_at')
@@ -74,33 +87,15 @@ class TenantSubscriptionController extends Controller
 
         if ($active) {
             return response()->json([
-                'message' => 'You already have an active subscription. Renew or upgrade it through the checkout flow.',
+                'message' => 'You already have an active subscription. Manage or upgrade it through the billing portal.',
                 'subscription' => new TenantSubscriptionResource($active->load('plan')),
             ], 422);
         }
 
-        $billingCycle = $request->billing_cycle ?? 'monthly';
-        $price = $billingCycle === 'yearly' ? $plan->yearly_price : $plan->monthly_price;
-
-        // Trial is granted once per tenant: no history = trial, otherwise must pay.
-        $hasHistory = TenantSubscription::where('tenant_id', $tenantId)->exists();
-
-        $subscription = TenantSubscription::create([
-            'id' => UuidV7::generate(),
-            'tenant_id' => $tenantId,
-            'plan_id' => $plan->id,
-            'status' => $hasHistory ? 'pending' : 'trialing',
-            'billing_cycle' => $billingCycle,
-            'starts_at' => now(),
-            'trial_ends_at' => $hasHistory ? null : now()->addDays($plan->trial_days),
-            'auto_renew' => true,
-        ]);
-
-        AuditLogger::log($request, 'subscription.subscribed', 'plan', $plan->id, ['cycle' => $billingCycle]);
-
         return response()->json([
-            'subscription' => new TenantSubscriptionResource($subscription->load('plan')),
-        ], 201);
+            'message' => 'Subscriptions are billed through Freemius. Start a checkout to subscribe.',
+            'checkout_endpoint' => 'subscriptions/freemius/checkout',
+        ], 409);
     }
 
     public function cancel(string $id): JsonResponse
@@ -109,19 +104,13 @@ class TenantSubscriptionController extends Controller
 
         $this->authorize('cancel', $subscription);
 
-        // Paddle-managed subscription: cancel in Paddle FIRST so local state
-        // never claims a cancellation Paddle does not know about. A Paddle
-        // API failure aborts the local cancel instead of desyncing the two.
-        $paddleSubscriptionId = ($subscription->metadata ?? [])['paddle_subscription_id'] ?? null;
-
-        if (is_string($paddleSubscriptionId) && $paddleSubscriptionId !== '') {
-            try {
-                PaddleGateway::cancelSubscription($paddleSubscriptionId);
-            } catch (\Throwable $e) {
-                return response()->json([
-                    'message' => 'تعذّر إلغاء الاشتراك لدى Paddle — حاول مجددًا لاحقًا. (Could not cancel the subscription in Paddle — please try again.)',
-                ], 502);
-            }
+        // Freemius-owned subscriptions MUST be cancelled through Freemius so
+        // the two systems never desync. Use the Freemius cancel endpoint
+        // (POST subscriptions/freemius/cancel) instead of this legacy route.
+        if ($subscription->billing_source === 'freemius') {
+            return response()->json([
+                'message' => 'This subscription is managed by Freemius. Cancel it from the billing portal.',
+            ], 409);
         }
 
         $subscription->update([
@@ -129,6 +118,8 @@ class TenantSubscriptionController extends Controller
             'cancelled_at' => now(),
             'auto_renew' => false,
         ]);
+
+        \App\Plans\PlanEngine::bumpVersion();
 
         return response()->json([
             'subscription' => new TenantSubscriptionResource($subscription->load('plan')),

@@ -7,11 +7,12 @@ import { useAuth } from '@/store';
 import { authFetch } from '@/lib/auth-client';
 import { useLocale } from '@/store/locale';
 import { t } from '@/lib/i18n';
-import { ShieldCheck, Eye, EyeOff, ArrowLeft, Users, BarChart3, Lock, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, Users, BarChart3, Lock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Link from 'next/link';
+import PlatformLogo from '@/components/brand/platform-logo';
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState('');
@@ -103,10 +104,8 @@ export default function AdminLoginPage() {
         </div>
         <div className="relative z-10 flex flex-col justify-center px-12 w-full">
           <div className="flex items-center gap-3 mb-14">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-600 to-teal-800 shadow-xl">
-              <ShieldCheck className="h-6 w-6 text-white" />
-            </div>
-            <div><span className="text-xl font-bold text-white">Tadreesly</span><p className="text-xs text-white/60">{locale === 'ar' ? 'بوابة الإدارة' : 'Admin Portal'}</p></div>
+            <PlatformLogo className="h-12 w-12 rounded-2xl object-contain shadow-xl" />
+            <div><span className="text-xl font-bold text-white">منصة فهمني</span><p className="text-xs text-white/60">{locale === 'ar' ? 'بوابة الإدارة' : 'Admin Portal'}</p></div>
           </div>
           <h1 className="text-4xl font-bold text-white leading-tight mb-6 animate-in">
             {locale === 'ar' ? 'التحكم الكامل' : 'Full Platform'}
@@ -118,16 +117,14 @@ export default function AdminLoginPage() {
               <div key={i} className="flex items-center gap-3 text-white/75"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10"><it.icon className="h-4 w-4" /></div><span className="text-sm">{it.text}</span></div>
             ))}
           </div>
-          <div className="mt-auto pt-14 text-white/40 text-xs">© 2026 Tadreesly · {locale === 'ar' ? 'جميع الحقوق محفوظة' : 'All rights reserved'}</div>
+          <div className="mt-auto pt-14 text-white/40 text-xs">© 2026 منصة فهمني · {locale === 'ar' ? 'جميع الحقوق محفوظة' : 'All rights reserved'}</div>
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12 bg-gray-50">
         <div className="w-full max-w-md space-y-8">
           <div className="text-center">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-600 to-teal-800 shadow-xl shadow-violet-500/25">
-              <ShieldCheck className="h-8 w-8 text-white" />
-            </div>
+            <PlatformLogo className="mx-auto mb-5 h-16 w-16 rounded-2xl object-contain shadow-xl shadow-violet-500/25" />
             <h1 className="text-2xl sm:text-3xl font-bold">{locale === 'ar' ? 'بوابة الإدارة' : 'Admin Portal'}</h1>
             <p className="text-gray-500 mt-2">{locale === 'ar' ? 'دخول مديري المنصة فقط' : 'Platform admins only'}</p>
           </div>

@@ -784,8 +784,8 @@ class AdminController extends Controller
         } elseif ($request->status === 'refunded' && $oldStatus !== 'refunded') {
             // The real gateway must confirm the refund before the platform
             // records it — money was collected, so a status flip alone is a
-            // lie. Only fake-gateway payments (no provider charge) can be
-            // refunded in-place.
+            // lie. Platform-subscription refunds are issued in Freemius;
+            // booking refunds are issued in the booking gateway dashboard.
             if (in_array($payment->gateway, ['fake', 'card'], true)) {
                 $payment->update(['status' => 'refunded']);
 
@@ -807,9 +807,11 @@ class AdminController extends Controller
                 Invoice::where('payment_id', $payment->id)->update(['status' => 'cancelled']);
                 $payment->subscription?->update(['status' => 'cancelled', 'cancelled_at' => now(), 'auto_renew' => false]);
             } else {
-                return response()->json([
-                    'message' => "Refunds for {$payment->gateway} payments must be processed inside the gateway dashboard; the platform will sync via webhook.",
-                ], 422);
+                $message = $payment->gateway === 'freemius'
+                    ? 'Refunds for Freemius subscriptions must be issued from the Freemius dashboard; the platform will sync the resulting entitlement change via webhook.'
+                    : "Refunds for {$payment->gateway} payments must be processed inside the gateway dashboard; the platform will sync via webhook.";
+
+                return response()->json(['message' => $message], 422);
             }
         } else {
             $payment->update(['status' => $request->status]);

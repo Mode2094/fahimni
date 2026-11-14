@@ -3,17 +3,25 @@
 namespace App\Http\Controllers\Api\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\PlatformSetting;
+use App\Models\SubscriptionPlan;
+use App\Models\TeacherInvitation;
 use App\Models\Tenant;
+use App\Models\TenantSetting;
+use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
+use Spatie\Permission\Models\Role;
 use Symfony\Component\Uid\UuidV7;
 
 /**
@@ -30,6 +38,17 @@ class GoogleAuthController extends Controller
         $role = in_array($request->query('role', 'teacher'), ['teacher', 'student', 'admin'], true)
             ? (string) $request->query('role')
             : 'teacher';
+
+        // Fail fast (and honestly) when OAuth is not configured: Socialite
+        // happily builds a URL with an empty client_id, and Google then shows
+        // a raw "invalid_request / missing client_id" page. A clear message
+        // lets the UI keep the button hidden instead of dead-ending users.
+        if (trim((string) config('services.google.client_id')) === ''
+            || trim((string) config('services.google.client_secret')) === '') {
+            Log::warning('google.redirect_not_configured');
+
+            return response()->json(['message' => 'Google sign-in is not available yet.'], 503);
+        }
 
         // Registration hints from the signup form. Passwords are NEVER
         // accepted here: they would end up in URLs, logs and cache.
@@ -87,6 +106,9 @@ class GoogleAuthController extends Controller
             'phone' => $state['phone'] ?? null,
         ];
 
+        // Staff (teacher/admin) identities own a workspace tenant.
+        $wantsStaffTenant = in_array($role, ['teacher', 'admin'], true);
+
         try {
             $google = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
@@ -103,89 +125,108 @@ class GoogleAuthController extends Controller
         }
 
         $user = User::where('email', $email)->first();
+        $existingTenant = $user ? $user->tenantPivots()->first() : null;
 
-        if (! $user) {
-            // Admin accounts are never self-provisioned through OAuth: only
-            // the configured platform super-admin email may be promoted.
-            if ($role === 'admin' && ! $this->isConfiguredSuperAdminEmail($email)) {
-                return redirect()->away($frontend.'/auth/google/callback?error=not_authorized');
-            }
-
-            $user = User::create([
-                'id' => UuidV7::generate(),
-                'name' => $name,
-                'email' => $email,
-                'phone' => $regData['phone'] ?? null,
-                // Random unusable password — OAuth users set one if needed.
-                'password' => Hash::make(Str::random(64)),
-                'is_active' => true,
-                'email_verified_at' => now(),
-            ]);
-
-            if ($role === 'admin') {
-                $user->forceFill(['is_super_admin' => true])->save();
-            }
-        } else {
-            // Never mutate credentials from OAuth profile hints — only the
-            // name/phone submitted from the signup form.
-            $updates = [];
-            if (! empty($regData['name'])) {
-                $updates['name'] = $regData['name'];
-            }
-            if (! empty($regData['phone'])) {
-                $updates['phone'] = $regData['phone'];
-            }
-            if ($updates) {
-                $user->update($updates);
-            }
-
-            if (! $user->is_active) {
-                return redirect()->away($frontend.'/auth/google/callback?error=inactive');
-            }
-
-            // Google login must never bypass an enabled second factor.
-            if ($user->two_factor_enabled) {
-                if ($request->hasSession()) {
-                    // Web session flow: the pending challenge stays server-side.
-                    $request->session()->put('auth.2fa_pending', [
-                        'user_id' => $user->id,
-                        'expires_at' => now()->addMinutes(5)->getTimestamp(),
-                    ]);
-
-                    return redirect()->away($frontend.'/auth/google/callback?step=2fa');
-                }
-
-                $pending = bin2hex(random_bytes(16));
-                Cache::put('2fa:'.$pending, $user->id, now()->addMinutes(5));
-
-                return redirect()->away($frontend.'/auth/google/callback#requires_2fa=1&two_factor_token='.$pending);
-            }
+        // ── Gates. Decided BEFORE any write so a rejected attempt never
+        //    leaves a half-created account behind. ──────────────────────────
+        //
+        // Admin accounts are never self-provisioned through OAuth: only the
+        // configured platform super-admin email may be promoted.
+        if (! $user && $role === 'admin' && ! $this->isConfiguredSuperAdminEmail($email)) {
+            return redirect()->away($frontend.'/auth/google/callback?error=not_authorized');
         }
 
-        // إنشاء Tenant خاص للمستخدم الجديد (منصة) — نفس منطق التسجيل العادي.
-        // Students never get an owner tenant from an OAuth login.
-        $tenant = null;
-        $membership = TenantUser::where('user_id', $user->id)->first();
+        // Provisioning a *new* teacher workspace (new identity, or an existing
+        // non-teacher account) is subject to the same teacher-registration
+        // control as email/password signup — Google must not be a bypass.
+        if ($wantsStaffTenant
+            && ! $existingTenant
+            && $role === 'teacher'
+            && ! ($user && $user->hasRole('Teacher'))
+            && ! $this->teacherRegistrationAllowed($email)) {
+            return redirect()->away($frontend.'/auth/google/callback?error=teacher_registration_disabled');
+        }
 
-        if (! $membership && in_array($role, ['teacher', 'admin'], true)) {
-            $tenant = Tenant::create([
-                'id' => UuidV7::generate(),
-                'owner_user_id' => $user->id,
-                'name' => $name.'\'s Platform',
-                'slug' => 'platform-'.strtolower(Str::random(6)),
-                'is_active' => true,
-            ]);
+        if ($user && ! $user->is_active) {
+            return redirect()->away($frontend.'/auth/google/callback?error=inactive');
+        }
 
-            TenantUser::create([
-                'id' => UuidV7::generate(),
-                'tenant_id' => $tenant->id,
-                'user_id' => $user->id,
-                'role' => 'owner',
-                'status' => 'active',
-                'joined_at' => now(),
-            ]);
-        } else {
-            $tenant = Tenant::find($membership->tenant_id);
+        // Google login must never bypass an enabled second factor.
+        if ($user && $user->two_factor_enabled) {
+            if ($request->hasSession()) {
+                // Web session flow: the pending challenge stays server-side.
+                $request->session()->put('auth.2fa_pending', [
+                    'user_id' => $user->id,
+                    'expires_at' => now()->addMinutes(5)->getTimestamp(),
+                ]);
+
+                return redirect()->away($frontend.'/auth/google/callback?step=2fa');
+            }
+
+            $pending = bin2hex(random_bytes(16));
+            Cache::put('2fa:'.$pending, $user->id, now()->addMinutes(5));
+
+            return redirect()->away($frontend.'/auth/google/callback#requires_2fa=1&two_factor_token='.$pending);
+        }
+
+        // ── Create the account and its workspace atomically. If anything
+        //    fails the whole thing rolls back: no orphan user without a
+        //    tenant, no tenant without an owner membership. ────────────────
+        try {
+            [$user, $tenant] = DB::transaction(function () use ($email, $name, $regData, $role, $wantsStaffTenant) {
+                // Re-read inside the transaction and take a row lock so
+                // concurrent callbacks converge on one row.
+                $user = User::where('email', $email)->lockForUpdate()->first();
+
+                if (! $user) {
+                    $user = User::create([
+                        'id' => UuidV7::generate(),
+                        'name' => $name,
+                        'email' => $email,
+                        'phone' => $regData['phone'] ?? null,
+                        // Random unusable password — OAuth users set one if needed.
+                        'password' => Hash::make(Str::random(64)),
+                        'is_active' => true,
+                        'email_verified_at' => now(),
+                    ]);
+
+                    if ($role === 'admin') {
+                        $user->forceFill(['is_super_admin' => true])->save();
+                    }
+                } else {
+                    // Never mutate credentials from OAuth profile hints — only
+                    // the name/phone submitted from the signup form.
+                    $updates = [];
+                    if (! empty($regData['name'])) {
+                        $updates['name'] = $regData['name'];
+                    }
+                    if (! empty($regData['phone'])) {
+                        $updates['phone'] = $regData['phone'];
+                    }
+                    if ($updates) {
+                        $user->update($updates);
+                    }
+                }
+
+                return [$user, $this->ensureWorkspaceTenant($user, $name, $email, $wantsStaffTenant)];
+            });
+        } catch (QueryException $e) {
+            // A concurrent callback won the race: the unique index rejected the
+            // duplicate and the transaction rolled back cleanly. Re-read the
+            // winner's rows and continue signing this user in.
+            if (! $this->isDuplicateKey($e)) {
+                throw $e;
+            }
+
+            $user = User::where('email', $email)->first();
+
+            if (! $user) {
+                Log::warning('google.callback_unique_collision');
+
+                return redirect()->away($frontend.'/auth/google/callback?error=retry');
+            }
+
+            $tenant = $wantsStaffTenant ? Tenant::where('owner_id', $user->id)->first() : null;
         }
 
         // Web browser flow: sign in with an HttpOnly session cookie — the
@@ -216,6 +257,104 @@ class GoogleAuthController extends Controller
         ]);
 
         return redirect()->away($frontend.'/auth/google/callback#'.$fragment);
+    }
+
+    /**
+     * Resolve the tenant this user should land on, provisioning the teacher
+     * workspace on first use. MUST be called inside the caller's transaction:
+     * Tenant + TenantSetting + TenantUser + trial all commit together, so a
+     * failure can never leave a tenant without its owner membership.
+     *
+     * Column names follow the real schema (tenants.owner_id / tenants.email /
+     * tenants.status) — NOT owner_user_id / is_active, which do not exist.
+     */
+    private function ensureWorkspaceTenant(User $user, string $name, string $email, bool $wantsStaffTenant): ?Tenant
+    {
+        // Already a member of some tenant → that is the user's workspace.
+        $membership = $user->tenantPivots()->first();
+
+        if ($membership) {
+            return Tenant::find($membership->tenant_id);
+        }
+
+        // Students never get an owner tenant from an OAuth login.
+        if (! $wantsStaffTenant) {
+            return null;
+        }
+
+        $tenant = Tenant::create([
+            'id' => UuidV7::generate(),
+            'name' => $name.' '.__('Platform'),
+            'type' => 'tutor',
+            'slug' => (Str::slug($name) ?: 'platform').'-'.Str::random(6),
+            'email' => $email,
+            'owner_id' => $user->id,
+            'status' => 'active',
+        ]);
+
+        TenantSetting::create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $tenant->id,
+            'academy_name' => $name,
+        ]);
+
+        TenantUser::create([
+            'tenant_id' => $tenant->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+            'status' => 'active',
+            'joined_at' => now(),
+        ]);
+
+        // The dashboard/API authorize staff by the Spatie role, and the web UI
+        // routes by `roles.includes('Teacher')`. Without this the teacher
+        // lands on the student area instead of /teacher/dashboard.
+        if (! $user->hasRole('Teacher')) {
+            $user->assignRole(Role::findOrCreate('Teacher', 'web'));
+        }
+
+        // Registration = immediate 7-day trial on the cheapest active plan,
+        // so the new teacher is not instantly blocked by the subscription
+        // gate. Mirrors AuthController::register().
+        $trialPlan = SubscriptionPlan::where('is_active', true)->orderBy('monthly_price')->first();
+
+        if ($trialPlan) {
+            TenantSubscription::create([
+                'id' => UuidV7::generate(),
+                'tenant_id' => $tenant->id,
+                'plan_id' => $trialPlan->id,
+                'status' => 'trialing',
+                'billing_cycle' => 'monthly',
+                'starts_at' => now(),
+                'trial_ends_at' => now()->addDays(max(1, (int) $trialPlan->trial_days)),
+                'auto_renew' => true,
+            ]);
+        }
+
+        return $tenant;
+    }
+
+    /**
+     * Teacher self-registration mirrors the email/password path: open when the
+     * platform enables it, or when the address holds a pending invitation.
+     */
+    private function teacherRegistrationAllowed(string $email): bool
+    {
+        if ((bool) PlatformSetting::get('teacher_registration_enabled', false)) {
+            return true;
+        }
+
+        return TeacherInvitation::where('email', strtolower(trim($email)))
+            ->where('status', TeacherInvitation::STATUS_PENDING)
+            ->where('expires_at', '>', now())
+            ->exists();
+    }
+
+    /** Postgres unique_violation (23505) or SQLite's UNIQUE constraint error. */
+    private function isDuplicateKey(QueryException $e): bool
+    {
+        return ($e->errorInfo[0] ?? null) === '23505'
+            || str_contains(strtolower($e->getMessage()), 'unique');
     }
 
     /**

@@ -6,8 +6,8 @@ const SECTIONS: LegalSection[] = [
   {
     title: { ar: 'قبول الشروط', en: 'Acceptance of Terms' },
     body: {
-      ar: 'باستخدامك منصة Tadreesly («المنصة») فإنك تقر بأنك قرأت وفهمت ووافقت على هذه الشروط والأحكام («الشروط») بشكل كامل. إذا لم توافق عليها، يرجى عدم استخدام المنصة. يحق لإدارة المنصة تعديل هذه الشروط في أي وقت، ويُعتبر استمرارك في الاستخدام بعد الإعلان عن التعديل موافقة ملزمة على الشروط المحدثة.',
-      en: 'By using the Tadreesly Platform ("the Platform") you acknowledge that you have read, understood and fully agreed to these Terms & Conditions ("Terms"). If you do not agree, please do not use the Platform. The management may amend these Terms at any time; continued use after notice of the amendment constitutes binding acceptance of the updated Terms.',
+      ar: 'باستخدامك منصة فهمني («المنصة») فإنك تقر بأنك قرأت وفهمت ووافقت على هذه الشروط والأحكام («الشروط») بشكل كامل. إذا لم توافق عليها، يرجى عدم استخدام المنصة. يحق لإدارة المنصة تعديل هذه الشروط في أي وقت، ويُعتبر استمرارك في الاستخدام بعد الإعلان عن التعديل موافقة ملزمة على الشروط المحدثة.',
+      en: 'By using the Fahimni Platform ("the Platform") you acknowledge that you have read, understood and fully agreed to these Terms & Conditions ("Terms"). If you do not agree, please do not use the Platform. The management may amend these Terms at any time; continued use after notice of the amendment constitutes binding acceptance of the updated Terms.',
     },
   },
   {
@@ -122,7 +122,7 @@ export default function TermsPage() {
     <LegalPage
       icon="file"
       title={{ ar: 'الشروط والأحكام', en: 'Terms & Conditions' }}
-      subtitle={{ ar: 'بنود استخدام منصة Tadreesly — تقرأها مرة وتحميك دائمًا', en: 'Terms of using the Tadreesly Platform' }}
+      subtitle={{ ar: 'بنود استخدام منصة فهمني — تقرأها مرة وتحميك دائمًا', en: 'Terms of using the Fahimni Platform' }}
       updated="06/08/2026"
       sections={SECTIONS}
     />

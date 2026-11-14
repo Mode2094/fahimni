@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least-privilege: CI only reads the repo. No production secrets are used —
+# the Laravel suite runs against an in-memory SQLite database configured in
+# phpunit.xml, and the frontend build uses placeholder public env vars.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  laravel:
+    name: Laravel (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The composer.lock targets Symfony 8.x which requires PHP >= 8.4.1,
+        # matching the production Docker image — CI mirrors that.
+        php: ['8.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, pdo_sqlite, sqlite3, bcmath, gd, zip
+          coverage: none
+
+      - name: Write CI environment
+        run: |
+          # A non-production .env for bootstrapping so post-autoload scripts
+          # (package:discover) boot without production-only guards. No secrets.
+          {
+            echo "APP_NAME=LMS"
+            echo "APP_ENV=testing"
+            echo "APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+            echo "APP_DEBUG=true"
+            echo "APP_URL=http://localhost"
+            echo "DB_CONNECTION=sqlite"
+            echo "DB_DATABASE=:memory:"
+            echo "CACHE_STORE=array"
+            echo "SESSION_DRIVER=array"
+            echo "QUEUE_CONNECTION=sync"
+            echo "MAIL_MAILER=array"
+          } > .env
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ matrix.php }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ matrix.php }}-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run test suite
+        run: vendor/bin/phpunit --no-coverage
+
+  frontend:
+    name: Next.js (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        env:
+          # Public, non-secret placeholders — enough to compile the app.
+          NEXT_PUBLIC_API_URL: /api/v1
+          NEXT_PUBLIC_PLATFORM_DOMAIN: app.example.com
+        run: npm run build
+
+  deploy-assets:
+    name: Deploy assets (shellcheck + compose + Caddy merge)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax
+        run: bash -n deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
+
+      - name: Migrate script fails loudly (no '|| true' swallow)
+        # migrate / plans:sync / seed / count-probe: every failure must abort.
+        run: deploy/tests/migrate-script-test.sh
+
+      - name: Redis maxmemory stays below the container cap
+        # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
+        run: deploy/tests/redis-memory-check.sh
+
+      - name: Laravel writable dirs are committed and survive the build context
+        # storage/framework/views absent => config('view.compiled') false =>
+        # `php artisan optimize` aborts => app container never starts.
+        run: deploy/tests/storage-dirs-test.sh
+
+      - name: Validate compose (staging + production)
+        run: |
+          # env_file: .env must exist for `compose config`; values are placeholders.
+          cp deploy/env/staging.env.example .env
+          docker compose --env-file deploy/env/staging.env.example config --quiet
+          cp deploy/env/production.env.example .env
+          docker compose --env-file deploy/env/production.env.example config --quiet
+
+      - name: Caddy merge validates against a LooksLoop-shaped base
+        # Proves the additive Fahimni vhosts merge with LooksLoop's global block,
+        # :443 on-demand catch-all and :80 redirect without collision, and that
+        # the duplicate-host guard fires.
+        run: deploy/tests/caddy-merge-validate.sh
+
+      - name: Caddy reconcile detects a recreated LooksLoop container
+        # Real Docker: recreates the fake LooksLoop Caddy container (network-detach
+        # and container-id paths) and reloads its own Caddyfile (live-config path),
+        # proving --reconcile re-applies even when the Caddyfile bytes are unchanged.
+        run: deploy/tests/caddy-reconcile-recreate.sh

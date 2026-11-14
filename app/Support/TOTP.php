@@ -47,7 +47,7 @@ class TOTP
         return false;
     }
 
-    public static function otpauthUrl(string $secret, string $account, string $issuer = 'Tadreesly'): string
+    public static function otpauthUrl(string $secret, string $account, string $issuer = 'Fahimni'): string
     {
         return 'otpauth://totp/'
             .rawurlencode($issuer.':'.$account)

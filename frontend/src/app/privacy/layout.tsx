@@ -3,7 +3,7 @@ import { ogBase, twitterBase } from '@/lib/seo';
 
 const title = 'سياسة الخصوصية — Privacy policy';
 const description =
-  'سياسة الخصوصية في منصة Tadreesly — كيف نحمي بياناتك وبيانات طلابك ونتعامل معها بأمان.';
+  'سياسة الخصوصية في منصة فهمني — كيف نحمي بياناتك وبيانات طلابك ونتعامل معها بأمان.';
 
 export const metadata: Metadata = {
   title,

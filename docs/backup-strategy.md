@@ -15,9 +15,15 @@ pg_restore -U lms -h localhost -d lms --clean --if-exists backup-2026-08-05_02-0
 ```
 
 ## Off-site (إلزامي قبل الإطلاق — لم يُفعّل بعد)
-النسخ المحلية لا تحمي من فشل المضيف. المطلوب:
-- **خيار A (موصى به)**: حاوية/خدمة sync تنقل `backups_data` إلى تخزين خارجي (S3/Backblaze) عبر rclone في 03:00
-- **خيار B**: snapshot يومي لـ `backups_data` على مستوى مزود السحابة (EBS snapshot / PITR من managed Postgres)
+النسخ المحلية لا تحمي من فشل المضيف. سكربت جاهز في المستودع:
+- `deploy/scripts/backup-offsite.sh` — `pg_dump -Fc` + أرشيف الوسائط، تشفير
+  إلزامي (age أو OpenSSL)، رفع rclone، تحقق من البصمات، واحتفاظ افتراضي 14 يومًا.
+- `deploy/scripts/restore-drill.sh` — استعادة إلى حاوية Postgres معزولة
+  (`--network none`) وفحص عدد الجداول/المستخدمين، دون لمس الإنتاج.
+- **الحالة:** السكربت جاهز لكن النسخ الخارجي **غير مفعّل** حتى يُضبط rclone
+  ويُخزَّن مفتاح/عبارة فك التشفير خارج المضيف.
+- **خيار بديل**: snapshot يومي لـ `backups_data` على مستوى مزود السحابة
+  (EBS snapshot / PITR من managed Postgres).
 
 ## Retention
 | Type | Retention |

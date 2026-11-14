@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { SITE_NAME } from '@/lib/seo';
+import { BRAND_NAME_SHORT } from '@/lib/brand';
 
 /**
  * Single manifest entry for every installable app on the platform.
@@ -11,7 +12,7 @@ import { SITE_NAME } from '@/lib/seo';
  *
  *   1. Referer  — same-origin manifest fetches carry the page URL
  *      (Referrer-Policy: strict-origin-when-cross-origin keeps the path on
- *      same-origin requests), so tadreesly.com/t/ahmad → ahmad's manifest.
+ *      same-origin requests), so fahimni.me/t/ahmad → ahmad's manifest.
  *   2. Host     — on a custom domain or teacher subdomain the page URL has no
  *      /t/ path, so the Host header is resolved through the public domain
  *      lookup (verified custom domains, then {slug}.{platform}).
@@ -28,7 +29,7 @@ const API_ORIGIN = API.replace(/\/api\/v1\/?$/, '');
 
 const PLATFORM_MANIFEST = {
   name: SITE_NAME,
-  short_name: SITE_NAME,
+  short_name: BRAND_NAME_SHORT,
   description: 'منصة تعليمية متكاملة للمعلمين: دورات، طلاب، امتحانات وبث مباشر.',
   start_url: '/',
   scope: '/',
@@ -39,8 +40,10 @@ const PLATFORM_MANIFEST = {
   lang: 'ar',
   dir: 'rtl',
   icons: [
-    { src: '/icon.png', sizes: 'any', type: 'image/png' },
-    { src: '/apple-icon.png', sizes: 'any', type: 'image/png' },
+    { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    { src: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
   ],
 } as const;
 
@@ -126,8 +129,10 @@ export async function GET(request: Request) {
     dir: 'rtl',
     icons: [
       ...(logo ? [{ src: logo, sizes: 'any', type: 'image/png', purpose: 'any' as const }] : []),
-      { src: '/icon.png', sizes: 'any', type: 'image/png' },
-      { src: '/apple-icon.png', sizes: 'any', type: 'image/png' },
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' as const },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' as const },
+      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' as const },
+      { src: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
     ],
   };
 

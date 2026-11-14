@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     locale: 'ar_AR',
     images: [{ url: absoluteUrl(DEFAULT_OG_IMAGE), width: 512, height: 512, alt: SITE_NAME }],
   },
-  twitter: { card: 'summary', title: 'إنشاء كورسات أونلاين — Tadreesly', description: 'أنشئ دروسك المسجلة وبعها أونلاين بسعر تحدده أنت.' },
+  twitter: { card: 'summary', title: 'إنشاء كورسات أونلاين — فهمني', description: 'أنشئ دروسك المسجلة وبعها أونلاين بسعر تحدده أنت.' },
 };
 
 const STEPS: [string, string][] = [

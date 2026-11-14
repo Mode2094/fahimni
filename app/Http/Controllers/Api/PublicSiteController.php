@@ -415,7 +415,7 @@ class PublicSiteController extends Controller
                 'description' => $p->description,
                 'monthly_price' => (float) $p->monthly_price,
                 'annual_price' => $p->annual_price !== null ? (float) $p->annual_price : null,
-                'currency' => $p->currency ?? 'JOD',
+                'currency' => $p->currency ?? 'USD',
                 'max_courses' => $p->max_courses,
                 'max_students' => $p->max_students,
                 'popular' => (bool) $p->is_popular,

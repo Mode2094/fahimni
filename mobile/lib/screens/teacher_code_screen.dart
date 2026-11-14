@@ -157,7 +157,7 @@ class _TeacherCodeScreenState extends State<TeacherCodeScreen> with SingleTicker
                             Center(child: BrandMark(size: 96)),
                             const SizedBox(height: 24),
                             const Text(
-                              'Tadreesly',
+                              'فهمني',
                               textAlign: TextAlign.center,
                               style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
                             ),

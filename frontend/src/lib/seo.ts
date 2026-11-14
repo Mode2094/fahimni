@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
+import { BRAND_NAME, BRAND_NAME_EN } from '@/lib/brand';
 
-export const SITE_NAME = 'Tadreesly';
+export const SITE_NAME = BRAND_NAME;
+export const SITE_NAME_EN = BRAND_NAME_EN;
 
 /** Public primary origin (scheme + host). Env-controlled so production canonicals are correct. */
 export function getSiteOrigin(): string {
-  const domain = process.env.NEXT_PUBLIC_PLATFORM_DOMAIN?.trim() || 'tadreesly.com';
+  const domain = process.env.NEXT_PUBLIC_PLATFORM_DOMAIN?.trim() || 'fahimni.me';
   return `https://${domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
 }
 
@@ -13,7 +15,7 @@ export function absoluteUrl(path: string): string {
   return `${getSiteOrigin()}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-export const DEFAULT_OG_IMAGE = '/logo.png';
+export const DEFAULT_OG_IMAGE = '/og.png';
 
 /** Shared Open Graph + Twitter base so every public page stays on-brand. */
 export function ogBase(title: string, description: string, path: string, locale: 'ar' | 'en' = 'ar'): Metadata['openGraph'] {
@@ -24,13 +26,13 @@ export function ogBase(title: string, description: string, path: string, locale:
     siteName: SITE_NAME,
     url: absoluteUrl(path),
     locale: locale === 'ar' ? 'ar_AR' : 'en_US',
-    images: [{ url: absoluteUrl(DEFAULT_OG_IMAGE), width: 512, height: 512, alt: SITE_NAME }],
+    images: [{ url: absoluteUrl(DEFAULT_OG_IMAGE), width: 1200, height: 630, alt: SITE_NAME }],
   };
 }
 
 export function twitterBase(title: string, description: string): Metadata['twitter'] {
   return {
-    card: 'summary',
+    card: 'summary_large_image',
     title,
     description,
     images: [absoluteUrl(DEFAULT_OG_IMAGE)],

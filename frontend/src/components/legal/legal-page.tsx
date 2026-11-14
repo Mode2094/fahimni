@@ -20,7 +20,7 @@ export function LegalPage({ icon, title, subtitle, updated, sections }: {
   const { locale } = useLocale();
   const { settings } = useSettings();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
-  const platform = settings.platform_name || 'Tadreesly';
+  const platform = settings.platform_name || 'منصة فهمني';
   const Icon = icon === 'shield' ? ShieldCheck : FileText;
 
   return (

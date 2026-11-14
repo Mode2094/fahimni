@@ -3,7 +3,7 @@ import { ogBase, twitterBase } from '@/lib/seo';
 
 const title = 'الشروط والأحكام — Terms of service';
 const description =
-  'شروط وأحكام استخدام منصة Tadreesly للمعلمين والطلاب — اقرأها قبل بدء استخدام المنصة.';
+  'شروط وأحكام استخدام منصة فهمني للمعلمين والطلاب — اقرأها قبل بدء استخدام المنصة.';
 
 export const metadata: Metadata = {
   title,

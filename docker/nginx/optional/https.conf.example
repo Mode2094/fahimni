@@ -74,6 +74,7 @@ server {
         fastcgi_param HTTP_X_FORWARDED_FOR $proxy_add_x_forwarded_for;
         fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;
         fastcgi_param HTTP_X_FORWARDED_HOST $host;
+        fastcgi_param HTTPS $https;
         fastcgi_buffer_size 128k;
         fastcgi_buffers 4 256k;
         fastcgi_busy_buffers_size 256k;
@@ -104,6 +105,8 @@ server {
 }
 
 # HTTP→HTTPS redirect (only when TLS is on; keep ACME challenges reachable).
+# Operational endpoints (health, API, storage, horizon, PHP) pass through
+# exactly like default.conf — only the UI catch-all redirects to HTTPS.
 server {
     listen 80;
     server_name _;
@@ -114,7 +117,53 @@ server {
         root /etc/nginx/certs;
     }
 
+    location = /up {
+        include fastcgi_params;
+        fastcgi_pass app:9000;
+        fastcgi_param SCRIPT_FILENAME /var/www/html/public/index.php;
+        fastcgi_param SCRIPT_NAME /index.php;
+    }
+
+    location = /health {
+        include fastcgi_params;
+        fastcgi_pass app:9000;
+        fastcgi_param SCRIPT_FILENAME /var/www/html/public/index.php;
+        fastcgi_param SCRIPT_NAME /index.php;
+    }
+
+    location /api/ {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location /storage/ {
+        location ~ ^/storage/.*\.php$ { deny all; }
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /horizon {
+        return 301 /horizon/;
+    }
+
+    location /horizon/ {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass app:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME /var/www/html/public$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+        fastcgi_param HTTP_X_FORWARDED_FOR $proxy_add_x_forwarded_for;
+        fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;
+        fastcgi_param HTTP_X_FORWARDED_HOST $host;
+        fastcgi_param HTTPS $https;
+        fastcgi_buffer_size 128k;
+        fastcgi_buffers 4 256k;
+        fastcgi_busy_buffers_size 256k;
+    }
+
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://$host:8443$request_uri;
     }
 }

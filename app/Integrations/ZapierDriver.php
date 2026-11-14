@@ -37,7 +37,7 @@ class ZapierDriver extends BaseDriver
         try {
             $payload = [
                 'event' => 'test',
-                'message' => 'Tadreesly integration test — connection successful.',
+                'message' => 'Fahimni integration test — connection successful.',
                 'timestamp' => now()->toIso8601String(),
             ];
 

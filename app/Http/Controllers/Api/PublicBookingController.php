@@ -329,7 +329,7 @@ class PublicBookingController extends Controller
             'amount' => $amount,
             'currency' => $gatewayCurrency,
             'description' => $description,
-            'brand_name' => 'Tadreesly',
+            'brand_name' => 'Fahimni',
             'return_url' => $apiBase.'/api/v1/payments/paypal-capture?payment_id='.$payment->id,
             'cancel_url' => $frontend.'/book/success?gateway=paypal&status=cancelled',
         ]);

@@ -35,7 +35,7 @@ class PlansSeeder extends Seeder
                 'description_ar' => 'للمعلم الفردي الذي يبدأ رحلته في بيع الكورسات — كل الأدوات الأساسية لإطلاق منصتك التعليمية.',
                 'description_en' => 'For the solo teacher starting to sell courses — all the core tools to launch your teaching platform.',
                 'monthly_price' => 49.00,
-                'yearly_price' => 499.00,
+                'yearly_price' => 490.00,
                 'trial_days' => 7,
                 'is_popular' => false,
                 'features' => [
@@ -97,7 +97,7 @@ class PlansSeeder extends Seeder
                 'description_ar' => 'للمعلم الذي لديه عدد كبير من الطلاب والكورسات — بث مباشر، علامة تجارية، مواعيد وخدمات مدفوعة.',
                 'description_en' => 'For teachers with many students and courses — live streaming, branding, appointments and paid services.',
                 'monthly_price' => 99.00,
-                'yearly_price' => 999.00,
+                'yearly_price' => 990.00,
                 'trial_days' => 7,
                 'is_popular' => true,
                 'features' => [
@@ -160,7 +160,7 @@ class PlansSeeder extends Seeder
                 'description_ar' => 'للمعلمين الكبار والأكاديميات الصغيرة — كل شيء بلا حدود تقريباً، علامة بيضاء ووصول API ودعم مخصص.',
                 'description_en' => 'For top teachers and small academies — almost everything unlimited, white label, API access and dedicated support.',
                 'monthly_price' => 199.00,
-                'yearly_price' => 1999.00,
+                'yearly_price' => 1990.00,
                 'trial_days' => 7,
                 'is_popular' => false,
                 'features' => [
@@ -238,7 +238,7 @@ class PlansSeeder extends Seeder
                 'description' => $data['description_ar'],
                 'monthly_price' => $data['monthly_price'],
                 'yearly_price' => $data['yearly_price'],
-                'currency' => 'JOD',
+                'currency' => 'USD',
                 'trial_days' => $data['trial_days'],
                 'is_active' => true,
                 'is_public' => true,

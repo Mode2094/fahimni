@@ -2,6 +2,11 @@
 
 Day-to-day operations for the platform on a clean Ubuntu 24.04 VPS.
 
+> For the isolated staging/production Docker layout, DNS/Caddy steps,
+> one-command deploy/rollback and the off-site backup/restore-drill scripts
+> introduced for launch, see `deploy/README.md`. This runbook remains the
+> day-to-day operations guide.
+
 ## 1. Stack layout
 
 Docker Compose services: `nginx`, `app` (PHP-FPM), `migrate`, `scheduler`,

@@ -27,10 +27,10 @@ class UpdatePlanRequest extends FormRequest
             'is_public' => 'nullable|boolean',
             'is_popular' => 'nullable|boolean',
             'sort_order' => 'nullable|integer|min:0',
-            'paddle_price_id_monthly' => 'nullable|string|max:100',
-            'paddle_price_id_yearly' => 'nullable|string|max:100',
-            'lemon_variant_id_monthly' => 'nullable|string|max:20',
-            'lemon_variant_id_yearly' => 'nullable|string|max:20',
+            'freemius_monthly_plan_id' => 'nullable|string|max:100',
+            'freemius_yearly_plan_id' => 'nullable|string|max:100',
+            'freemius_monthly_pricing_id' => 'nullable|string|max:100',
+            'freemius_yearly_pricing_id' => 'nullable|string|max:100',
         ];
     }
 }

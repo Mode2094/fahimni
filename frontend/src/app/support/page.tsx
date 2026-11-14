@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Mail, MessageCircle, Headset, Clock, ShieldCheck } from 'lucide-react';
 
 const SUPPORT_WHATSAPP = '962793519944';
-const SUPPORT_EMAIL = 'support@tadreesly.com';
+const SUPPORT_EMAIL = 'support@fahimni.me';
 
 export default function SupportPage() {
   const { locale } = useLocale();
@@ -92,7 +92,7 @@ export default function SupportPage() {
         </div>
 
         <p className="text-center text-xs text-gray-400 mt-10">
-          © {new Date().getFullYear()} {t('Tadreesly · جميع الحقوق محفوظة', 'Tadreesly · All rights reserved')}
+          © {new Date().getFullYear()} {t('منصة فهمني · جميع الحقوق محفوظة', 'Fahimni · All rights reserved')}
         </p>
       </div>
     </div>

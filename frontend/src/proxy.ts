@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { CSP_HEADER, NONCE_HEADER, buildCsp, generateNonce } from './lib/csp';
 
 // Server-side fetch: must be an absolute URL inside the Docker network
 // (nginx) or localhost in dev — never the browser-relative '/api/v1'.
@@ -32,52 +33,11 @@ function reportProxyFailure(path: string, detail: string) {
   }
 }
 
-function generateNonce(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-
-  return btoa(binary);
-}
-
 /**
- * Strict CSP with a per-request nonce. `'strict-dynamic'` lets the nonced
- * Next.js runtime load the dynamically-injected SDKs (Paddle, PayPal, KaTeX)
- * while blocking injected inline scripts. `'unsafe-eval'` is dev-only
- * (Turbopack/React Refresh); the production build does not need it.
+ * Strict CSP with a per-request nonce — see `./lib/csp.ts` for the policy and
+ * the nonce contract. The policy is identical for every route; only the nonce
+ * changes per request.
  */
-function buildCsp(nonce: string): string {
-  const isDev = process.env.NODE_ENV !== 'production';
-
-  return [
-    "default-src 'self'",
-    "base-uri 'self'",
-    "object-src 'none'",
-    "frame-ancestors 'self'",
-    "form-action 'self' https://*.paddle.com https://checkout.paddle.com https://www.paypal.com https://*.paypal.com",
-    `connect-src 'self' https://cdn.jsdelivr.net wss: https://*.b-cdn.net https://video.bunnycdn.com https://*.bunnycdn.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com https://*.paypalobjects.com https://*.paddle.com https://checkout.paddle.com`,
-    [
-      "script-src 'self' 'nonce-" + nonce + "' 'strict-dynamic'",
-      isDev ? "'unsafe-eval'" : '',
-      'https://cdn.jsdelivr.net',
-      'https://www.paypal.com https://www.paypalobjects.com https://www.sandbox.paypal.com',
-      'https://*.paypal.com https://*.paypalobjects.com',
-      'https://cdn.paddle.com https://*.paddle.com',
-    ]
-      .filter(Boolean)
-      .join(' '),
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com https://*.paddle.com",
-    "img-src 'self' data: blob: https:",
-    "media-src 'self' blob: https: https://*.b-cdn.net https://video.bunnycdn.com",
-    "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
-    "frame-src 'self' https://www.youtube.com https://player.vimeo.com https://www.google.com https://meet.jit.si https://iframe.videodelivery.net https://www.paypal.com https://*.paypal.com https://*.paddle.com https://checkout.paddle.com",
-    "worker-src 'self' blob:",
-    "manifest-src 'self'",
-  ].join('; ');
-}
-
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host')?.split(':')[0]?.toLowerCase() || '';
@@ -94,11 +54,17 @@ export async function proxy(request: NextRequest) {
   }
 
   const nonce = generateNonce();
+  const csp = buildCsp(nonce);
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set('x-nonce', nonce);
+  // Next.js parses the nonce out of the CSP **request** header and stamps it
+  // onto the framework/page/inline scripts it renders. Without this line the
+  // response advertises a nonce that no script carries, and `'strict-dynamic'`
+  // makes the browser block every script. `x-nonce` is for server components.
+  requestHeaders.set(NONCE_HEADER, nonce);
+  requestHeaders.set(CSP_HEADER, csp);
 
   const withCsp = (response: NextResponse): NextResponse => {
-    response.headers.set('Content-Security-Policy', buildCsp(nonce));
+    response.headers.set(CSP_HEADER, csp);
 
     return response;
   };
@@ -106,7 +72,7 @@ export async function proxy(request: NextRequest) {
   const passThrough = () => withCsp(NextResponse.next({ request: { headers: requestHeaders } }));
 
   // Only handle custom domains / teacher subdomains (not localhost, and not
-  // the bare platform host — but teacher subdomains like teacher.tadreesly.com
+  // the bare platform host — but teacher subdomains like teacher.fahimni.me
   // DO go through the domain lookup below).
   if (LOCAL_HOSTS.includes(host) || host.endsWith('localhost') || !host) {
     return passThrough();

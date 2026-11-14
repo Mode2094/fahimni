@@ -5,21 +5,34 @@ namespace App\Jobs;
 use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
+use App\Plans\SubscriptionState;
 use App\Services\NotificationService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
 
 /**
- * Daily reminder while a subscription is past_due/expired inside the
- * 10-day grace window: counts down the days until educational content is
- * deleted. One reminder per day per subscription
- * (dedup via metadata.last_expiry_reminder_date).
+ * Daily renewal reminder for a tenant whose paid period has ended and has not
+ * been renewed.
+ *
+ * IMPORTANT: this job NEVER threatens content deletion. Teacher/student
+ * content is never deleted on expiry (see PurgeExpiredTenantContentJob, which
+ * is disabled by policy). The message invites the tenant to renew to keep
+ * receiving service — nothing more.
+ *
+ * The tenant's effective state is derived from SubscriptionState (the single
+ * source of truth), so a tenant that has meanwhile become active via a
+ * Freemius entitlement (or any current subscription) is never reminded and
+ * stale legacy rows cannot trigger a false reminder.
+ *
+ * One reminder per day per tenant (dedup via metadata.last_expiry_reminder_date
+ * on the referenced subscription row).
  */
 class ExpiryFollowUpJob implements ShouldQueue
 {
     use Dispatchable, Queueable;
 
+    /** Grace window (days after expiry) during which we keep reminding. */
     public const GRACE_DAYS = 10;
 
     public function handle(): void
@@ -33,23 +46,28 @@ class ExpiryFollowUpJob implements ShouldQueue
             ->where('ends_at', '>=', now()->subDays(self::GRACE_DAYS))
             ->get();
 
+        $state = SubscriptionState::make();
+
         foreach ($subs as $sub) {
+            // Re-derive the EFFECTIVE state: if the tenant is active again
+            // (e.g. renewed via Freemius), never remind.
+            if ($state->isActive((string) $sub->tenant_id)) {
+                continue;
+            }
+
             $meta = $sub->metadata ?? [];
 
             if (($meta['last_expiry_reminder_date'] ?? null) === $today) {
                 continue; // already reminded today.
             }
 
-            $daysLeft = max(0, self::GRACE_DAYS - now()->diffInDays($sub->ends_at));
+            $daysSinceExpiry = $sub->ends_at ? now()->diffInDays($sub->ends_at) : 0;
             $planName = $sub->plan?->name ?? '';
 
-            $title = 'تنبيه: '.($daysLeft <= 0
-                ? 'سيتم حذف المحتوى التعليمي قريباً'
-                : 'متبقي '.$daysLeft.' '.($daysLeft === 1 ? 'يوم' : 'أيام').' قبل حذف المحتوى التعليمي');
-
-            $body = 'انتهى اشتراك خطة "'.$planName.'" بتاريخ '.$sub->ends_at?->toDateString()
-                .'. إذا لم يتم التجديد خلال '.self::GRACE_DAYS.' أيام من تاريخ الانتهاء سيتم حذف الدورات والامتحانات والواجبات والإعلانات والجلسات المباشرة نهائياً.'
-                .' جدّد الآن للحفاظ على كل محتواك وبيانات طلابك.';
+            $title = 'اشتراكك منتهٍ — جدّد لاستمرار الخدمة';
+            $body = 'انتهى اشتراك خطة "'.$planName.'" بتاريخ '.$sub->ends_at?->toDateString().'.'
+                .' محتواك وبيانات طلابك محفوظة بالكامل ولن تُحذف.'
+                .' جدّد الآن لاستعادة الوصول الكامل إلى لوحة التحكم وميزات خطتك.';
 
             try {
                 app(NotificationService::class)->dispatch(
@@ -61,7 +79,7 @@ class ExpiryFollowUpJob implements ShouldQueue
                     $sub->tenant_id,
                     [
                         'subscription_id' => $sub->id,
-                        'days_left_before_deletion' => $daysLeft,
+                        'days_since_expiry' => $daysSinceExpiry,
                         'renew_url' => $frontend.'/checkout?plan='.($sub->plan_id ?? ''),
                     ],
                     ['database', 'mail'],

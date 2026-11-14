@@ -4,6 +4,7 @@ import { Home, ArrowLeft } from 'lucide-react';
 import { useLocale } from '@/store/locale';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import PlatformLogo from '@/components/brand/platform-logo';
 import dynamic from 'next/dynamic';
 
 const Lottie = dynamic(() => import('lottie-react'), { ssr: false });
@@ -16,6 +17,7 @@ export default function NotFound() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-b from-teal-50/60 to-white">
       <div className="w-full max-w-md p-8 text-center space-y-4 bg-card text-card-foreground rounded-3xl border shadow-lg">
+        <PlatformLogo className="mx-auto h-16 w-16 rounded-2xl object-contain" />
         <div className="mx-auto w-64 sm:w-72">
           <Lottie animationData={require('@/assets/404-cat.json')} loop autoplay className="w-full h-auto" />
         </div>

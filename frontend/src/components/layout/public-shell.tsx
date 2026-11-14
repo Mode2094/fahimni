@@ -25,7 +25,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-6">
           <Link href="/" className="flex shrink-0 items-center gap-2.5">
             <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-            <span className="text-base font-bold">{settings.platform_name || (ar ? 'منصة التعليم' : 'Tadreesly')}</span>
+            <span className="text-base font-bold">{settings.platform_name || (ar ? 'منصة فهمني' : 'Fahimni')}</span>
           </Link>
           <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
             {links.map((l) => (
@@ -71,7 +71,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 text-sm text-white/50 sm:flex-row sm:px-6">
           <p className="flex items-center gap-1.5">
             <Globe className="h-4 w-4 text-teal-400" />
-            © {new Date().getFullYear()} {settings.platform_name || 'Tadreesly'} · {ar ? 'جميع الحقوق محفوظة' : 'All rights reserved'}
+            © {new Date().getFullYear()} {settings.platform_name || 'منصة فهمني'} · {ar ? 'جميع الحقوق محفوظة' : 'All rights reserved'}
           </p>
           <div className="flex items-center gap-4">
             <Link href="/" className="transition-colors hover:text-white">{ar ? 'الرئيسية' : 'Home'}</Link>

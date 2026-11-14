@@ -6,8 +6,8 @@ const SECTIONS: LegalSection[] = [
   {
     title: { ar: 'نطاق هذه السياسة', en: 'Scope of This Policy' },
     body: {
-      ar: 'تنطبق سياسة استرداد الأموال هذه («السياسة») على جميع عمليات الدفع التي تتم عبر منصة Tadreesly («المنصة»)، سواء كانت اشتراكات شهرية أو سنوية، أو مدفوعات بالبطاقات الإلكترونية، أو تحويلات بنكية، أو أي وسيلة دفع أخرى معتمدة. بموجب قيامك بأي عملية دفع عبر المنصة، فإنك تقر باطلاعك الكامل على هذه السياسة وقبولك المسبق والمُلزم لبنودها، ولا يُقبل أي استرداد إلا وفق الأحكام الواردة فيها حصرًا.',
-      en: 'This Refund Policy ("Policy") applies to all payments made through the Tadreesly Platform ("Platform"), whether monthly or yearly subscriptions, card payments, bank transfers, or any other accepted payment method. By making any payment through the Platform, you acknowledge that you have fully read and unconditionally accept this Policy in advance, and no refund shall be granted except strictly under the provisions contained herein.',
+      ar: 'تنطبق سياسة استرداد الأموال هذه («السياسة») على جميع عمليات الدفع التي تتم عبر منصة فهمني («المنصة»)، سواء كانت اشتراكات شهرية أو سنوية، أو مدفوعات بالبطاقات الإلكترونية، أو تحويلات بنكية، أو أي وسيلة دفع أخرى معتمدة. بموجب قيامك بأي عملية دفع عبر المنصة، فإنك تقر باطلاعك الكامل على هذه السياسة وقبولك المسبق والمُلزم لبنودها، ولا يُقبل أي استرداد إلا وفق الأحكام الواردة فيها حصرًا.',
+      en: 'This Refund Policy ("Policy") applies to all payments made through the Fahimni Platform ("Platform"), whether monthly or yearly subscriptions, card payments, bank transfers, or any other accepted payment method. By making any payment through the Platform, you acknowledge that you have fully read and unconditionally accept this Policy in advance, and no refund shall be granted except strictly under the provisions contained herein.',
     },
   },
   {

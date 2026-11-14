@@ -27,8 +27,9 @@ use App\Http\Controllers\Api\ExamController;
 use App\Http\Controllers\Api\ExamSectionController;
 use App\Http\Controllers\Api\FileDownloadController;
 use App\Http\Controllers\Api\FileUploadController;
+use App\Http\Controllers\Api\FreemiusCheckoutController;
+use App\Http\Controllers\Api\FreemiusWebhookController;
 use App\Http\Controllers\Api\InvoiceController;
-use App\Http\Controllers\Api\LemonSqueezyWebhookController;
 use App\Http\Controllers\Api\LessonContentController;
 use App\Http\Controllers\Api\LessonController;
 use App\Http\Controllers\Api\LessonProgressController;
@@ -41,7 +42,6 @@ use App\Http\Controllers\Api\MonitoringController;
 use App\Http\Controllers\Api\MonitoringIngestController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\NotificationPreferenceController;
-use App\Http\Controllers\Api\PaddleWebhookController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PaymentInitiateController;
 use App\Http\Controllers\Api\PlanFeatureController;
@@ -132,11 +132,17 @@ Route::prefix('v1')->group(function () {
         });
     });
 
-    // ─── Payment callbacks (gateway-initiated — public, no auth) ─────
+    // ─── Platform subscription billing (Freemius — the ONLY gateway) ──
+    // Freemius webhook: public, HMAC-verified (x-signature over raw body).
+    // This is the sole authoritative entitlement activation signal.
+    Route::post('payments/freemius-webhook', [FreemiusWebhookController::class, 'handle'])->middleware('throttle:webhooks');
+
+    // ─── Booking payments (student ↔ teacher — NOT platform billing) ───
+    // These gateways remain ONLY for paid teacher bookings / student
+    // purchases. They are intentionally NOT used for platform subscriptions
+    // and are never routed through Freemius.
     Route::post('payments/paytabs-callback', [PaymentInitiateController::class, 'paytabsCallback'])->middleware('throttle:webhooks');
     Route::post('payments/paypal-webhook', [PaymentInitiateController::class, 'paypalWebhook'])->middleware('throttle:webhooks');
-    Route::post('payments/paddle-webhook', [PaddleWebhookController::class, 'handle'])->middleware('throttle:webhooks');
-    Route::post('payments/lemonsqueezy-webhook', [LemonSqueezyWebhookController::class, 'handle'])->middleware('throttle:webhooks');
     Route::get('payments/paypal-capture', [PaymentInitiateController::class, 'paypalCapture'])->middleware('throttle:webhooks');
 
     Route::middleware('auth:sanctum')->group(function () {
@@ -285,13 +291,12 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/{card}/cancel', [ActivationCardController::class, 'cancel'])->middleware('role:teacher,owner,admin,permission:cards.manage');
             Route::get('cards/batch/{batchId}', [ActivationCardController::class, 'batchInfo'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
 
-            // Payment initiation (subscription checkout)
+            // Payment initiation (subscription checkout — Freemius only)
             Route::post('videos/upload', [FileUploadController::class, 'uploadDirect'])->middleware('throttle:video-upload');
-            Route::post('payments/initiate', [PaymentInitiateController::class, 'initiate'])->middleware('throttle:checkout');
-            Route::post('payments/{payment}/paypal-capture', [PaymentInitiateController::class, 'paypalCaptureJson'])->middleware('throttle:checkout');
-            Route::post('payments/{payment}/manual-proof', [PaymentInitiateController::class, 'submitManualProof']);
-            Route::get('payments/{payment}/proof', [PaymentInitiateController::class, 'paymentProof']);
-            Route::post('payment-gateway-test', [PaymentInitiateController::class, 'testConnection']);
+            Route::post('subscriptions/freemius/checkout', [FreemiusCheckoutController::class, 'initiate'])->middleware('throttle:checkout');
+            Route::get('subscriptions/freemius/complete', [FreemiusCheckoutController::class, 'complete'])->middleware('throttle:checkout');
+            Route::post('subscriptions/freemius/portal', [FreemiusCheckoutController::class, 'portal']);
+            Route::post('subscriptions/freemius/cancel', [FreemiusCheckoutController::class, 'cancel']);
 
             // ─── Support Tickets (teacher/student side) ──
             Route::get('tickets', [AdminController::class, 'myTickets']);
@@ -324,6 +329,8 @@ Route::prefix('v1')->group(function () {
                 Route::get('payments/{payment}', [AdminController::class, 'paymentShow']);
                 Route::get('payments/{payment}/proof', [AdminController::class, 'paymentProof']);
                 Route::put('payments/{payment}/status', [AdminController::class, 'paymentStatus']);
+                // Booking gateways connection test (PayTabs / PayPal only).
+                Route::post('payment-gateway-test', [PaymentInitiateController::class, 'testConnection']);
 
                 Route::get('coupons', [AdminController::class, 'coupons']);
                 Route::post('coupons', [AdminController::class, 'couponStore']);
@@ -726,14 +733,16 @@ Route::prefix('v1')->group(function () {
     // ─── Teacher invitation acceptance ──────────────
     Route::post('teacher/staff/invitations/{token}/accept', [TeacherStaffController::class, 'acceptInvitation'])->middleware('auth:sanctum');
 
-    // ─── Payment Gateways ──────────────────────────
-    Route::get('payment-gateways', [PaymentInitiateController::class, 'gateways']);
+    // ─── Payment Gateways (Freemius status for the checkout UI) ──────
+    Route::get('payment-gateways', [FreemiusCheckoutController::class, 'gateways']);
 
     // ─── Integrations: OAuth callback & Zapier webhook (public) ──
 
-    // Refund webhook: refunds are issued inside the gateway dashboard and
-    // synced here (HMAC-signed via REFUND_WEBHOOK_SECRET).
-    Route::post('payments/refund-webhook', [PaymentInitiateController::class, 'refundWebhook'])->middleware('throttle:webhooks');
+    // NOTE: the legacy refund webhook (refund-webhook / REFUND_WEBHOOK_SECRET)
+    // was removed with the Freemius cutover. Platform-subscription refunds are
+    // now issued and reconciled exclusively through Freemius. The
+    // RefundSyncService remains available for reconciling any historic
+    // (pre-cutover) refunds during the migration window if required.
 
     // ─── Platform Settings ─────────────────────────
     Route::get('platform-settings', [PlatformSettingController::class, 'show']);

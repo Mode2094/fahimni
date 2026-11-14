@@ -36,6 +36,12 @@ class RenewalReminderJob implements ShouldQueue
                 ->where('status', 'active')
                 ->whereNotNull('ends_at')
                 ->whereDate('ends_at', $target)
+                // Freemius owns renewal, dunning and its own reminder emails
+                // for Freemius-managed subscriptions — never double-remind.
+                ->where(function ($q) {
+                    $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
+                })
+                ->whereNull('fs_license_id')
                 ->get();
 
             foreach ($subs as $sub) {

@@ -13,7 +13,7 @@ const INDEXNOW_ENDPOINT = 'https://api.indexnow.org/indexnow';
  */
 export async function notifyIndexNow(urls: string[], host?: string): Promise<void> {
   if (!INDEXNOW_KEY || !Array.isArray(urls) || urls.length === 0) return;
-  const h = host || process.env.NEXT_PUBLIC_PLATFORM_DOMAIN || 'tadreesly.com';
+  const h = host || process.env.NEXT_PUBLIC_PLATFORM_DOMAIN || 'fahimni.me';
   const urlList = urls.map((u) => (u.startsWith('http') ? u : `https://${h}${u.startsWith('/') ? u : `/${u}`}`));
   try {
     await fetch(INDEXNOW_ENDPOINT, {

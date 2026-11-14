@@ -17,6 +17,7 @@ class TenantSubscription extends Model
         'tenant_id', 'plan_id', 'status', 'billing_cycle',
         'starts_at', 'ends_at', 'trial_ends_at', 'cancelled_at',
         'auto_renew', 'metadata',
+        'fs_license_id', 'fs_subscription_id', 'fs_pricing_id', 'billing_source',
     ];
 
     protected $casts = [

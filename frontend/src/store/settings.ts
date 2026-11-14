@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { BRAND_NAME, BRAND_SUPPORT_EMAIL, normalizeBrandEmail, normalizeBrandName } from '@/lib/brand';
 
 export type PlatformSettings = {
   platform_name: string;
@@ -17,6 +18,7 @@ export type PlatformSettings = {
   two_factor_enabled: boolean;
   captcha_enabled: boolean;
   platform_domain: string;
+  // Booking gateways (student ↔ teacher one-off payments).
   paytabs_profile_id: string;
   paytabs_server_key: string;
   paytabs_enabled: boolean;
@@ -25,15 +27,15 @@ export type PlatformSettings = {
   paypal_secret: string;
   paypal_enabled: boolean;
   paypal_test_mode: boolean;
-  manual_payment_enabled: boolean;
-  manual_payment_label: string;
-  manual_payment_account: string;
-  manual_payment_instructions: string;
-  paddle_enabled: boolean;
-  paddle_environment: 'sandbox' | 'live';
-  paddle_client_token: string;
-  paddle_api_key: string;
-  paddle_webhook_secret: string;
+  // Freemius — the only platform-subscription gateway (secrets from env).
+  freemius_enabled: boolean;
+  freemius_product_id: string;
+  freemius_api_url: string;
+  freemius_checkout_url: string;
+  freemius_sandbox: boolean;
+  freemius_api_token_set: boolean;
+  freemius_secret_key_set: boolean;
+  freemius_public_key_set: boolean;
   student_mobile_app: boolean;
   student_app_hidden: boolean;
   student_app_android_url: string;
@@ -56,7 +58,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: {
-    platform_name: 'Tadreesly',
+    platform_name: BRAND_NAME,
     currency: 'JOD',
     currency_rate: 1,
     default_locale: 'ar',
@@ -80,20 +82,19 @@ export const useSettings = create<SettingsState>((set, get) => ({
     paypal_secret: '',
     paypal_enabled: false,
     paypal_test_mode: true,
-    manual_payment_enabled: false,
-    manual_payment_label: '',
-    manual_payment_account: '',
-    manual_payment_instructions: '',
-    paddle_enabled: false,
-    paddle_environment: 'sandbox',
-    paddle_client_token: '',
-    paddle_api_key: '',
-    paddle_webhook_secret: '',
+    freemius_enabled: false,
+    freemius_product_id: '',
+    freemius_api_url: 'https://api.freemius.com',
+    freemius_checkout_url: 'https://checkout.freemius.com',
+    freemius_sandbox: false,
+    freemius_api_token_set: false,
+    freemius_secret_key_set: false,
+    freemius_public_key_set: false,
     student_mobile_app: false,
     student_app_hidden: false,
     student_app_android_url: '',
     student_app_ios_url: '',
-    contact_email: 'support@tadreesly.com',
+    contact_email: BRAND_SUPPORT_EMAIL,
     contact_whatsapp: '',
     live_google_meet_enabled: true,
     live_default_provider: 'google_meet',
@@ -115,7 +116,17 @@ export const useSettings = create<SettingsState>((set, get) => ({
       });
       if (!res.ok) return;
       const d = await res.json();
-      set({ settings: { ...get().settings, ...d.settings }, loaded: true });
+      // Brand values still stored from before the rebrand are presented as the
+      // official identity without rewriting the settings row.
+      const merged = { ...get().settings, ...d.settings };
+      set({
+        settings: {
+          ...merged,
+          platform_name: normalizeBrandName(merged.platform_name),
+          contact_email: normalizeBrandEmail(merged.contact_email),
+        },
+        loaded: true,
+      });
     } catch {
       set({ loaded: false });
     }
@@ -132,7 +143,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
     });
     if (!res.ok) throw new Error();
     const d = await res.json();
-    set({ settings: { ...get().settings, ...d.settings } });
+    const merged = { ...get().settings, ...d.settings };
+    set({
+      settings: {
+        ...merged,
+        platform_name: normalizeBrandName(merged.platform_name),
+        contact_email: normalizeBrandEmail(merged.contact_email),
+      },
+    });
   },
 
   formatPrice: (amount) => {
