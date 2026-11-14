@@ -143,6 +143,13 @@ Freemius يوفّر بيئة اختبار (Sandbox) مطابقة للإنتاج.
 
 > **مهم (وفق التوثيق الرسمي):** `FREEMIUS_SANDBOX=true` **وحده لا يفتح الـCheckout في وضع Sandbox**. Freemius يتطلب تمرير **Sandbox Token + Context** المولّدين رسميًا إلى الـCheckout.
 
+> **عناوين Staging الفعلية** (من `deploy/env/staging.env.example`):
+> - Webhook: `https://api-staging.fahimni.me/api/v1/payments/freemius-webhook`
+> - Redirect موقّع: `https://staging.fahimni.me/checkout/success`
+>
+> لا تُستخدم مفاتيح الإنتاج على Staging، ولا تُفعّل Production قبل اجتياز
+> القائمة أدناه بالكامل.
+
 ### الآلية الرسمية للـSandbox (مطبَّقة تلقائيًا في النظام)
 عند تفعيل `freemius_sandbox` (من `.env` أو لوحة الأدمن)، يضيف النظام تلقائيًا إلى رابط Hosted Checkout الوسيطين الرسميين:
 - `sandbox` = الرمز
