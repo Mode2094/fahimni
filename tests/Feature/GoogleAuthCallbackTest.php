@@ -1,0 +1,267 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\PlatformSetting;
+use App\Models\SubscriptionPlan;
+use App\Models\Tenant;
+use App\Models\TenantSetting;
+use App\Models\TenantSubscription;
+use App\Models\TenantUser;
+use App\Models\User;
+use App\Services\TeacherCodeService;
+use Illuminate\Support\Str;
+use Laravel\Socialite\Contracts\Provider as SocialiteProvider;
+use Laravel\Socialite\Contracts\User as SocialiteUser;
+use Laravel\Socialite\Facades\Socialite;
+use Mockery;
+use Symfony\Component\Uid\UuidV7;
+
+/**
+ * Regression tests for the Google OAuth callback (HTTP 500 in production).
+ *
+ * Root cause: the callback inserted a tenant with columns that do not exist
+ * (`owner_user_id`, `is_active`) and omitted the NOT NULL `tenants.email`,
+ * outside any transaction — so provisioning failed (SQLSTATE 23502) and could
+ * leave a user without a tenant — or failed partially.
+ *
+ * These tests pin the contract: correct schema, atomic provisioning, no
+ * duplicates, session (no token in the URL), the teacher-registration gate,
+ * and that a provisioned teacher can actually reach the dashboard.
+ */
+class GoogleAuthCallbackTest extends TenantTestCase
+{
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
+    }
+
+    private function fakeGoogle(string $email, string $name = 'New Teacher'): void
+    {
+        $googleUser = Mockery::mock(SocialiteUser::class);
+        $googleUser->shouldReceive('getEmail')->andReturn($email);
+        $googleUser->shouldReceive('getName')->andReturn($name);
+        $googleUser->shouldReceive('getNickname')->andReturn('nick');
+        $googleUser->shouldReceive('getId')->andReturn('1234567890');
+
+        $provider = Mockery::mock(SocialiteProvider::class);
+        $provider->shouldReceive('stateless')->andReturnSelf();
+        $provider->shouldReceive('user')->andReturn($googleUser);
+
+        Socialite::shouldReceive('driver')->with('google')->andReturn($provider);
+    }
+
+    /** Build the exact HMAC-signed state the redirect endpoint issues. */
+    private function signedState(array $overrides = []): string
+    {
+        $payload = array_merge([
+            'role' => 'teacher',
+            'name' => null,
+            'phone' => null,
+            'exp' => time() + 600,
+            'n' => Str::random(16),
+        ], $overrides);
+
+        $encoded = rtrim(strtr(base64_encode(json_encode($payload)), '+/', '-_'), '=');
+
+        return $encoded.'.'.hash_hmac('sha256', $encoded, (string) config('app.key'));
+    }
+
+    private function callbackWith(string $state)
+    {
+        return $this->get('/api/v1/auth/google/callback?state='.urlencode($state).'&code=fake-code');
+    }
+
+    /**
+     * A lowercase address: the callback normalizes Google emails, so a mixed
+     * case fixture would (correctly) not match what gets stored.
+     */
+    private function freshEmail(string $prefix = 'teacher'): string
+    {
+        return strtolower($prefix.'-'.Str::random(8).'@test.local');
+    }
+
+    /** An active plan so first registration gets the 7-day trial. */
+    private function makePlan(): SubscriptionPlan
+    {
+        return SubscriptionPlan::create([
+            'id' => UuidV7::generate(),
+            'name' => 'Basic',
+            'slug' => 'basic-'.Str::random(6),
+            'monthly_price' => 19.99,
+            'yearly_price' => 199.99,
+            'currency' => 'JOD',
+            'trial_days' => 7,
+            'is_active' => true,
+            'is_public' => true,
+            'sort_order' => 0,
+        ]);
+    }
+
+    public function test_new_teacher_google_login_provisions_a_workspace_and_reaches_the_dashboard(): void
+    {
+        PlatformSetting::set('teacher_registration_enabled', true);
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $this->makePlan();
+
+        $response = $this->callbackWith($this->signedState([
+            'role' => 'teacher',
+            'name' => 'New Teacher',
+            'phone' => '+962790000000',
+        ]));
+
+        $response->assertRedirect();
+        $location = (string) $response->headers->get('Location');
+        $this->assertStringContainsString('step=done', $location);
+        $this->assertStringNotContainsString('token=', $location);
+
+        $user = User::where('email', $email)->first();
+        $this->assertNotNull($user, 'the Google callback must create the user');
+        $this->assertTrue($user->hasRole('Teacher'), 'Google teachers must get the Teacher role');
+
+        // The tenant must be written with the REAL schema columns.
+        $tenant = Tenant::where('owner_id', $user->id)->first();
+        $this->assertNotNull($tenant, 'the teacher must own a tenant');
+        $this->assertSame('active', $tenant->status);
+        $this->assertSame('tutor', $tenant->type);
+        $this->assertSame($email, $tenant->email);
+        $this->assertNotEmpty($tenant->teacher_code);
+
+        $this->assertDatabaseHas('tenant_user', [
+            'tenant_id' => $tenant->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('tenant_settings', [
+            'tenant_id' => $tenant->id,
+            'academy_name' => 'New Teacher',
+        ]);
+
+        // Registration grants a trial so the teacher is not instantly 402'd.
+        $this->assertDatabaseHas('tenant_subscriptions', [
+            'tenant_id' => $tenant->id,
+            'status' => 'trialing',
+        ]);
+
+        // The real teacher dashboard endpoint answers for this account.
+        $this->getJson('/api/v1/dashboard', $this->authHeaders($user, $tenant))->assertOk();
+    }
+
+    public function test_repeat_google_login_creates_no_duplicate_account_tenant_or_membership(): void
+    {
+        PlatformSetting::set('teacher_registration_enabled', true);
+        $this->makePlan();
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $this->callbackWith($this->signedState(['role' => 'teacher']))->assertRedirect();
+        $this->callbackWith($this->signedState(['role' => 'teacher']))->assertRedirect();
+
+        $user = User::where('email', $email)->firstOrFail();
+        $tenant = Tenant::where('owner_id', $user->id)->firstOrFail();
+
+        $this->assertSame(1, User::where('email', $email)->count());
+        $this->assertSame(1, Tenant::where('owner_id', $user->id)->count());
+        $this->assertSame(1, TenantUser::where('user_id', $user->id)->count());
+        $this->assertSame(1, TenantSetting::where('tenant_id', $tenant->id)->count());
+        $this->assertSame(1, TenantSubscription::where('tenant_id', $tenant->id)->count());
+    }
+
+    public function test_student_google_login_never_gets_an_owner_tenant(): void
+    {
+        $email = $this->freshEmail('student');
+        $this->fakeGoogle($email, 'New Student');
+
+        $this->callbackWith($this->signedState(['role' => 'student']))->assertRedirect();
+
+        $user = User::where('email', $email)->firstOrFail();
+
+        $this->assertSame(0, Tenant::where('owner_id', $user->id)->count());
+        $this->assertFalse($user->hasRole('Teacher'));
+    }
+
+    public function test_mixed_case_google_email_normalizes_to_one_account(): void
+    {
+        PlatformSetting::set('teacher_registration_enabled', true);
+
+        $lower = $this->freshEmail('teacher');
+        $mixed = strtoupper(substr($lower, 0, 8)).substr($lower, 8);
+
+        $this->fakeGoogle($mixed, 'New Teacher');
+        $this->callbackWith($this->signedState(['role' => 'teacher']))->assertRedirect();
+
+        $this->assertSame(1, User::where('email', $lower)->count(), 'the email must be stored lowercased');
+        $this->assertSame(0, User::where('email', $mixed)->count(), 'no case-variant duplicate account');
+    }
+
+    public function test_failed_tenant_provisioning_rolls_back_the_whole_signup(): void
+    {
+        PlatformSetting::set('teacher_registration_enabled', true);
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        // Fail the tenant insert AFTER the user row has been written, to prove
+        // the user is rolled back with it (no orphan account).
+        $this->mock(TeacherCodeService::class, function ($mock) {
+            $mock->shouldReceive('generate')->andThrow(new \RuntimeException('teacher code service unavailable'));
+        });
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher']));
+
+        $response->assertStatus(500);
+
+        $this->assertNull(
+            User::where('email', $email)->first(),
+            'a failed signup must not leave a user behind',
+        );
+        $this->assertSame(0, Tenant::count(), 'a failed signup must not leave a tenant behind');
+    }
+
+    public function test_web_google_login_uses_the_session_and_places_no_token_in_the_url(): void
+    {
+        PlatformSetting::set('teacher_registration_enabled', true);
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher']));
+
+        $response->assertRedirect();
+        $location = (string) $response->headers->get('Location');
+
+        // The browser flow must never carry a bearer token in the URL.
+        $this->assertStringNotContainsString('token=', $location);
+        $this->assertStringNotContainsString('access_token', $location);
+        $this->assertStringContainsString('step=done', $location);
+
+        // An HttpOnly session cookie is what authenticates the next request.
+        $this->assertNotNull($response->getCookie((string) config('session.cookie')));
+    }
+
+    public function test_new_teacher_is_rejected_when_registration_is_disabled(): void
+    {
+        PlatformSetting::set('teacher_registration_enabled', false);
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher']));
+
+        $response->assertRedirect();
+        $this->assertStringContainsString(
+            'error=teacher_registration_disabled',
+            (string) $response->headers->get('Location'),
+        );
+
+        // The gate must be enforced BEFORE any write.
+        $this->assertNull(User::where('email', $email)->first(), 'a blocked signup must not create a user');
+        $this->assertSame(0, Tenant::count());
+    }
+}

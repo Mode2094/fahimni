@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { connection } from 'next/server';
 import { Providers } from '@/components/providers';
 import { SITE_NAME, getSiteOrigin, DEFAULT_OG_IMAGE, absoluteUrl } from '@/lib/seo';
 import './globals.css';
@@ -53,7 +54,14 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // CSP nonces are injected during server-side rendering from the request
+  // headers (see src/proxy.ts). A statically prerendered page is built once,
+  // with no request and therefore no nonce, so every script would be blocked
+  // by the strict `'strict-dynamic'` policy. Awaiting a dynamic API opts the
+  // whole app into per-request rendering so the nonce is always present.
+  await connection();
+
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>
