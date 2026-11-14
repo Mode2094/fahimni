@@ -1,41 +1,49 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# LMS — Production Docker stack
+# Fahimni — Production / Staging Docker stack
 #
-# Reproducibility contract:
-#   • Every image is pinned to an exact digest/version (no `latest`, no
-#     floating tags) in Dockerfile(s) and below.
-#   • Containers run ONLY the baked image — no host source bind-mounts.
-#     Code + vendor live inside the image; .env lives on the host and is
-#     injected at runtime (env_file). Nothing is read from the host FS.
-#   • `docker compose build` + `docker compose up -d` on any x86_64/arm64
-#     host with this repo at a given commit produces the same stack.
+# Isolation contract (two stacks may run on the same VPS):
+#   • Run each stack from its own release directory with its own
+#     COMPOSE_PROJECT_NAME and .env (see deploy/env/*.env.example).
+#   • No fixed container_name: Compose prefixes every container with the
+#     project name, so production and staging can never collide.
+#   • Images are tagged with IMAGE_TAG (release SHA), never shared between
+#     stacks. Volumes and the network are explicitly project-scoped.
+#   • nginx publishes only on BIND_ADDR (default 127.0.0.1). The public
+#     TLS terminator (Caddy) is the only process bound to 80/443.
+#   • PostgreSQL and Redis publish no ports at all — private network only.
+#
+# Reproducibility / runtime contract:
+#   • Third-party images are pinned to exact digests; app images are built
+#     from this commit and tagged with IMAGE_TAG.
+#   • Containers run the baked image — no host source-code bind-mounts.
+#     Read-only nginx config/cert mounts are configuration, not application code.
+#   • .env is a symlink to the stack's shared secrets file and is injected
+#     at runtime (env_file). Nothing secret is baked into an image.
 #   • Schema changes happen in `migrate` only, never destructively.
 #
-# TLS: enable when the domain + certificates exist — see
-# docker/nginx/https.conf.example. Until then port 80 is plain HTTP on
-# ${APP_PORT:-8080} (public TLS lives in front of it, e.g. Cloudflare/Caddy).
+# TLS: terminate at Caddy (deploy/caddy/fahimni.caddy). nginx also supports
+# direct TLS via docker/nginx/optional/https.conf if needed.
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
   postgres:
     # PostgreSQL 16.15 (alpine) — pinned to the digest tested locally.
     image: postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
-    container_name: lms-postgres
     security_opt:
       - no-new-privileges:true
     environment:
-      POSTGRES_DB: lms
-      POSTGRES_USER: lms
+      POSTGRES_DB: "${DB_DATABASE:?DB_DATABASE must be set in .env — use a stack-specific database name}"
+      POSTGRES_USER: "${DB_USERNAME:?DB_USERNAME must be set in .env — use a stack-specific role}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD must be set in .env — refusing to start with a known default}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lms"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     deploy:
       resources:
@@ -45,7 +53,6 @@ services:
   redis:
     # Redis 7.4.11 (alpine) — pinned to the digest tested locally.
     image: redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
-    container_name: lms-redis
     security_opt:
       - no-new-privileges:true
     # AOF persistence: sessions survive redis restarts, caches survive reboots.
@@ -63,7 +70,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     deploy:
       resources:
@@ -76,13 +83,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: app
-    container_name: lms-migrate
+    image: fahimni-app:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -103,7 +110,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - lms-net
+      - fahimni-net
     restart: "no"
 
   app:
@@ -111,13 +118,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: app
-    container_name: lms-app
+    image: fahimni-app:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -143,7 +150,7 @@ services:
     expose:
       - "9000"
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     stop_grace_period: 30s
     # Memory limit (safe cap; CPU deliberately unbounded — set after load tests).
@@ -163,9 +170,8 @@ services:
         # cookie set by the BFF, so cross-origin ABSOLUTE URLs would drop the
         # cookie. nginx routes /api/ to PHP on the same origin.
         NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-/api/v1}"
-        NEXT_PUBLIC_PLATFORM_DOMAIN: "${NEXT_PUBLIC_PLATFORM_DOMAIN:-app.lmsplatform.com}"
-    image: lms-frontend
-    container_name: lms-frontend
+        NEXT_PUBLIC_PLATFORM_DOMAIN: "${NEXT_PUBLIC_PLATFORM_DOMAIN:-fahimni.me}"
+    image: fahimni-frontend:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     environment:
@@ -184,7 +190,7 @@ services:
       retries: 5
       start_period: 30s
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     deploy:
       resources:
@@ -194,7 +200,6 @@ services:
   nginx:
     # nginx 1.27.5 (alpine) — pinned to the digest tested locally.
     image: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
-    container_name: lms-nginx
     security_opt:
       - no-new-privileges:true
     volumes:
@@ -205,13 +210,14 @@ services:
       # TLS certificates — mount before enabling https.conf:
       - ${CERTS_DIR:-./certs}:/etc/nginx/certs:ro
     ports:
-      - "${APP_PORT:-8080}:80"
-      - "${HTTPS_PORT:-8443}:443"
+      # Loopback only: Caddy is the sole public listener on 80/443.
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-8080}:80"
+      - "${BIND_ADDR:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
     depends_on:
       - app
       - frontend
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/up >/dev/null 2>&1 || exit 1"]
@@ -229,13 +235,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: scheduler
-    container_name: lms-scheduler
+    image: fahimni-scheduler:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -258,7 +264,7 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     deploy:
       resources:
@@ -270,13 +276,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: horizon
-    container_name: lms-horizon
+    image: fahimni-horizon:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -302,7 +308,7 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     stop_grace_period: 60s
     # Horizon already caps itself via config/horizon.php (10 workers × 128MB +
@@ -330,16 +336,22 @@ services:
       TEST_USER_PASSWORD: ${K6_TEST_USER_PASSWORD:-}
       TEST_TENANT_ID: ${K6_TEST_TENANT_ID:-}
     networks:
-      - lms-net
+      - fahimni-net
     entrypoint: ["sh", "-c"]
     command: ["k6 run /tests/scenarios/${K6_SCENARIO}.js --out json=/results/${K6_SCENARIO}.json"]
 
 volumes:
+  # Explicit stack-scoped names: production and staging never share data.
   postgres_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_postgres_data
   redis_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_redis_data
   storage_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_storage_data
   backups_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_backups_data
 
 networks:
-  lms-net:
+  fahimni-net:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_net
     driver: bridge

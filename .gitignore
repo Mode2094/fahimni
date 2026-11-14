@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Deployment secrets generated on the server
+deploy/env/*.env
+deploy/state/
+
 # Laravel
 /vendor
 /storage/*.key
