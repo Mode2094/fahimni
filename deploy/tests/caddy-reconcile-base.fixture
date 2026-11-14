@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TEST FIXTURE — base Caddyfile for the reconcile auto-detection test
+# (deploy/tests/caddy-reconcile-recreate.sh).
+#
+# LooksLoop-shaped (one global options block, concrete hosts, a :80 redirect
+# catch-all) but hermetic: `auto_https off` + no real domains, so it starts
+# without DNS or ACME and the test needs no network. The literal hostnames are
+# deliberately NOT fahimni.me, so the duplicate-host guard must accept it.
+# ─────────────────────────────────────────────────────────────────────────────
+{
+	admin 127.0.0.1:2019
+	auto_https off
+}
+
+http://looksloop.test {
+	respond "looksloop-test" 200
+}
+
+:80 {
+	redir https://{host}{uri} permanent
+}

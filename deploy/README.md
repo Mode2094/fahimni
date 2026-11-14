@@ -220,7 +220,11 @@ blocks. `caddy-activate.sh` is now a thin forwarder to the integrator.
 container, which drops the runtime network attachment and the merged config. The
 `fahimni-caddy-reconcile` systemd timer (every ~60s, `--reconcile --yes`)
 re-reads the new release's Caddyfile, re-attaches the network and re-applies —
-preserving LooksLoop's own changes. Install per `deploy/caddy-docker.md` §5.
+preserving LooksLoop's own changes. Detection covers all three failure modes:
+network detached, container **id** changed, or the live config lost the vhosts
+(so it re-applies even when the Caddyfile bytes are unchanged). The unit runs
+from `production/current` or, if absent, `staging/current`, so it also works on a
+staging-only host. Install per `deploy/caddy-docker.md` §5.
 
 **Rollback** (fast, in place):
 
@@ -441,6 +445,15 @@ Executed during preparation (2026-11-14):
   `--reconcile` was a no-op when unchanged; a simulated LooksLoop container
   recreation was re-attached and re-merged (the new LooksLoop host preserved);
   `--rollback` removed the Fahimni vhosts with LooksLoop still serving.
+  `deploy/tests/caddy-reconcile-recreate.sh` (real Docker) automates the three
+  re-apply triggers: network detached, container **id** changed, and the
+  container reloading its own Caddyfile — all with an otherwise identical
+  Caddyfile.
+- `deploy/tests/migrate-script-test.sh` proves `docker/migrate.sh` aborts on any
+  failure (migrate, `plans:sync`, the user-count probe, or the seed) with no
+  `|| true` swallow, and seeds only on an empty database.
+- `deploy/tests/redis-memory-check.sh` proves `REDIS_MAXMEMORY` is kept ≥32 MiB
+  below `MEM_REDIS` (the old `512mb` inside a `256M` container is rejected).
 - `deploy/scripts/*.sh` and `deploy/tests/*.sh`: `bash -n` and `shellcheck -x`
   clean.
 - Production images `fahimni-{app,frontend,scheduler,horizon}` built
@@ -501,7 +514,7 @@ Fahimni caps are hard memory limits set per service (env-driven, see
 | Service | Cap | Notes |
 |---|---|---|
 | postgres | `MEM_POSTGRES` = 768M | |
-| redis | `MEM_REDIS` = 256M | |
+| redis | `MEM_REDIS` = 256M | `REDIS_MAXMEMORY` = 192mb, kept ≥32 MiB below the cap |
 | app (php-fpm) | `MEM_APP` = 384M | |
 | frontend (Next) | `MEM_FRONTEND` = 384M | |
 | scheduler | `MEM_SCHEDULER` = 256M | |
@@ -518,6 +531,11 @@ production ≈ 5.1 GiB, which fits next to LooksLoop (~6 GiB total of 7940 MB) w
   both stacks at once.
 - **Add ~2 GB swap before running both stacks together** (the host currently has
   none) — a server change requiring owner approval.
+- **`REDIS_MAXMEMORY` must stay ≥32 MiB below `MEM_REDIS`** (default `192mb` under
+  a `256M` cap). Redis then evicts (volatile-lru) instead of being OOM-killed,
+  and the AOF-rewrite copy-on-write spike has slack. `deploy.sh` calls
+  `validate_redis_memory` and refuses to deploy otherwise
+  (`deploy/tests/redis-memory-check.sh` covers it).
 - 2 vCPU is fine for staging + a light production; Horizon worker counts and any
   k6 load test must stay within these caps.
 - Increase a cap only with evidence.

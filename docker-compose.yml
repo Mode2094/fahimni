@@ -64,7 +64,11 @@ services:
     # AOF persistence: sessions survive redis restarts, caches survive reboots.
     # volatile-lru evicts ONLY TTL'd keys (sessions/cache) — never queue jobs,
     # which are persistent and must survive memory pressure.
-    command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru"]
+    # maxmemory is kept BELOW the container cap (MEM_REDIS) with headroom for
+    # client buffers and the AOF-rewrite copy-on-write spike; deploy.sh enforces
+    # >=32MiB headroom (see validate_redis_memory) so Redis evicts instead of
+    # being OOM-killed. Defaults: REDIS_MAXMEMORY=192mb under MEM_REDIS=256M.
+    command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory \"${REDIS_MAXMEMORY:-192mb}\" --maxmemory-policy volatile-lru"]
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env — refusing to start with a known default}"
     volumes:
@@ -103,10 +107,12 @@ services:
       QUEUE_CONNECTION: redis
       SESSION_DRIVER: redis
     # Migrate always; seed ONLY on a fresh database so the super-admin
-    # credentials are never re-applied on every deploy. plans:sync creates
-    # the canonical plans when the plans table is empty (source of truth =
+    # credentials are never re-applied on a normal redeploy. The script uses
+    # `set -e` and exits non-zero on ANY failure (migrate, plans:sync, seed or
+    # the count probe) — there is no `|| true` swallow. plans:sync creates the
+    # canonical plans when the plans table is empty (source of truth =
     # SubscriptionPlanSeeder, works in any environment, not just Docker).
-    command: ["sh", "-c", "php artisan migrate --force && php artisan plans:sync && [ \"$(php artisan tinker --execute='echo \\App\\Models\\User::count();' 2>/dev/null || echo 0)\" = \"0\" ] && php artisan db:seed --force || true"]
+    command: ["sh", "/var/www/html/docker/migrate.sh"]
     volumes:
       - storage_data:/var/www/html/storage
       - backups_data:/var/www/html/storage/app/backups

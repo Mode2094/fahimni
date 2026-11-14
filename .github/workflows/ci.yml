@@ -102,13 +102,21 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Bash syntax
-        run: bash -n deploy/scripts/*.sh deploy/tests/*.sh
+        run: bash -n deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
 
       - name: ShellCheck
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
-          shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh
+          shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
+
+      - name: Migrate script fails loudly (no '|| true' swallow)
+        # migrate / plans:sync / seed / count-probe: every failure must abort.
+        run: deploy/tests/migrate-script-test.sh
+
+      - name: Redis maxmemory stays below the container cap
+        # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
+        run: deploy/tests/redis-memory-check.sh
 
       - name: Validate compose (staging + production)
         run: |
@@ -123,3 +131,9 @@ jobs:
         # :443 on-demand catch-all and :80 redirect without collision, and that
         # the duplicate-host guard fires.
         run: deploy/tests/caddy-merge-validate.sh
+
+      - name: Caddy reconcile detects a recreated LooksLoop container
+        # Real Docker: recreates the fake LooksLoop Caddy container (network-detach
+        # and container-id paths) and reloads its own Caddyfile (live-config path),
+        # proving --reconcile re-applies even when the Caddyfile bytes are unchanged.
+        run: deploy/tests/caddy-reconcile-recreate.sh

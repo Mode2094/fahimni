@@ -77,6 +77,9 @@ if ! docker network inspect "$proxy_net" >/dev/null 2>&1; then
   docker network create "$proxy_net" >/dev/null
 fi
 
+# Fail before building if Redis could be OOM-killed before it evicts.
+validate_redis_memory
+
 for key in APP_KEY DB_PASSWORD REDIS_PASSWORD VIDEO_SIGNING_KEY \
            SUPER_ADMIN_EMAIL SUPER_ADMIN_PASSWORD; do
   require_real_value "$key"

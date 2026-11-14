@@ -121,15 +121,25 @@ release path, which:
   gone, until re-applied);
 - **loses** the `fahimni-proxy` attachment.
 
-`--reconcile` fixes both, idempotently:
+`--reconcile` fixes both, idempotently. It re-reads the container's **current**
+Caddyfile every run (so LooksLoop additions are preserved) and re-applies
+whenever any of these is true:
 
-1. ensure the network exists and re-attach the (possibly new) container;
-2. re-read the **new** release's Caddyfile as the base;
-3. if the merged result differs from the last applied hash, validate and reload.
+1. the container is no longer attached to `fahimni-proxy` (network detached);
+2. the container's **id** differs from the one recorded by the last `--apply`
+   (LooksLoop recreated it — even if the Caddyfile bytes, and therefore the
+   merged hash, are identical);
+3. the **live** running config no longer carries the Fahimni vhosts (e.g.
+   LooksLoop reloaded its own Caddyfile after a container-internal restart),
+   detected by reading Caddy's own admin `config/` endpoint;
+4. the merged config hash changed (a real Caddyfile/fragment change).
 
-Because it re-reads the base from the container every run, **LooksLoop changes
-are preserved** (see the local simulation: a newly added LooksLoop host survived
-the reconcile). Enable the timer so recovery happens within ~1 minute:
+Triggers 2 and 3 exist precisely because comparing only the merged hash is not
+enough: a redeploy that keeps the same Caddyfile still loses the runtime
+network attachment and the in-memory reload. `deploy/tests/caddy-reconcile-recreate.sh`
+proves all of these against a real (throwaway) Caddy container.
+
+Enable the timer so recovery happens within ~1 minute:
 
 ```bash
 sudo install -m 700 -o fahimni -g fahimni -d /var/lib/fahimni
@@ -140,10 +150,14 @@ sudo systemctl enable --now fahimni-caddy-reconcile.timer
 systemctl list-timers fahimni-caddy-reconcile.timer
 ```
 
+The unit runs the script from whichever release exists — `production/current`
+first, falling back to `staging/current` — so it works on a **staging-only**
+host too (no `production/current` required).
+
 Cron alternative (every 2 minutes):
 
 ```cron
-*/2 * * * * fahimni cd /opt/fahimni/production/current && ./deploy/scripts/caddy-docker-integrate.sh --reconcile --yes >> /var/log/fahimni/caddy-reconcile.log 2>&1
+*/2 * * * * fahimni sh -c 'for d in /opt/fahimni/production/current /opt/fahimni/staging/current; do [ -x "$d/deploy/scripts/caddy-docker-integrate.sh" ] && exec "$d/deploy/scripts/caddy-docker-integrate.sh" --reconcile --yes; done' >> /var/log/fahimni/caddy-reconcile.log 2>&1
 ```
 
 Notes:

@@ -188,6 +188,17 @@ container_image() {
   docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null
 }
 
+container_id() {
+  docker inspect -f '{{.Id}}' "$container" 2>/dev/null
+}
+
+# The marker only ever appears because of our fragment (LooksLoop never uses it),
+# so it tells us whether the *currently running* config still carries the merge.
+live_config_has_marker() {
+  docker exec "$container" wget -qO- http://127.0.0.1:2019/config/ 2>/dev/null \
+    | grep -q 'fahimni\.me'
+}
+
 # Non-secret Caddy variables only — never dump the container's full env (it holds
 # credentials). Used for offline validation in a throwaway container.
 container_base_env_args() {
@@ -249,6 +260,7 @@ write_state() {
   umask 077
   {
     printf 'container=%s\n' "$container"
+    printf 'container_id=%s\n' "$(container_id)"
     printf 'network=%s\n' "$network"
     printf 'prod_upstream=%s\n' "$prod_upstream"
     printf 'staging_upstream=%s\n' "$staging_upstream"
@@ -258,10 +270,12 @@ write_state() {
   chmod 600 "$state_file"
 }
 
-stored_hash() {
+stored_field() {
   [[ -f "$state_file" ]] || return 1
-  sed -n 's/^applied_hash=//p' "$state_file"
+  sed -n "s/^$1=//p" "$state_file"
 }
+
+stored_hash() { stored_field applied_hash; }
 
 # ── mode: status ─────────────────────────────────────────────────────────────
 if [[ "$mode" == "status" ]]; then
@@ -272,6 +286,12 @@ if [[ "$mode" == "status" ]]; then
     printf 'connected:   yes\n'
   else
     printf 'connected:   no\n'
+  fi
+  printf 'container id:%s\n' "$(container_id)"
+  if live_config_has_marker 2>/dev/null; then
+    printf 'live vhosts: present\n'
+  else
+    printf 'live vhosts: absent\n'
   fi
   if [[ -f "$state_file" ]]; then
     printf 'state:       %s\n' "$state_file"
@@ -363,6 +383,13 @@ if [[ "$mode" == "check" ]]; then
 fi
 
 # apply / reconcile
+# Capture the state BEFORE ensure_network attaches the container: a LooksLoop
+# redeploy recreates the container (new id) and detaches it from the network, so
+# we must compare against the pre-attach state, not the freshly attached one.
+pre_connected=0
+container_on_network "$container" "$network" && pre_connected=1
+pre_id="$(container_id)"
+
 ensure_network
 
 base="$(read_base_config)" || die "could not read base Caddyfile from $container:$base_path"
@@ -378,10 +405,20 @@ merged="$work/merged.Caddyfile"
 
 new_hash="$(sha256_file "$merged")"
 
-if [[ "$mode" == "reconcile" && "$(stored_hash 2>/dev/null || true)" == "$new_hash" ]] \
-   && container_on_network "$container" "$network"; then
-  log "reconcile: already applied and connected; nothing to do"
-  exit 0
+if [[ "$mode" == "reconcile" ]]; then
+  reason=""
+  [[ "$pre_connected" -eq 1 ]] || reason="network was detached"
+  if [[ -z "$reason" && "$pre_id" != "$(stored_field container_id 2>/dev/null || true)" ]]; then
+    reason="LooksLoop container was recreated"
+  fi
+  if [[ -z "$reason" ]] && ! live_config_has_marker; then
+    reason="running config no longer carries the Fahimni vhosts"
+  fi
+  if [[ -z "$reason" && "$(stored_hash 2>/dev/null || true)" == "$new_hash" ]]; then
+    log "reconcile: network, container and config are current; nothing to do"
+    exit 0
+  fi
+  log "reconcile: re-applying (${reason:-merged config changed})"
 fi
 
 docker exec -i "$container" sh -c "cat > $MERGED_PATH" < "$merged"

@@ -139,3 +139,31 @@ mask_url() {
   # Never print credentials embedded in a URL.
   printf '%s' "$1" | sed -E 's#(https?://)[^/@]+@#\1***@#'
 }
+
+# ── memory sizing ────────────────────────────────────────────────────────────
+# Normalize docker-style sizes (512mb, 256M, 1G, 1g) to MiB. A bare number is
+# treated as MiB. Returns non-zero on anything unparseable.
+mem_to_mib() {
+  local v="${1:-}" num
+  num="${v//[^0-9]/}"
+  [[ -n "$num" ]] || return 1
+  case "$v" in
+    *[gG]*) printf '%s' $((num * 1024)) ;;
+    *[mM]*) printf '%s' "$num" ;;
+    *[kK]*) printf '%s' $((num / 1024)) ;;
+    *)      printf '%s' "$num" ;;
+  esac
+}
+
+# Redis must be able to evict BEFORE the container limit kills it, and must
+# survive the AOF-rewrite copy-on-write spike. Require >=32MiB headroom.
+REDIS_MIN_HEADROOM_MIB=32
+validate_redis_memory() {
+  local cap max
+  cap="$(mem_to_mib "${MEM_REDIS:-256M}")" \
+    || die "MEM_REDIS is not a valid size: '${MEM_REDIS:-}'"
+  max="$(mem_to_mib "${REDIS_MAXMEMORY:-192mb}")" \
+    || die "REDIS_MAXMEMORY is not a valid size: '${REDIS_MAXMEMORY:-}'"
+  (( max + REDIS_MIN_HEADROOM_MIB <= cap )) \
+    || die "REDIS_MAXMEMORY=${REDIS_MAXMEMORY:-192mb} leaves <${REDIS_MIN_HEADROOM_MIB}MiB below MEM_REDIS=${MEM_REDIS:-256M}; Redis would be OOM-killed before evicting (raise MEM_REDIS or lower REDIS_MAXMEMORY)"
+}
