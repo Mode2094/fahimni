@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 import { useLocale } from '@/store/locale';
 import Link from 'next/link';
+import PlatformLogo from '@/components/brand/platform-logo';
 
 export default function Error({ reset }: { error: Error; reset: () => void }) {
   const { locale } = useLocale();
@@ -10,7 +11,8 @@ export default function Error({ reset }: { error: Error; reset: () => void }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
       <div className="w-full max-w-md p-8 text-center space-y-6 bg-card text-card-foreground rounded-2xl border shadow-sm">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-50"><AlertTriangle className="h-8 w-8 text-red-500" /></div>
+        <PlatformLogo className="mx-auto h-16 w-16 rounded-2xl object-contain" />
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50"><AlertTriangle className="h-6 w-6 text-red-500" /></div>
         <h1 className="text-2xl font-bold">{t('خطأ غير متوقع', 'Something went wrong')}</h1>
         <p className="text-sm text-muted-foreground">{t('حدث خطأ أثناء عرض هذه الصفحة. حاول إعادة التحميل أو العودة للرئيسية.', 'An error occurred while loading this page. Try reloading or go back home.')}</p>
         <div className="flex flex-col sm:flex-row gap-2">

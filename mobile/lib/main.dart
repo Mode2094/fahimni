@@ -81,7 +81,7 @@ class _ShaheadStudentAppState extends State<ShaheadStudentApp> {
     if (state == null) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'Tadreesly',
+        title: 'فهمني',
         theme: AppTheme.build(null, locale: _locale, brightness: _brightness),
         locale: _locale,
         supportedLocales: const [Locale('ar'), Locale('en')],
@@ -117,7 +117,7 @@ class _ShaheadStudentAppState extends State<ShaheadStudentApp> {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Tadreesly',
+      title: 'فهمني',
       theme: AppTheme.build(state.teacher, locale: _locale, brightness: _brightness),
       locale: _locale,
       supportedLocales: const [Locale('ar'), Locale('en')],

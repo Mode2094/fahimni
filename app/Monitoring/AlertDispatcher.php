@@ -132,7 +132,7 @@ class AlertDispatcher
             function ($message) use ($to, $from) {
                 $message->to(explode(',', $to))
                     ->from($from)
-                    ->subject('[Tadreesly Monitor] '.strtoupper($payload['level']).' — '.$payload['source']);
+                    ->subject('[Fahimni Monitor] '.strtoupper($payload['level']).' — '.$payload['source']);
             }
         );
     }

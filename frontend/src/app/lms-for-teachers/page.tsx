@@ -32,7 +32,7 @@ const PILLARS: [string, string][] = [
 
 const FAQ: [string, string][] = [
   ['What is an LMS and why do I need one as a solo teacher?', 'An LMS (learning management system) is where your courses, students and assessments live together. It replaces the WhatsApp-plus-Drive-plus-spreadsheet setup most independent teachers suffer with.'],
-  ['Is Tadreesly built for one teacher or whole schools?', 'It starts with you as an independent teacher or tutor, and scales as you grow. You control everything from one dashboard.'],
+  ['Is Fahimni built for one teacher or whole schools?', 'It starts with you as an independent teacher or tutor, and scales as you grow. You control everything from one dashboard.'],
   ['Can I upload existing video lessons?', 'Yes. Upload recorded video per lesson, add files and structured content, and reuse them across courses.'],
   ['Do I have to pay per student?', 'No. You pay a flat monthly or yearly subscription for your plan. Add as many students as your plan allows without per-seat math.'],
   ['Can my students access it from their phones?', 'Yes — they open your platform in any browser. Plans with the student app give them a dedicated mobile app too.'],
@@ -67,7 +67,7 @@ export default function LmsForTeachersPage() {
           <p className="text-gray-600 leading-relaxed mt-4">
             School LMS platforms are built for institutions — IT teams, bulk imports, per-seat billing
             and complicated admin. Independent teachers need something different: set up a course in
-            an evening, add a student in ten seconds, and know exactly who finished what. Tadreesly
+            an evening, add a student in ten seconds, and know exactly who finished what. Fahimni
             is that in-between system, made for you.
           </p>
         </section>

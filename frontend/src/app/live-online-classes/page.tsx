@@ -7,7 +7,7 @@ import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 export const metadata: Metadata = {
   title: 'منصة دروس مباشرة للمعلمين — حصص أونلاين عبر Google Meet',
   description:
-    'أدر حصصك المباشرة من منصة Tadreesly: دروس عبر Google Meet، حجز المواعيد، حضور وإشعارات تلقائية، وكل ذلك ضمن منصتك التعليمية الخاصة.',
+    'أدر حصصك المباشرة من منصة فهمني: دروس عبر Google Meet، حجز المواعيد، حضور وإشعارات تلقائية، وكل ذلك ضمن منصتك التعليمية الخاصة.',
   alternates: { canonical: '/live-online-classes' },
   openGraph: {
     title: 'منصة دروس مباشرة للمعلمين — حصص عبر Google Meet',
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     locale: 'ar_AR',
     images: [{ url: absoluteUrl(DEFAULT_OG_IMAGE), width: 512, height: 512, alt: SITE_NAME }],
   },
-  twitter: { card: 'summary', title: 'منصة دروس مباشرة — Tadreesly', description: 'أدر حصصك المباشرة عبر Google Meet من منصتك الخاصة.' },
+  twitter: { card: 'summary', title: 'منصة دروس مباشرة — فهمني', description: 'أدر حصصك المباشرة عبر Google Meet من منصتك الخاصة.' },
 };
 
 const LIVE_FEATURES: [string, string][] = [
@@ -67,7 +67,7 @@ export default function LiveOnlineClassesPage() {
           <p className="text-gray-600 leading-relaxed mt-4">
             عندما تعطي دروساً مباشرة عبر تطبيقات منفصلة، يتشتت طلابك بين رابط الحصة وملفات الدرس
             وتواريخ المواعيد. النتيجة: حضور متأخر، مواعيد متضاربة، ومعلم يرسل الروابط يدوياً قبل كل
-            حصة. مع Tadreesly، الحصة المباشرة جزء من منصتك: تنشئها، يحجز طلابك، ويصلهم التذكير
+            حصة. مع فهمني، الحصة المباشرة جزء من منصتك: تنشئها، يحجز طلابك، ويصلهم التذكير
             تلقائياً.
           </p>
         </section>

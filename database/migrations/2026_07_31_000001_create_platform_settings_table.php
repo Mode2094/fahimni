@@ -17,7 +17,7 @@ return new class extends Migration
         });
 
         $defaults = [
-            'platform_name' => 'Tadreesly',
+            'platform_name' => 'منصة فهمني',
             'currency' => 'JOD',
             'currency_rate' => '1',
             'default_locale' => 'ar',

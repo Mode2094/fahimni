@@ -6,8 +6,8 @@ const SECTIONS: LegalSection[] = [
   {
     title: { ar: 'مقدمة ومن نحن', en: 'Introduction & Who We Are' },
     body: {
-      ar: 'هذه السياسة توضح كيفية جمع واستخدام وحماية بياناتك عند استخدامك لمنصة Tadreesly («المنصة»). باستخدامك للمنصة فإنك توافق على ما ورد في هذه السياسة. المنصة هي معالج البيانات الأساسي لجميع المعلومات المقدمة عبر خدماتها، وجميع بياناتك تُعالج وفق القوانين المعمول بها في دولة الأردن وقانون حماية البيانات الساري.',
-      en: 'This policy explains how Tadreesly ("the Platform") collects, uses and protects your data. By using the Platform you agree to this policy. The Platform is the primary data controller for all information provided through its services, and your data is processed in accordance with the laws of Jordan and applicable data protection legislation.',
+      ar: 'هذه السياسة توضح كيفية جمع واستخدام وحماية بياناتك عند استخدامك لمنصة فهمني («المنصة»). باستخدامك للمنصة فإنك توافق على ما ورد في هذه السياسة. المنصة هي معالج البيانات الأساسي لجميع المعلومات المقدمة عبر خدماتها، وجميع بياناتك تُعالج وفق القوانين المعمول بها في دولة الأردن وقانون حماية البيانات الساري.',
+      en: 'This policy explains how Fahimni ("the Platform") collects, uses and protects your data. By using the Platform you agree to this policy. The Platform is the primary data controller for all information provided through its services, and your data is processed in accordance with the laws of Jordan and applicable data protection legislation.',
     },
   },
   {

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { BRAND_NAME, BRAND_SUPPORT_EMAIL, normalizeBrandEmail, normalizeBrandName } from '@/lib/brand';
 
 export type PlatformSettings = {
   platform_name: string;
@@ -57,7 +58,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: {
-    platform_name: 'Tadreesly',
+    platform_name: BRAND_NAME,
     currency: 'JOD',
     currency_rate: 1,
     default_locale: 'ar',
@@ -93,7 +94,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     student_app_hidden: false,
     student_app_android_url: '',
     student_app_ios_url: '',
-    contact_email: 'support@tadreesly.com',
+    contact_email: BRAND_SUPPORT_EMAIL,
     contact_whatsapp: '',
     live_google_meet_enabled: true,
     live_default_provider: 'google_meet',
@@ -115,7 +116,17 @@ export const useSettings = create<SettingsState>((set, get) => ({
       });
       if (!res.ok) return;
       const d = await res.json();
-      set({ settings: { ...get().settings, ...d.settings }, loaded: true });
+      // Brand values still stored from before the rebrand are presented as the
+      // official identity without rewriting the settings row.
+      const merged = { ...get().settings, ...d.settings };
+      set({
+        settings: {
+          ...merged,
+          platform_name: normalizeBrandName(merged.platform_name),
+          contact_email: normalizeBrandEmail(merged.contact_email),
+        },
+        loaded: true,
+      });
     } catch {
       set({ loaded: false });
     }
@@ -132,7 +143,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
     });
     if (!res.ok) throw new Error();
     const d = await res.json();
-    set({ settings: { ...get().settings, ...d.settings } });
+    const merged = { ...get().settings, ...d.settings };
+    set({
+      settings: {
+        ...merged,
+        platform_name: normalizeBrandName(merged.platform_name),
+        contact_email: normalizeBrandEmail(merged.contact_email),
+      },
+    });
   },
 
   formatPrice: (amount) => {

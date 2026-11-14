@@ -6,7 +6,7 @@ import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store';
 import { useSettings } from '@/store/settings';
 import { resolveLogoUrl } from '@/lib/logo';
-import { GraduationCap, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import GoogleLoginButton from '@/components/auth/google-login-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
+import PlatformLogo from '@/components/brand/platform-logo';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -72,7 +73,7 @@ function StudentRegisterForm() {
           {settings.logo_url ? (
             <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="mx-auto mb-5 h-16 w-16 rounded-2xl object-cover shadow-xl" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
           ) : (
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-emerald-500 shadow-xl"><GraduationCap className="h-8 w-8 text-white" /></div>
+            <PlatformLogo className="mx-auto mb-5 h-16 w-16 rounded-2xl object-contain shadow-xl" />
           )}
           <h1 className="text-2xl font-bold">{locale === 'ar' ? 'سجل كطالب' : 'Register as Student'}</h1>
           <p className="text-gray-500 mt-2">{locale === 'ar' ? 'ابدأ رحلة تعلمك الآن' : 'Start your learning journey'}</p>

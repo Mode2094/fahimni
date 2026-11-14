@@ -3,7 +3,7 @@
 namespace App\Support;
 
 /**
- * AssistantKnowledge — قاعدة المعرفة الثابتة لمنصة Tadreesly لمساعد "اسألني".
+ * AssistantKnowledge — قاعدة المعرفة الثابتة لمنصة فهمني لمساعد "اسألني".
  *
  * مشتقة من تدقيق فعلي للكود (انظر docs/assistant-audit-report.md) — لا افتراضات.
  * تُستخدم في مسارين:
@@ -349,7 +349,7 @@ class AssistantKnowledge
     public static function platformMapText(): string
     {
         return implode("\n", [
-            'Tadreesly — منصة تعليمية SaaS متعددة المستأجرين (معلم ← طلاب).',
+            'منصة فهمني — منصة تعليمية SaaS متعددة المستأجرين (معلم ← طلاب).',
             'الإدارة المركزية: /admin/* (الاشتراكات، الخطط، المعلمون، الطلاب، المبيعات، الدعم، النسخ، ذكاء الأعمال، الوسائط، الإعدادات).',
             'لوحة المعلم:',
             '  Dashboard /teacher/dashboard — KPI + استخدام الخطة + الدروس/المواعيد القادمة + الأداء.',

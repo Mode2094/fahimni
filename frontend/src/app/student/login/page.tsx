@@ -9,11 +9,12 @@ import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
 import { resolveLogoUrl } from '@/lib/logo';
 import { t } from '@/lib/i18n';
-import { GraduationCap, Eye, EyeOff, ArrowLeft, BookOpen, Trophy, Award, Sparkles, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, BookOpen, Trophy, Award, Sparkles, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Link from 'next/link';
+import PlatformLogo from '@/components/brand/platform-logo';
 
 function StudentLoginPageInner() {
   const [email, setEmail] = useState('');
@@ -110,11 +111,9 @@ function StudentLoginPageInner() {
             {settings.logo_url ? (
               <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-12 w-12 rounded-2xl object-cover shadow-xl" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
             ) : (
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-emerald-500 shadow-xl">
-                <GraduationCap className="h-6 w-6 text-white" />
-              </div>
+              <PlatformLogo className="h-12 w-12 rounded-2xl object-contain shadow-xl" />
             )}
-            <div><span className="text-xl font-bold text-white">{settings.platform_name || 'Tadreesly'}</span><p className="text-xs text-white/70">{locale === 'ar' ? 'منصة الطلاب' : 'Student Portal'}</p></div>
+            <div><span className="text-xl font-bold text-white">{settings.platform_name || 'فهمني'}</span><p className="text-xs text-white/70">{locale === 'ar' ? 'منصة الطلاب' : 'Student Portal'}</p></div>
           </div>
           <h1 className="text-4xl font-bold text-white leading-tight mb-6 animate-in">
             {locale === 'ar' ? 'رحلة تعلمك' : 'Your Learning'}
@@ -126,7 +125,7 @@ function StudentLoginPageInner() {
               <div key={i} className="flex items-center gap-3 text-white/80"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10"><it.icon className="h-4 w-4" /></div><span className="text-sm">{it.text}</span></div>
             ))}
           </div>
-          <div className="mt-auto pt-14 text-white/40 text-xs">© 2026 Tadreesly · {locale === 'ar' ? 'جميع الحقوق محفوظة' : 'All rights reserved'}</div>
+          <div className="mt-auto pt-14 text-white/40 text-xs">© 2026 منصة فهمني · {locale === 'ar' ? 'جميع الحقوق محفوظة' : 'All rights reserved'}</div>
         </div>
       </div>
 
@@ -136,9 +135,7 @@ function StudentLoginPageInner() {
             {settings.logo_url ? (
               <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="mx-auto mb-5 h-16 w-16 rounded-2xl object-cover shadow-xl shadow-cyan-500/25" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
             ) : (
-              <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-emerald-500 shadow-xl shadow-cyan-500/25">
-                <GraduationCap className="h-8 w-8 text-white" />
-              </div>
+              <PlatformLogo className="mx-auto mb-5 h-16 w-16 rounded-2xl object-contain shadow-xl shadow-cyan-500/25" />
             )}
             <h1 className="text-2xl sm:text-3xl font-bold">{locale === 'ar' ? 'بوابة الطلاب' : 'Student Portal'}</h1>
             <p className="text-gray-500 mt-2">{locale === 'ar' ? 'سجل دخولك لمتابعة تعلمك' : 'Sign in to continue learning'}</p>

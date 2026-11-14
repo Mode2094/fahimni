@@ -69,7 +69,7 @@ export default function AskMe() {
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-75" />
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
                   </span>
-                  {isAr ? 'مساعدك في منصة Tadreesly' : 'Your Tadreesly assistant'}
+                  {isAr ? 'مساعدك في منصة فهمني' : 'Your Fahimni assistant'}
                 </p>
               </div>
               <button

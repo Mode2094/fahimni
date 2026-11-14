@@ -194,7 +194,7 @@ class TeacherDomainController extends Controller
         }
 
         // 2) Teacher subdomain: {slug}.{platformDomain} — every active tenant
-        //    gets a first-class address (e.g. teacher.tadreesly.com) without
+        //    gets a first-class address (e.g. teacher.fahimni.me) without
         //    claiming DNS or a database record. Exact-match first, so a custom
         //    domain is never shadowed by a same-named slug.
         $platform = $this->platformDomain();

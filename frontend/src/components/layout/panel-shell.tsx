@@ -145,7 +145,7 @@ function LogoName() {
   const { settings } = useSettings();
   const { locale } = useLocale();
   return (
-    <span className="truncate text-base font-bold text-white">{settings.platform_name || (locale === 'ar' ? 'منصتي' : 'Tadreesly')}</span>
+    <span className="truncate text-base font-bold text-white">{settings.platform_name || (locale === 'ar' ? 'منصتي' : 'Fahimni')}</span>
   );
 }
 

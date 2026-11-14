@@ -33,7 +33,7 @@ class SlackDriver extends BaseDriver implements MessagingDriver
 
             if ($this->isIncomingWebhook($webhookUrl)) {
                 $response = Http::timeout(15)->post($webhookUrl, [
-                    'text' => '✅ Tadreesly integration test — connection successful.',
+                    'text' => '✅ Fahimni integration test — connection successful.',
                 ]);
 
                 if (! $response->successful()) {

@@ -243,7 +243,7 @@ export default function HomeClient() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-6">
           <div className="flex items-center gap-2.5 shrink-0">
             <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-            <span className="text-lg font-bold text-teal-950">{settings.platform_name || t('منصة التعليم', 'Tadreesly')}</span>
+            <span className="text-lg font-bold text-teal-950">{settings.platform_name || t('منصة فهمني', 'Fahimni')}</span>
           </div>
           <nav className="hidden md:flex items-center gap-1 flex-1">
             {navLinks.map(l => (
@@ -1242,7 +1242,7 @@ export default function HomeClient() {
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500/15 to-emerald-500/15"><MessageCircle className="h-5 w-5 text-teal-600" /></span>
             <p className="text-sm text-teal-900/70">
               {t('لم تجد إجابتك؟', 'Didn\'t find your answer?')}{' '}
-              <a href="mailto:support@tadreesly.com" className="font-bold text-teal-700 underline underline-offset-4 hover:text-teal-600 transition-colors">
+              <a href="mailto:support@fahimni.me" className="font-bold text-teal-700 underline underline-offset-4 hover:text-teal-600 transition-colors">
                 {t('تواصل مع الدعم الفني', 'Contact support')}
               </a>
             </p>
@@ -1346,7 +1346,7 @@ export default function HomeClient() {
           <div>
             <div className="flex items-center gap-2.5 mb-4">
               <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/20" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-              <span className="text-lg font-bold text-white">{settings.platform_name || t('منصة التعليم', 'Tadreesly')}</span>
+              <span className="text-lg font-bold text-white">{settings.platform_name || t('منصة فهمني', 'Fahimni')}</span>
             </div>
             <p className="text-white/50 text-sm leading-relaxed">{t('منصة تعليمية متكاملة تساعد المعلمين على بناء علامتهم التجارية وزيادة إيراداتهم.', 'An all-in-one platform helping teachers build their brand and grow revenue.')}</p>
           </div>
@@ -1371,13 +1371,13 @@ export default function HomeClient() {
             <ul className="space-y-2.5 text-sm text-white/50">
               <li className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-400" />{t('دعم فني 24/7', '24/7 Support')}</li>
               <li className="flex items-center gap-2"><Clock className="h-4 w-4 text-teal-300" />{t('رد خلال ساعة', 'Reply within an hour')}</li>
-              <li className="flex items-center gap-2"><span className="text-teal-300">@</span>support@tadreesly.com</li>
+              <li className="flex items-center gap-2"><span className="text-teal-300">@</span>support@fahimni.me</li>
             </ul>
           </div>
         </div>
           <div className="border-t border-white/10">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-xs text-white/40">
-            <span>© 2026 {settings.platform_name || 'Tadreesly'} · {t('جميع الحقوق محفوظة', 'All rights reserved')}</span>
+            <span>© 2026 {settings.platform_name || 'منصة فهمني'} · {t('جميع الحقوق محفوظة', 'All rights reserved')}</span>
             <div className="flex gap-4">
               <a href="/privacy" className="hover:text-white/70">{t('سياسة الخصوصية', 'Privacy Policy')}</a>
               <a href="/terms" className="hover:text-white/70">{t('الشروط والأحكام', 'Terms & Conditions')}</a>

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store';
-import { GraduationCap, Users, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import GoogleLoginButton from '@/components/auth/google-login-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
+import PlatformLogo from '@/components/brand/platform-logo';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -54,7 +55,7 @@ export default function TeacherRegisterPage() {
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-teal-50">
       <div className="w-full max-w-md space-y-8 animate-in">
         <div className="text-center">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 shadow-xl"><Users className="h-8 w-8 text-white" /></div>
+          <PlatformLogo className="mx-auto mb-5 h-16 w-16 rounded-2xl object-contain shadow-xl" />
           <h1 className="text-2xl font-bold">{locale === 'ar' ? 'سجل كمعلم' : 'Register as Teacher'}</h1>
           <p className="text-gray-500 mt-2">{locale === 'ar' ? 'أنشئ منصتك التعليمية الخاصة' : 'Create your own teaching platform'}</p>
         </div>

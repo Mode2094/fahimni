@@ -11,7 +11,7 @@ export default function ContactPage() {
   const { locale } = useLocale();
   const { settings } = useSettings();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
-  const platform = settings.platform_name || 'Tadreesly';
+  const platform = settings.platform_name || 'منصة فهمني';
 
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [load, setLoad] = useState(false);
@@ -41,7 +41,7 @@ export default function ContactPage() {
     }
   };
 
-  const email = settings.contact_email || 'support@tadreesly.com';
+  const email = settings.contact_email || 'support@fahimni.me';
   const whatsapp = settings.contact_whatsapp || '';
 
   return (

@@ -22,7 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: 'منصة تعليمية لكل معلم — أنشئ منصتك وانشر دوراتك أونلاين',
     description:
-      'منصة Tadreesly — أنشئ منصتك التعليمية خلال دقائق، انشر الدورات المسجلة، أدر الطلاب والامتحانات، بثّ الحصص المباشرة واحصل على موقعك الخاص. منصة تعليمية متكاملة للمعلمين المستقلين.',
+      'منصة فهمني — أنشئ منصتك التعليمية خلال دقائق، انشر الدورات المسجلة، أدر الطلاب والامتحانات، بثّ الحصص المباشرة واحصل على موقعك الخاص. منصة تعليمية متكاملة للمعلمين المستقلين.',
     alternates: { canonical: '/' },
     openGraph: {
       type: 'website',
@@ -32,10 +32,10 @@ export async function generateMetadata(): Promise<Metadata> {
       description:
         'أنشئ منصتك التعليمية خلال دقائق: دورات، طلاب، امتحانات، وبث مباشر — كل ذلك في مكان واحد.',
       locale: 'ar_AR',
-      images: [{ url: ogImage, width: 512, height: 512, alt: SITE_NAME }],
+      images: [{ url: ogImage, ...(logo ? {} : { width: 1200, height: 630 }), alt: SITE_NAME }],
     },
     twitter: {
-      card: 'summary',
+      card: 'summary_large_image',
       title: `${SITE_NAME} — منصة تعليمية لكل معلم`,
       description: 'أنشئ منصتك التعليمية خلال دقائق: دورات، طلاب، امتحانات، وبث مباشر.',
       images: [ogImage],

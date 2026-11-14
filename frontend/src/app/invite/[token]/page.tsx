@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, CheckCircle2, XCircle, GraduationCap, Mail } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import PlatformLogo from '@/components/brand/platform-logo';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -68,9 +69,7 @@ export default function InvitePage({ params }: { params: Promise<{ token: string
       <Card className="w-full max-w-md border-0 shadow-lg">
         <CardContent className="p-8">
           <div className="flex flex-col items-center text-center mb-6">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 shadow-lg mb-4">
-              <GraduationCap className="h-7 w-7 text-white" />
-            </div>
+            <PlatformLogo className="h-14 w-14 rounded-2xl object-contain shadow-lg mb-4" />
             <h1 className="text-xl font-bold">{t('دعوة للانضمام كمعلم', 'Teacher invitation')}</h1>
             <p className="text-sm text-gray-500 mt-1">
               {status === 'accepted' && tenantName ? t(`تم انضمامك إلى «${tenantName}» بنجاح`, 'You joined the institution successfully') : t('تمت دعوتك للانضمام إلى منصة تعليمية', 'You have been invited to join an educational platform')}

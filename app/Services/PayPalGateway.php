@@ -153,14 +153,14 @@ class PayPalGateway
             'intent' => 'CAPTURE',
             'purchase_units' => [[
                 'reference_id' => $params['cart_id'],
-                'description' => $params['description'] ?? 'Tadreesly Subscription',
+                'description' => $params['description'] ?? 'Fahimni Subscription',
                 'amount' => [
                     'currency_code' => $currency,
                     'value' => number_format($amount, 2, '.', ''),
                 ],
             ]],
             'application_context' => [
-                'brand_name' => $params['brand_name'] ?? 'Tadreesly',
+                'brand_name' => $params['brand_name'] ?? 'Fahimni',
                 'locale' => 'en-US',
                 'shipping_preference' => 'NO_SHIPPING',
                 'user_action' => 'PAY_NOW',

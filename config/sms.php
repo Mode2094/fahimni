@@ -14,7 +14,7 @@ return [
 
     'driver' => env('SMS_DRIVER', 'log'),
 
-    'from' => env('SMS_FROM', 'Tadreesly'),
+    'from' => env('SMS_FROM', 'Fahimni'),
 
     'twilio' => [
         'sid' => env('SMS_TWILIO_SID'),

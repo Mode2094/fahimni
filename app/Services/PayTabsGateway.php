@@ -57,7 +57,7 @@ class PayTabsGateway
             'cart_id' => $params['cart_id'],
             'cart_currency' => $params['currency'] ?? 'JOD',
             'cart_amount' => number_format((float) $params['amount'], 2, '.', ''),
-            'cart_description' => $params['description'] ?? 'Tadreesly Subscription',
+            'cart_description' => $params['description'] ?? 'Fahimni Subscription',
             'paypage_lang' => 'ar',
             'hide_shipping' => true,
             'callback' => $params['callback_url'],
@@ -125,7 +125,7 @@ class PayTabsGateway
             'cart_id' => $params['cart_id'],
             'cart_currency' => $params['currency'] ?? 'JOD',
             'cart_amount' => number_format((float) $params['amount'], 2, '.', ''),
-            'cart_description' => $params['description'] ?? 'Tadreesly Subscription Renewal',
+            'cart_description' => $params['description'] ?? 'Fahimni Subscription Renewal',
         ];
 
         try {

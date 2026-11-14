@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PlatformSetting;
 use App\Models\TenantSetting;
 use App\Support\AuditLogger;
+use App\Support\PlatformBrand;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -34,7 +35,7 @@ class PlatformSettingController extends Controller
         // (Crypt) ويخبر `*_set` الواجهةَ بوجودها فقط.
 
         $payload = [
-            'platform_name' => $settings['platform_name'] ?? 'Tadreesly',
+            'platform_name' => PlatformBrand::normalize($settings['platform_name'] ?? null),
             'currency' => $settings['currency'] ?? 'JOD',
             'currency_rate' => (float) ($settings['currency_rate'] ?? 1),
             'default_locale' => $settings['default_locale'] ?? 'ar',
@@ -76,7 +77,7 @@ class PlatformSettingController extends Controller
             'freemius_api_token_set' => (bool) config('services.freemius.api_token', ''),
             'freemius_secret_key_set' => (bool) config('services.freemius.secret_key', ''),
             'freemius_public_key_set' => (bool) config('services.freemius.public_key', ''),
-            'contact_email' => $settings['contact_email'] ?? 'support@tadreesly.com',
+            'contact_email' => PlatformBrand::email($settings['contact_email'] ?? null),
             'contact_whatsapp' => $settings['contact_whatsapp'] ?? '',
             'live_google_meet_enabled' => (bool) ($settings['live_google_meet_enabled'] ?? true),
             'live_default_provider' => (string) ($settings['live_default_provider'] ?? 'google_meet'),

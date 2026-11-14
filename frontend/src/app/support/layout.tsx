@@ -3,7 +3,7 @@ import { ogBase, twitterBase } from '@/lib/seo';
 
 const title = 'الدعم الفني — 24/7 Support';
 const description =
-  'دعم فني متواصل 24/7 من فريق Tadreesly — نرد خلال ساعة على استفساراتك حول منصتك التعليمية.';
+  'دعم فني متواصل 24/7 من فريق فهمني — نرد خلال ساعة على استفساراتك حول منصتك التعليمية.';
 
 export const metadata: Metadata = {
   title,

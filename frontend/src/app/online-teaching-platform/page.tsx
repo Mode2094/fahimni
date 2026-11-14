@@ -32,7 +32,7 @@ const CAPABILITIES: [string, string][] = [
 
 const FAQ: [string, string][] = [
   ['Do I need any technical skills to start?', 'No. Sign up, get your site instantly, add your first course and set your price. Everything is managed from a simple dashboard.'],
-  ['Is this the same as selling on a marketplace?', 'No. A marketplace rents you a storefront inside someone else’s brand. Tadreesly gives you a platform under your own name, domain and control.'],
+  ['Is this the same as selling on a marketplace?', 'No. A marketplace rents you a storefront inside someone else’s brand. Fahimni gives you a platform under your own name, domain and control.'],
   ['Can I price my courses however I want?', 'Yes. You set every price, and payments go to you directly through your connected payment gateways.'],
   ['Do my students need to install anything?', 'No. They open your platform link in any browser. An optional student app is available on plans that include it.'],
   ['What does “independent teachers” mean here?', 'Teachers, tutors and academies that run their own classes and want to keep ownership of their content, students and revenue.'],
@@ -75,7 +75,7 @@ export default function OnlineTeachingPlatformPage() {
         <section aria-labelledby="solution-heading" className="mb-14">
           <h2 id="solution-heading" className="text-2xl font-bold text-gray-900">The solution: your own platform, your own brand</h2>
           <p className="text-gray-600 leading-relaxed mt-4">
-            Tadreesly moves you from tenant to owner. Your site, your content, your students and your
+            Fahimni moves you from tenant to owner. Your site, your content, your students and your
             revenue all stay yours. Everything below is already part of the platform:
           </p>
           <ul className="grid sm:grid-cols-2 gap-4 mt-8">

@@ -3,7 +3,7 @@ import { ogBase, twitterBase } from '@/lib/seo';
 
 const title = 'سياسة الاسترداد — Refund policy';
 const description =
-  'سياسة استرداد المبالغ في منصة Tadreesly — شروط واضحة وعادلة للطلاب والمعلمين على حد سواء.';
+  'سياسة استرداد المبالغ في منصة فهمني — شروط واضحة وعادلة للطلاب والمعلمين على حد سواء.';
 
 export const metadata: Metadata = {
   title,

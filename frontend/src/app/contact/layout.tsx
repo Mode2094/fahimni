@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { ogBase, twitterBase } from '@/lib/seo';
 
-const title = 'تواصل معنا — Contact Tadreesly';
+const title = 'تواصل معنا — Contact Fahimni';
 const description =
-  'تواصل مع فريق Tadreesly — نساعدك في إعداد منصتك التعليمية والإجابة على استفساراتك خلال ساعة.';
+  'تواصل مع فريق فهمني — نساعدك في إعداد منصتك التعليمية والإجابة على استفساراتك خلال ساعة.';
 
 export const metadata: Metadata = {
   title,

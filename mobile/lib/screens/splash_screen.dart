@@ -60,7 +60,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   BrandMark(size: 108),
                   const SizedBox(height: 26),
                   const Text(
-                    'Tadreesly',
+                    'فهمني',
                     style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: AppColors.textPrimary),
                   ),
                   const SizedBox(height: 8),
