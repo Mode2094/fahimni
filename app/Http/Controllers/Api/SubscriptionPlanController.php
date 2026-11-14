@@ -40,9 +40,14 @@ class SubscriptionPlanController extends Controller
         $this->authorize('create', SubscriptionPlan::class);
 
         $plan = DB::transaction(function () use ($request) {
-            $data = $request->validated();
+            $data = $this->withoutFreemiusKeys($request->validated());
 
-            $data['metadata'] = $this->paddleMetadata($request, $this->lemonMetadata($request, []));
+            // Platform-subscription prices are ALWAYS USD (Freemius is the
+            // only gateway and does not support JOD). Never trust the client
+            // for this.
+            $data['currency'] = 'USD';
+
+            $data['metadata'] = $this->freemiusMetadata($request, []);
 
             $plan = SubscriptionPlan::create($data);
 
@@ -83,9 +88,10 @@ class SubscriptionPlanController extends Controller
 
         $this->authorize('update', $plan);
 
-        $plan->update(array_merge($request->validated(), [
-            'metadata' => $this->paddleMetadata($request, $this->lemonMetadata($request, $plan->metadata ?? [])),
-        ]));
+        $plan->update(array_merge(
+            collect($this->withoutFreemiusKeys($request->validated()))->except('currency')->all(),
+            ['metadata' => $this->freemiusMetadata($request, $plan->metadata ?? [])]
+        ));
 
         $payload = [
             'plan' => new SubscriptionPlanResource($plan->load('features')),
@@ -118,32 +124,48 @@ class SubscriptionPlanController extends Controller
     }
 
     /**
-     * Persist the Paddle price-ID mapping inside the existing metadata JSONB
-     * column (the plan itself remains the price source of truth — Paddle IDs
-     * are only a mapping, never a price).
+     * Strip Freemius mapping keys from the validated payload — they live in
+     * the `metadata` JSONB column, not as top-level table columns.
      */
-    private function paddleMetadata($request, array $meta): array
+    private function withoutFreemiusKeys(array $data): array
     {
-        foreach (['paddle_price_id_monthly', 'paddle_price_id_yearly'] as $key) {
+        foreach ([
+            'freemius_monthly_plan_id', 'freemius_yearly_plan_id',
+            'freemius_monthly_pricing_id', 'freemius_yearly_pricing_id',
+        ] as $key) {
+            unset($data[$key]);
+        }
+
+        return $data;
+    }
+
+    /**
+     * Persist the Freemius plan/pricing-ID mapping inside the existing
+     * metadata JSONB column (the local plan remains the price/feature source
+     * of truth — Freemius IDs are only a billing mapping, never a price).
+     *
+     * Also clears any legacy Paddle/Lemon mapping keys so the admin panel no
+     * longer carries dead configuration.
+     */
+    private function freemiusMetadata($request, array $meta): array
+    {
+        foreach ([
+            'freemius_monthly_plan_id',
+            'freemius_yearly_plan_id',
+            'freemius_monthly_pricing_id',
+            'freemius_yearly_pricing_id',
+        ] as $key) {
             if ($request->exists($key)) {
                 $meta[$key] = trim((string) $request->input($key)) !== '' ? trim((string) $request->input($key)) : null;
             }
         }
 
-        return $meta;
-    }
-
-    /**
-     * Persist the Lemon Squeezy variant-ID mapping inside the existing
-     * metadata JSONB column (the plan itself remains the price source of
-     * truth — LS variant IDs are only a mapping, never a price).
-     */
-    private function lemonMetadata($request, array $meta): array
-    {
-        foreach (['lemon_variant_id_monthly', 'lemon_variant_id_yearly'] as $key) {
-            if ($request->exists($key)) {
-                $meta[$key] = trim((string) $request->input($key)) !== '' ? trim((string) $request->input($key)) : null;
-            }
+        // Remove obsolete gateway mapping keys.
+        foreach ([
+            'paddle_price_id_monthly', 'paddle_price_id_yearly',
+            'lemon_variant_id_monthly', 'lemon_variant_id_yearly',
+        ] as $dead) {
+            unset($meta[$dead]);
         }
 
         return $meta;

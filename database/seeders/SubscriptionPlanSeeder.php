@@ -12,7 +12,7 @@ class SubscriptionPlanSeeder extends Seeder
     public function run(): void
     {
         $plansData = [
-            ['slug' => 'starter', 'name' => 'Starter', 'desc' => 'مثالية للمعلمين الجدد', 'monthly' => 49.99, 'yearly' => 499.99, 'trial' => 7, 'sort' => 1, 'features' => [
+            ['slug' => 'starter', 'name' => 'Starter', 'desc' => 'مثالية للمعلمين الجدد', 'monthly' => 49.00, 'yearly' => 490.00, 'trial' => 7, 'sort' => 1, 'features' => [
                 ['students_limit', '50', 'numeric'],
                 ['courses_limit', '5', 'numeric'],
                 ['storage_limit_mb', '5120', 'numeric'],
@@ -46,7 +46,7 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
             ]],
-            ['slug' => 'professional', 'name' => 'Professional', 'desc' => 'للمعلمين المحترفين', 'monthly' => 99.99, 'yearly' => 999.99, 'trial' => 7, 'sort' => 2, 'features' => [
+            ['slug' => 'professional', 'name' => 'Professional', 'desc' => 'للمعلمين المحترفين', 'monthly' => 99.00, 'yearly' => 990.00, 'trial' => 7, 'sort' => 2, 'features' => [
                 ['students_limit', '200', 'numeric'],
                 ['courses_limit', '20', 'numeric'],
                 ['storage_limit_mb', '20480', 'numeric'],
@@ -80,7 +80,7 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
             ]],
-            ['slug' => 'enterprise', 'name' => 'Enterprise', 'desc' => 'للأكاديميات والمؤسسات', 'monthly' => 199.99, 'yearly' => 1999.99, 'trial' => 7, 'sort' => 3, 'features' => [
+            ['slug' => 'enterprise', 'name' => 'Enterprise', 'desc' => 'للأكاديميات والمؤسسات', 'monthly' => 199.00, 'yearly' => 1990.00, 'trial' => 7, 'sort' => 3, 'features' => [
                 ['students_limit', 'unlimited', 'string'],
                 ['courses_limit', 'unlimited', 'string'],
                 ['storage_limit_mb', '102400', 'numeric'],
@@ -127,7 +127,11 @@ class SubscriptionPlanSeeder extends Seeder
                     'description' => $data['desc'],
                     'monthly_price' => $data['monthly'],
                     'yearly_price' => $data['yearly'],
-                    'currency' => 'JOD',
+                    // Platform-subscription prices are ALWAYS USD (Freemius is
+                    // the only gateway and does not support JOD). Currency is
+                    // display-only; the chargeable amount lives on the
+                    // Freemius plan.
+                    'currency' => 'USD',
                     'trial_days' => $data['trial'],
                     'is_active' => true,
                     'is_public' => true,

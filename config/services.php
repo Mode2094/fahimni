@@ -56,24 +56,36 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Lemon Squeezy (Merchant of Record)
+    | Freemius (exclusive billing gateway for teacher subscriptions)
     |--------------------------------------------------------------------------
-    | Secrets live ONLY in the environment — never in the database and never
-    | in source control. Non-secret overrides (store id, api url, enabled
-    | toggle) can additionally be managed from the admin panel, which stores
-    | them in platform_settings.
+    | Freemius is the ONLY gateway used to collect money for platform
+    | (teacher) subscriptions. Student course purchases and teacher bookings
+    | are a separate concern and must NEVER flow through Freemius.
     |
-    | LEMON_SQUEEZY_API_KEY        API key (Settings → API keys in the LS dashboard)
-    | LEMON_SQUEEZY_STORE_ID       Numeric store id (Settings → Stores)
-    | LEMON_SQUEEZY_SIGNING_SECRET Webhook signing secret (Settings → Webhooks)
-    | LEMON_SQUEEZY_API_URL        Defaults to the official API base URL
+    | Secrets live ONLY in the environment — never in the database and never
+    | in source control. Non-secret overrides (enabled toggle, api base url)
+    | can additionally be managed from the admin panel (platform_settings).
+    |
+    | FREEMIUS_PRODUCT_ID          Product id (Dashboard → Settings → API & Keys)
+    | FREEMIUS_API_TOKEN           API Bearer Authorization Token
+    | FREEMIUS_PRODUCT_SECRET_KEY  Webhook signing secret (HMAC-SHA256)
+    | FREEMIUS_PUBLIC_KEY          Public key (used by the JS checkout SDK)
+    | FREEMIUS_API_URL             Official API base URL (override for testing)
+    | FREEMIUS_CHECKOUT_URL        Hosted checkout base URL
+    |
+    | Per-plan mapping (env default; admin may override per plan in metadata):
+    |   FREEMIUS_PLAN_{SLUG}_MONTHLY_ID / FREEMIUS_PLAN_{SLUG}_YEARLY_ID
+    |   e.g. FREEMIUS_PLAN_STARTER_MONTHLY_ID=12345
     */
 
-    'lemonsqueezy' => [
-        'enabled' => env('LEMON_SQUEEZY_ENABLED', false),
-        'api_key' => env('LEMON_SQUEEZY_API_KEY', ''),
-        'store_id' => env('LEMON_SQUEEZY_STORE_ID', ''),
-        'signing_secret' => env('LEMON_SQUEEZY_SIGNING_SECRET', ''),
-        'api_url' => env('LEMON_SQUEEZY_API_URL', 'https://api.lemonsqueezy.com'),
+    'freemius' => [
+        'enabled' => env('FREEMIUS_ENABLED', false),
+        'product_id' => (string) env('FREEMIUS_PRODUCT_ID', ''),
+        'api_token' => (string) env('FREEMIUS_API_TOKEN', ''),
+        'secret_key' => (string) env('FREEMIUS_PRODUCT_SECRET_KEY', ''),
+        'public_key' => (string) env('FREEMIUS_PUBLIC_KEY', ''),
+        'api_url' => env('FREEMIUS_API_URL', 'https://api.freemius.com'),
+        'checkout_url' => env('FREEMIUS_CHECKOUT_URL', 'https://checkout.freemius.com'),
+        'sandbox' => (bool) env('FREEMIUS_SANDBOX', false),
     ],
 ];

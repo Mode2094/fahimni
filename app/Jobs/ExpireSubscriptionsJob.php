@@ -7,7 +7,6 @@ use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
 use App\Plans\PlanEngine;
-use App\Services\AutoRenewalService;
 use App\Services\NotificationService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -35,30 +34,24 @@ class ExpireSubscriptionsJob implements ShouldQueue
             ->get();
 
         foreach ($expiredActive as $sub) {
-            // Lemon Squeezy is Merchant of Record: billing, renewal and
-            // expiration are managed by Lemon Squeezy and reflected via
-            // webhooks (order_created / subscription_expired / ...). The
-            // local scheduler must never flip such a subscription while LS
-            // still owns the billing cycle.
-            $subMeta = $sub->metadata ?? [];
-
-            if (! empty($subMeta['lemon_subscription_id'])) {
+            // ── Freemius-owned subscriptions ───────────────────────────
+            // Freemius is the Merchant of Record for platform billing:
+            // renewal, dunning (failed payments), expiration and access are
+            // managed by Freemius and reflected via license webhooks. The
+            // local scheduler must NEVER flip or auto-charge a Freemius
+            // subscription while Freemius still owns the billing cycle —
+            // that would desync the two and could cut access mid-term.
+            if ($sub->billing_source === 'freemius' || ! empty(($sub->metadata ?? [])['freemius'])) {
                 continue;
             }
 
-            // Auto-charge the saved card (any gateway) exactly at the
-            // renewal moment. Success extends the subscription through
-            // PaymentCompletionService — no status flip, no interruption.
-            if ($sub->auto_renew) {
-                try {
-                    if (app(AutoRenewalService::class)->attemptAutoCharge($sub)) {
-                        $changed++;
-
-                        continue;
-                    }
-                } catch (\Throwable $e) {
-                    report($e); // fall through to the normal expiry path.
-                }
+            // Any other (legacy, pre-cutover) provider subscription is also
+            // left untouched here: the cutover is complete and legacy rows
+            // are archived. Only flip status when there is genuinely no
+            // external billing owner.
+            if (! empty(($sub->metadata ?? [])['lemon_subscription_id'])
+                || ! empty(($sub->metadata ?? [])['paddle_subscription_id'])) {
+                continue;
             }
 
             DB::transaction(function () use ($sub, $now) {

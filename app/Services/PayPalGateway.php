@@ -2,11 +2,15 @@
 
 namespace App\Services;
 
-use App\Contracts\AutoChargeGateway;
 use App\Models\PlatformSetting;
 use Illuminate\Support\Facades\Http;
 
-class PayPalGateway implements AutoChargeGateway
+/**
+ * PayPal gateway — used ONLY for paid teacher bookings / student purchases
+ * (one-off charges). It is never used for platform subscriptions: those are
+ * collected exclusively by Freemius.
+ */
+class PayPalGateway
 {
     private const LIVE_API = 'https://api-m.paypal.com';
 
@@ -341,85 +345,5 @@ class PayPalGateway implements AutoChargeGateway
         }
 
         return $body;
-    }
-
-    public static function chargeSaved(string $token, array $params): array
-    {
-        try {
-            $orderToken = self::accessToken();
-
-            [$currency, $amount] = self::normalizeCurrency(
-                $params['currency'] ?? 'USD',
-                (float) $params['amount'],
-            );
-
-            $create = Http::acceptJson()
-                ->withToken($orderToken)
-                ->post(self::baseUrl().'/v2/checkout/orders', [
-                    'intent' => 'CAPTURE',
-                    'purchase_units' => [[
-                        'reference_id' => $params['cart_id'],
-                        'description' => $params['description'] ?? 'Tadreesly Subscription Renewal',
-                        'amount' => [
-                            'currency_code' => $currency,
-                            'value' => number_format($amount, 2, '.', ''),
-                        ],
-                    ]],
-                    'payment_source' => [
-                        'card' => ['vault_id' => $token],
-                    ],
-                ]);
-
-            $created = $create->json() ?? [];
-
-            if (! $create->successful() || empty($created['id'])) {
-                return [
-                    'success' => false,
-                    'tran_ref' => null,
-                    'response_code' => null,
-                    'message' => 'PayPal order failed: '.($created['message'] ?? 'Unknown error'),
-                ];
-            }
-
-            $captureBody = self::captureOrder($created['id']);
-            $captureId = $captureBody['purchase_units'][0]['payments']['captures'][0]['id'] ?? null;
-
-            return [
-                'success' => true,
-                'tran_ref' => is_string($captureId) ? $captureId : (string) $created['id'],
-                'response_code' => 'COMPLETED',
-                'message' => 'Approved',
-            ];
-        } catch (\Throwable $e) {
-            return [
-                'success' => false,
-                'tran_ref' => null,
-                'response_code' => null,
-                'message' => 'PayPal renewal failed: '.$e->getMessage(),
-            ];
-        }
-    }
-
-    /**
-     * @param  array<string, mixed>  $result  capture-order response body
-     * @return array{token: string, brand: string|null, last4: string|null}|null
-     */
-    public static function extractSavedMethod(array $result): ?array
-    {
-        $vault = $result['payment_source']['card']['attributes']['vault'] ?? null;
-        $card = $result['payment_source']['card'] ?? [];
-
-        if (! is_array($vault) || empty($vault['vault_id'])) {
-            return null;
-        }
-
-        $brand = $card['brand'] ?? null;
-        $last4 = $card['last_digits'] ?? null;
-
-        return [
-            'token' => (string) $vault['vault_id'],
-            'brand' => is_string($brand) && $brand !== '' ? $brand : null,
-            'last4' => ctype_digit((string) $last4) ? substr((string) $last4, -4) : null,
-        ];
     }
 }

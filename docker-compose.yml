@@ -1,57 +1,74 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# LMS — Production Docker stack
+# Fahimni — Production / Staging Docker stack
 #
-# Reproducibility contract:
-#   • Every image is pinned to an exact digest/version (no `latest`, no
-#     floating tags) in Dockerfile(s) and below.
-#   • Containers run ONLY the baked image — no host source bind-mounts.
-#     Code + vendor live inside the image; .env lives on the host and is
-#     injected at runtime (env_file). Nothing is read from the host FS.
-#   • `docker compose build` + `docker compose up -d` on any x86_64/arm64
-#     host with this repo at a given commit produces the same stack.
+# Isolation contract (two stacks may run on the same VPS):
+#   • Run each stack from its own release directory with its own
+#     COMPOSE_PROJECT_NAME and .env (see deploy/env/*.env.example).
+#   • No fixed container_name: Compose prefixes every container with the
+#     project name, so production and staging can never collide.
+#   • Images are tagged with IMAGE_TAG (release SHA), never shared between
+#     stacks. Volumes and the network are explicitly project-scoped.
+#   • nginx publishes only on BIND_ADDR (default 127.0.0.1) and joins the
+#     shared reverse-proxy network so the Docker Caddy container can reach it.
+#     The public TLS terminator (Caddy) is the only process bound to 80/443.
+#   • PostgreSQL and Redis publish no ports and live on an INTERNAL network
+#     (`fahimni-db`, no egress) — never on the shared proxy network.
+#   • The shared proxy network (`FAHIMNI_PROXY_NETWORK`, default
+#     `fahimni-proxy`) is external and carries ONLY nginx: it is the single
+#     bridge between this stack and the LooksLoop Caddy container. No database
+#     or Redis of either project is ever attached to it.
+#
+# Reproducibility / runtime contract:
+#   • Third-party images are pinned to exact digests; app images are built
+#     from this commit and tagged with IMAGE_TAG.
+#   • Containers run the baked image — no host source-code bind-mounts.
+#     Read-only nginx config/cert mounts are configuration, not application code.
+#   • .env is a symlink to the stack's shared secrets file and is injected
+#     at runtime (env_file). Nothing secret is baked into an image.
 #   • Schema changes happen in `migrate` only, never destructively.
 #
-# TLS: enable when the domain + certificates exist — see
-# docker/nginx/https.conf.example. Until then port 80 is plain HTTP on
-# ${APP_PORT:-8080} (public TLS lives in front of it, e.g. Cloudflare/Caddy).
+# TLS: terminate at Caddy (deploy/caddy/fahimni.caddy). nginx also supports
+# direct TLS via docker/nginx/optional/https.conf if needed.
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
   postgres:
     # PostgreSQL 16.15 (alpine) — pinned to the digest tested locally.
     image: postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
-    container_name: lms-postgres
     security_opt:
       - no-new-privileges:true
     environment:
-      POSTGRES_DB: lms
-      POSTGRES_USER: lms
+      POSTGRES_DB: "${DB_DATABASE:?DB_DATABASE must be set in .env — use a stack-specific database name}"
+      POSTGRES_USER: "${DB_USERNAME:?DB_USERNAME must be set in .env — use a stack-specific role}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD must be set in .env — refusing to start with a known default}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lms"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - lms-net
+      - fahimni-db
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: "${MEM_POSTGRES:-768M}"
 
   redis:
     # Redis 7.4.11 (alpine) — pinned to the digest tested locally.
     image: redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
-    container_name: lms-redis
     security_opt:
       - no-new-privileges:true
     # AOF persistence: sessions survive redis restarts, caches survive reboots.
     # volatile-lru evicts ONLY TTL'd keys (sessions/cache) — never queue jobs,
     # which are persistent and must survive memory pressure.
-    command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru"]
+    # maxmemory is kept BELOW the container cap (MEM_REDIS) with headroom for
+    # client buffers and the AOF-rewrite copy-on-write spike; deploy.sh enforces
+    # >=32MiB headroom (see validate_redis_memory) so Redis evicts instead of
+    # being OOM-killed. Defaults: REDIS_MAXMEMORY=192mb under MEM_REDIS=256M.
+    command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory \"${REDIS_MAXMEMORY:-192mb}\" --maxmemory-policy volatile-lru"]
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env — refusing to start with a known default}"
     volumes:
@@ -63,12 +80,12 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - lms-net
+      - fahimni-db
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "${MEM_REDIS:-256M}"
 
   # schema + seed once, then exit 0. Never migrate:fresh.
   migrate:
@@ -76,13 +93,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: app
-    container_name: lms-migrate
+    image: fahimni-app:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -90,10 +107,12 @@ services:
       QUEUE_CONNECTION: redis
       SESSION_DRIVER: redis
     # Migrate always; seed ONLY on a fresh database so the super-admin
-    # credentials are never re-applied on every deploy. plans:sync creates
-    # the canonical plans when the plans table is empty (source of truth =
+    # credentials are never re-applied on a normal redeploy. The script uses
+    # `set -e` and exits non-zero on ANY failure (migrate, plans:sync, seed or
+    # the count probe) — there is no `|| true` swallow. plans:sync creates the
+    # canonical plans when the plans table is empty (source of truth =
     # SubscriptionPlanSeeder, works in any environment, not just Docker).
-    command: ["sh", "-c", "php artisan migrate --force && php artisan plans:sync && [ \"$(php artisan tinker --execute='echo \\App\\Models\\User::count();' 2>/dev/null || echo 0)\" = \"0\" ] && php artisan db:seed --force || true"]
+    command: ["sh", "/var/www/html/docker/migrate.sh"]
     volumes:
       - storage_data:/var/www/html/storage
       - backups_data:/var/www/html/storage/app/backups
@@ -103,21 +122,26 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - lms-net
+      - fahimni-net
+      - fahimni-db
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: "${MEM_MIGRATE:-512M}"
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
       target: app
-    container_name: lms-app
+    image: fahimni-app:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -143,14 +167,15 @@ services:
     expose:
       - "9000"
     networks:
-      - lms-net
+      - fahimni-net
+      - fahimni-db
     restart: unless-stopped
     stop_grace_period: 30s
     # Memory limit (safe cap; CPU deliberately unbounded — set after load tests).
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "${MEM_APP:-384M}"
 
   frontend:
     build:
@@ -163,9 +188,8 @@ services:
         # cookie set by the BFF, so cross-origin ABSOLUTE URLs would drop the
         # cookie. nginx routes /api/ to PHP on the same origin.
         NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-/api/v1}"
-        NEXT_PUBLIC_PLATFORM_DOMAIN: "${NEXT_PUBLIC_PLATFORM_DOMAIN:-app.lmsplatform.com}"
-    image: lms-frontend
-    container_name: lms-frontend
+        NEXT_PUBLIC_PLATFORM_DOMAIN: "${NEXT_PUBLIC_PLATFORM_DOMAIN:-fahimni.me}"
+    image: fahimni-frontend:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     environment:
@@ -184,17 +208,16 @@ services:
       retries: 5
       start_period: 30s
     networks:
-      - lms-net
+      - fahimni-net
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "${MEM_FRONTEND:-384M}"
 
   nginx:
     # nginx 1.27.5 (alpine) — pinned to the digest tested locally.
     image: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
-    container_name: lms-nginx
     security_opt:
       - no-new-privileges:true
     volumes:
@@ -205,13 +228,20 @@ services:
       # TLS certificates — mount before enabling https.conf:
       - ${CERTS_DIR:-./certs}:/etc/nginx/certs:ro
     ports:
-      - "${APP_PORT:-8080}:80"
-      - "${HTTPS_PORT:-8443}:443"
+      # Loopback only: Caddy is the sole public listener on 80/443.
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-8080}:80"
+      - "${BIND_ADDR:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
     depends_on:
       - app
       - frontend
     networks:
-      - lms-net
+      fahimni-net:
+      # Shared reverse-proxy network: the ONLY service attached to it, and the
+      # only bridge to the existing LooksLoop Caddy container. The alias must be
+      # unique per stack (production/staging must not collide on one name).
+      fahimni-proxy:
+        aliases:
+          - "${PROXY_ALIAS:?PROXY_ALIAS must be set in .env (unique per stack, e.g. fahimni-prod)}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/up >/dev/null 2>&1 || exit 1"]
@@ -222,20 +252,20 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: "${MEM_NGINX:-64M}"
 
   scheduler:
     build:
       context: .
       dockerfile: Dockerfile
       target: scheduler
-    container_name: lms-scheduler
+    image: fahimni-scheduler:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -258,25 +288,26 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - lms-net
+      - fahimni-net
+      - fahimni-db
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: "${MEM_SCHEDULER:-256M}"
 
   horizon:
     build:
       context: .
       dockerfile: Dockerfile
       target: horizon
-    container_name: lms-horizon
+    image: fahimni-horizon:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: "${APP_ENV:-production}"
       APP_DEBUG: "false"
       DB_HOST: postgres
       REDIS_HOST: redis
@@ -302,16 +333,17 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - lms-net
+      - fahimni-net
+      - fahimni-db
     restart: unless-stopped
     stop_grace_period: 60s
-    # Horizon already caps itself via config/horizon.php (10 workers × 128MB +
-    # backup supervisor 512MB). The hard limit below guards the host from a
-    # runaway worker leak, not a performance target.
+    # Horizon already caps itself via config/horizon.php (workers × memory).
+    # The hard limit below guards the host from a runaway worker leak, not a
+    # performance target. Keep HORIZON_* worker counts consistent with this cap.
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: "${MEM_HORIZON:-512M}"
 
   # ── Load testing (k6) — started explicitly with:
   #    docker compose --profile loadtest run --rm loadtest <scenario-file.js>
@@ -330,16 +362,36 @@ services:
       TEST_USER_PASSWORD: ${K6_TEST_USER_PASSWORD:-}
       TEST_TENANT_ID: ${K6_TEST_TENANT_ID:-}
     networks:
-      - lms-net
+      - fahimni-net
     entrypoint: ["sh", "-c"]
     command: ["k6 run /tests/scenarios/${K6_SCENARIO}.js --out json=/results/${K6_SCENARIO}.json"]
 
 volumes:
+  # Explicit stack-scoped names: production and staging never share data.
   postgres_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_postgres_data
   redis_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_redis_data
   storage_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_storage_data
   backups_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_backups_data
 
 networks:
-  lms-net:
+  # Application network (egress allowed: SMTP, Freemius API, Sentry, ACME).
+  fahimni-net:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_net
     driver: bridge
+  # Data-tier network: no egress. Joined only by postgres/redis and the app
+  # tier (app/migrate/scheduler/horizon). nginx/frontend never join it.
+  fahimni-db:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_db
+    driver: bridge
+    internal: true
+  # Shared reverse-proxy network with the existing LooksLoop Caddy container.
+  # Created once on the host by deploy/scripts/caddy-docker-integrate.sh
+  # (`docker network create $FAHIMNI_PROXY_NETWORK`); only nginx attaches to it.
+  # `external: true` means compose never creates or deletes it.
+  fahimni-proxy:
+    name: ${FAHIMNI_PROXY_NETWORK:-fahimni-proxy}
+    external: true
