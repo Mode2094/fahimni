@@ -7,18 +7,22 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 DEPLOY_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
 integrate="$DEPLOY_DIR/scripts/caddy-docker-integrate.sh"
-fragment="$DEPLOY_DIR/caddy/fahimni.caddy"
+fragments=("$DEPLOY_DIR/caddy/fahimni.caddy" "$DEPLOY_DIR/caddy/fahimni-staging.caddy")
+fragment="${fragments[0]}"
 base="$DEPLOY_DIR/tests/looksloop-caddyfile.fixture"
 
-for f in "$integrate" "$fragment" "$base"; do
+for f in "$integrate" "${fragments[@]}" "$base"; do
   [[ -f "$f" ]] || { echo "missing: $f" >&2; exit 1; }
 done
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/fahimni-caddy-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
-echo "== positive: LooksLoop base + Fahimni fragment must validate =="
-"$integrate" --check --base-file "$base" --source "$fragment"
+echo "== positive: LooksLoop base + each Fahimni fragment must validate =="
+for frag in "${fragments[@]}"; do
+  echo "-- $(basename "$frag")"
+  "$integrate" --check --base-file "$base" --source "$frag"
+done
 
 echo "== negative: base that already defines fahimni.me must be rejected =="
 cp "$base" "$work/duplicate.Caddyfile"

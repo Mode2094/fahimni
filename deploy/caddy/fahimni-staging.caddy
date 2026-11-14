@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Fahimni — additive Caddy vhosts, STAGING ONLY.
+#
+# Use this file for the staging launch so NO production vhost
+# (fahimni.me / www.fahimni.me / api.fahimni.me) is installed before production
+# is ready:
+#   ./deploy/scripts/caddy-docker-integrate.sh --apply --yes \
+#       --source /opt/fahimni/staging/current/deploy/caddy/fahimni-staging.caddy
+#
+# When production is ready, switch --source to the full `fahimni.caddy`
+# (which adds the production hosts) and re-run --apply. Both files define the
+# same `(fahimni_headers)` snippet, so never merge both at once.
+#
+# Same mechanics as fahimni.caddy: appended to the LooksLoop Caddy container's
+# live Caddyfile, validated inside the container and reloaded over its admin API.
+# The integrator replaces __STAGING_BCRYPT_HASH__ with the bcrypt hash from
+# FAHIMNI_STAGING_BASIC_HASH.
+# ─────────────────────────────────────────────────────────────────────────────
+
+(fahimni_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+# ── Staging: basic auth + noindex on every response ─────────────────────────
+staging.fahimni.me {
+	import fahimni_headers
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	basic_auth {
+		staging __STAGING_BCRYPT_HASH__
+	}
+	encode zstd gzip
+
+	reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:fahimni-staging:80} {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+api-staging.fahimni.me {
+	import fahimni_headers
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+
+	# Freemius cannot send HTTP basic-auth credentials. The webhook is public
+	# but protected by its HMAC signature; every other API path stays closed.
+	@staging_protected not path /api/v1/payments/freemius-webhook*
+	basic_auth @staging_protected {
+		staging __STAGING_BCRYPT_HASH__
+	}
+	encode zstd gzip
+
+	@api path /api/* /storage/* /up /health /.well-known/*
+	handle @api {
+		reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:fahimni-staging:80} {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}
