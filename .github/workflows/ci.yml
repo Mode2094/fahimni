@@ -118,6 +118,11 @@ jobs:
         # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
         run: deploy/tests/redis-memory-check.sh
 
+      - name: Laravel writable dirs are committed and survive the build context
+        # storage/framework/views absent => config('view.compiled') false =>
+        # `php artisan optimize` aborts => app container never starts.
+        run: deploy/tests/storage-dirs-test.sh
+
       - name: Validate compose (staging + production)
         run: |
           # env_file: .env must exist for `compose config`; values are placeholders.

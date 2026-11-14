@@ -54,7 +54,13 @@ EXPOSE 9000
 # Production runtime: compile config/route/view/event caches once so every
 # request skips interpretation. Values come from container env (env_file),
 # never from a .env file inside the image.
-CMD ["sh", "-c", "php artisan optimize && php-fpm"]
+#
+# Belt-and-suspenders for the writable-dir skeleton: the dirs are committed
+# (see .gitignore) and baked into the image, but an unexpected/empty volume
+# layout must never be able to abort startup. If storage/framework/views is
+# missing, config('view.compiled') becomes false and `optimize` exits non-zero,
+# so php-fpm would never start. mkdir -p is a no-op in the normal case.
+CMD ["sh", "-c", "mkdir -p storage/framework/views storage/framework/cache/data storage/framework/sessions storage/logs && php artisan optimize && php-fpm"]
 
 FROM base AS scheduler
 

@@ -10,11 +10,22 @@ deploy/state/
 # Laravel
 /vendor
 /storage/*.key
-/storage/app/backups/
-/storage/framework/cache/data/
-/storage/framework/sessions/
-/storage/framework/views/
-/storage/logs/*.log
+# Keep the runtime directory skeleton in git (placeholder files only) so a fresh
+# checkout — and therefore a fresh/empty Docker volume populated from the image —
+# always has the writable dirs Laravel requires. An absent storage/framework/views
+# makes config('view.compiled') resolve to false (realpath() returns false) and
+# `php artisan optimize` then aborts with "View path not found", so the app
+# container would never reach php-fpm.
+/storage/app/backups/*
+!/storage/app/backups/.gitkeep
+/storage/framework/cache/data/*
+!/storage/framework/cache/data/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore
 /bootstrap/cache/*.php
 /public/storage
 
