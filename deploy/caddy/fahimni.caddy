@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Fahimni — additive Caddy vhosts
+#
+# This file does NOT replace the existing Caddyfile and does not touch the
+# LooksLoop site. Install it as /etc/caddy/fahimni/fahimni.caddy and add ONE
+# line to the existing Caddyfile:
+#
+#     import /etc/caddy/fahimni/*.caddy
+#
+# Then validate before reloading:
+#     sudo deploy/scripts/caddy-activate.sh --check
+#     sudo deploy/scripts/caddy-activate.sh --apply
+#
+# The installer replaces __STAGING_BCRYPT_HASH__ with a real bcrypt hash from
+# FAHIMNI_STAGING_BASIC_HASH. The repo copy intentionally does not contain a
+# working hash.
+#
+# Upstreams are loopback-only nginx containers:
+#   production 127.0.0.1:8080   staging 127.0.0.1:8081
+# Override with FAHIMNI_PROD_UPSTREAM / FAHIMNI_STAGING_UPSTREAM in the Caddy
+# service environment if the compose ports change.
+# ─────────────────────────────────────────────────────────────────────────────
+
+(fahimni_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+# ── Production: apex + www redirect + API-only host ─────────────────────────
+fahimni.me {
+	import fahimni_headers
+	encode zstd gzip
+
+	reverse_proxy {$FAHIMNI_PROD_UPSTREAM:127.0.0.1:8080} {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+www.fahimni.me {
+	redir https://fahimni.me{uri} permanent
+}
+
+api.fahimni.me {
+	import fahimni_headers
+	encode zstd gzip
+
+	@api path /api/* /storage/* /up /health /.well-known/*
+	handle @api {
+		reverse_proxy {$FAHIMNI_PROD_UPSTREAM:127.0.0.1:8080} {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}
+
+# ── Staging: basic auth + noindex on every response ─────────────────────────
+staging.fahimni.me {
+	import fahimni_headers
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	basic_auth {
+		staging __STAGING_BCRYPT_HASH__
+	}
+	encode zstd gzip
+
+	reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:127.0.0.1:8081} {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+api-staging.fahimni.me {
+	import fahimni_headers
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+
+	# Freemius cannot send HTTP basic-auth credentials. The webhook is public
+	# but protected by its HMAC signature; every other API path stays closed.
+	@staging_protected not path /api/v1/payments/freemius-webhook*
+	basic_auth @staging_protected {
+		staging __STAGING_BCRYPT_HASH__
+	}
+	encode zstd gzip
+
+	@api path /api/* /storage/* /up /health /.well-known/*
+	handle @api {
+		reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:127.0.0.1:8081} {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}
