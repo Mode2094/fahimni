@@ -94,3 +94,32 @@ jobs:
           NEXT_PUBLIC_API_URL: /api/v1
           NEXT_PUBLIC_PLATFORM_DOMAIN: app.example.com
         run: npm run build
+
+  deploy-assets:
+    name: Deploy assets (shellcheck + compose + Caddy merge)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax
+        run: bash -n deploy/scripts/*.sh deploy/tests/*.sh
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh
+
+      - name: Validate compose (staging + production)
+        run: |
+          # env_file: .env must exist for `compose config`; values are placeholders.
+          cp deploy/env/staging.env.example .env
+          docker compose --env-file deploy/env/staging.env.example config --quiet
+          cp deploy/env/production.env.example .env
+          docker compose --env-file deploy/env/production.env.example config --quiet
+
+      - name: Caddy merge validates against a LooksLoop-shaped base
+        # Proves the additive Fahimni vhosts merge with LooksLoop's global block,
+        # :443 on-demand catch-all and :80 redirect without collision, and that
+        # the duplicate-host guard fires.
+        run: deploy/tests/caddy-merge-validate.sh

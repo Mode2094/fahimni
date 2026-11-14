@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TEST FIXTURE — a simulated LooksLoop Caddyfile (literal domains, no secrets).
+#
+# It mirrors the real production file's shape: one global options block, concrete
+# hosts with normal managed certificates, a `:443` catch-all with on-demand TLS,
+# and a `:80` redirect catch-all. Used by
+# `deploy/tests/caddy-merge-validate.sh` to prove the additive Fahimni fragment
+# merges and validates without colliding with LooksLoop's catch-alls.
+# ─────────────────────────────────────────────────────────────────────────────
+{
+	email admin@looksloop.example
+
+	on_demand_tls {
+		ask http://api:8000/api/v1/public/tls/ask
+	}
+
+	servers {
+		protocols h1 h2
+		trusted_proxies static private_ranges
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+www.looksloop.example {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /up {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+control.looksloop.example {
+	encode zstd gzip
+
+	handle {
+		reverse_proxy control:3000
+	}
+}
+
+mirror.looksloop.example {
+	encode zstd gzip
+
+	handle {
+		reverse_proxy mirror:3000
+	}
+}
+
+:443 {
+	encode zstd gzip
+
+	handle {
+		reverse_proxy store:3000
+	}
+
+	tls {
+		on_demand
+	}
+}
+
+:80 {
+	redir https://{host}{uri} permanent
+}

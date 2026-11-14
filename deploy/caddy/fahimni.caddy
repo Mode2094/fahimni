@@ -1,24 +1,28 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Fahimni — additive Caddy vhosts
+# Fahimni — additive Caddy vhosts (Docker / shared reverse-proxy network)
 #
-# This file does NOT replace the existing Caddyfile and does not touch the
-# LooksLoop site. Install it as /etc/caddy/fahimni/fahimni.caddy and add ONE
-# line to the existing Caddyfile:
+# The public TLS terminator is the LooksLoop Caddy *container* (image
+# caddy:2-alpine), not a systemd service. Its Caddyfile is bind-mounted
+# read-only from an immutable release path and it has no `import`, so this file
+# is NOT copied onto the host. Instead `deploy/scripts/caddy-docker-integrate.sh`
+# reads the container's live Caddyfile, appends this fragment, validates the
+# merged result inside the container and reloads Caddy over its admin API. The
+# LooksLoop site blocks and certificates are preserved verbatim.
 #
-#     import /etc/caddy/fahimni/*.caddy
+# Upstreams are the Fahimni nginx containers by their alias on the shared
+# reverse-proxy network `fahimni-proxy` (see docker-compose.yml). PROXY_ALIAS in
+# each stack env MUST equal the matching alias below:
+#   production  fahimni-prod:80      staging  fahimni-staging:80
+# Override the defaults per run with -e FAHIMNI_PROD_UPSTREAM /
+# FAHIMNI_STAGING_UPSTREAM (the integrator passes them to `caddy reload`).
 #
-# Then validate before reloading:
-#     sudo deploy/scripts/caddy-activate.sh --check
-#     sudo deploy/scripts/caddy-activate.sh --apply
+# The integrator replaces __STAGING_BCRYPT_HASH__ with a real bcrypt hash from
+# FAHIMNI_STAGING_BASIC_HASH. The repo copy intentionally has no working hash.
 #
-# The installer replaces __STAGING_BCRYPT_HASH__ with a real bcrypt hash from
-# FAHIMNI_STAGING_BASIC_HASH. The repo copy intentionally does not contain a
-# working hash.
-#
-# Upstreams are loopback-only nginx containers:
-#   production 127.0.0.1:8080   staging 127.0.0.1:8081
-# Override with FAHIMNI_PROD_UPSTREAM / FAHIMNI_STAGING_UPSTREAM in the Caddy
-# service environment if the compose ports change.
+# This fragment defines no global options block (Caddy allows only one, owned by
+# LooksLoop) and no :80 / :443 catch-all (LooksLoop's catch-alls keep handling
+# those listeners). It only adds concrete hostnames, which always win over the
+# catch-alls for their own SNI/Host.
 # ─────────────────────────────────────────────────────────────────────────────
 
 (fahimni_headers) {
@@ -37,7 +41,7 @@ fahimni.me {
 	import fahimni_headers
 	encode zstd gzip
 
-	reverse_proxy {$FAHIMNI_PROD_UPSTREAM:127.0.0.1:8080} {
+	reverse_proxy {$FAHIMNI_PROD_UPSTREAM:fahimni-prod:80} {
 		header_up X-Real-IP {remote_host}
 	}
 }
@@ -52,7 +56,7 @@ api.fahimni.me {
 
 	@api path /api/* /storage/* /up /health /.well-known/*
 	handle @api {
-		reverse_proxy {$FAHIMNI_PROD_UPSTREAM:127.0.0.1:8080} {
+		reverse_proxy {$FAHIMNI_PROD_UPSTREAM:fahimni-prod:80} {
 			header_up X-Real-IP {remote_host}
 		}
 	}
@@ -71,7 +75,7 @@ staging.fahimni.me {
 	}
 	encode zstd gzip
 
-	reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:127.0.0.1:8081} {
+	reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:fahimni-staging:80} {
 		header_up X-Real-IP {remote_host}
 	}
 }
@@ -90,7 +94,7 @@ api-staging.fahimni.me {
 
 	@api path /api/* /storage/* /up /health /.well-known/*
 	handle @api {
-		reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:127.0.0.1:8081} {
+		reverse_proxy {$FAHIMNI_STAGING_UPSTREAM:fahimni-staging:80} {
 			header_up X-Real-IP {remote_host}
 		}
 	}

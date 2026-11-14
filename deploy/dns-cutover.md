@@ -61,9 +61,9 @@ Expected: the four Fahimni names return `187.127.87.101`; MX/TXT unchanged.
 ## 5. Ordering (important)
 
 1. DNS applied and verified (this file).
-2. Port 80 reachable for ACME; reload Caddy **only** after DNS resolves
-   (`deploy/scripts/caddy-activate.sh --apply`), otherwise certificates cannot
-   be issued and staging stays without TLS.
+2. Port 80 reachable for ACME; apply the Fahimni vhosts **only** after DNS
+   resolves (`deploy/scripts/caddy-docker-integrate.sh --apply --yes`), otherwise
+   certificates cannot be issued and staging stays without TLS.
 3. Deploy Staging (`deploy/scripts/deploy.sh --env staging`).
 4. Production only after Staging + Freemius Sandbox pass, with new approval.
 
@@ -74,5 +74,9 @@ HTTP-01 needs port 80 reachable directly.
 
 - Restore `A @` to `2.57.91.91` (parking) and delete `api`, `staging`,
   `api-staging` to return to the current state.
-- Then restore the previous Caddy config:
-  `sudo cp /etc/caddy/Caddyfile.bak.<timestamp> /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
+- Then remove the Fahimni vhosts from the LooksLoop Caddy **container** (in place,
+  no restart, LooksLoop keeps serving):
+  `deploy/scripts/caddy-docker-integrate.sh --rollback --yes --disconnect`
+  (details in `deploy/caddy-docker.md` §7–8).
+- Do not edit, restart or recreate the LooksLoop container, and do not touch its
+  DNS records.

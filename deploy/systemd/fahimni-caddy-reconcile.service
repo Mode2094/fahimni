@@ -1,0 +1,17 @@
+[Unit]
+Description=Fahimni — re-apply additive Caddy vhosts after a LooksLoop redeploy
+Documentation=file:/opt/fahimni/production/current/deploy/README.md
+# Reconciles: re-attaches the Caddy container to the shared proxy network and
+# reloads the merged (LooksLoop + Fahimni) config. Idempotent and cheap: it
+# re-reads the current container's Caddyfile and only reloads when it changed.
+After=docker.service
+Wants=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=fahimni
+Group=fahimni
+Environment=FAHIMNI_STATE_DIR=/var/lib/fahimni
+ExecStart=/opt/fahimni/production/current/deploy/scripts/caddy-docker-integrate.sh --reconcile --yes
+Nice=10

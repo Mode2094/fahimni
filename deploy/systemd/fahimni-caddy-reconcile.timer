@@ -1,0 +1,15 @@
+[Unit]
+Description=Fahimni — run the Caddy reconcile periodically (LooksLoop-update safe)
+
+[Timer]
+# First run shortly after boot, then every minute. A LooksLoop redeploy can drop
+# the runtime network attachment and in-memory config; this restores both within
+# ~one minute of the new container becoming healthy.
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+Unit=fahimni-caddy-reconcile.service
+
+[Install]
+WantedBy=timers.target

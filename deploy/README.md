@@ -15,12 +15,17 @@ server access and DNS approval.
 | nginx bind | `127.0.0.1:8080` | `127.0.0.1:8081` |
 | PostgreSQL | `fahimni` DB / `fahimni` role | `fahimni_staging` DB / role |
 | Volumes | `fahimni_*` | `fahimni-staging_*` |
-| Network | `fahimni_net` | `fahimni-staging_net` |
-| Public TLS | Caddy | Caddy + basic auth + `noindex` |
+| App network | `fahimni_net` | `fahimni-staging_net` |
+| DB network | `fahimni_db` (internal) | `fahimni-staging_db` (internal) |
+| Proxy alias | `fahimni-prod` | `fahimni-staging` |
+| Public TLS | shared LooksLoop Caddy container | same + basic auth + `noindex` |
 
 Both stacks use the same compose file with different `COMPOSE_PROJECT_NAME`
-and env files. PostgreSQL and Redis publish **no** host ports. Only Caddy is
-bound to 80/443; nginx is loopback-only.
+and env files. PostgreSQL and Redis publish **no** host ports and live on an
+internal network (`internal: true`, no egress). The public TLS terminator is
+the **existing LooksLoop Caddy container** (see §7 and `deploy/caddy-docker.md`);
+nginx joins a dedicated shared reverse-proxy network (`fahimni-proxy`) that
+carries nginx only — never a database or Redis of either project.
 
 ## 2. What is automated here — and what is not
 
@@ -28,7 +33,9 @@ Automated in this repository:
 
 - `docker compose` isolation (project/image/network/volume/database names).
 - Env templates for both stacks, with local secret generation.
-- Additive Caddy vhosts with validation and automatic restore on failure.
+- Additive Caddy vhosts merged into the LooksLoop Caddy **container** over its
+  admin API, with read-only validation and a reconcile timer (the old
+  `import`/`systemctl` flow is retired).
 - Deploy, rollback, health, public/local smoke, off-site backup and restore
   drill scripts.
 - CI still runs PHPUnit and the Next.js typecheck/build for every PR.
@@ -36,7 +43,8 @@ Automated in this repository:
 **Not executed yet** (requires access this repository cannot provide):
 
 - Real staging/production deployment, DNS changes, TLS issuance.
-- Caddy reload on the host (LooksLoop must be checked first).
+- Caddy integration **apply** on the host (validated locally against a simulated
+  LooksLoop Caddyfile; the live container was only inspected, never modified).
 - Freemius Sandbox checkout/webhook tests.
 - A real restore drill against an off-site copy.
 
@@ -118,6 +126,7 @@ systemctl enable --now docker
 install -d -m 755 -o fahimni -g fahimni /opt/fahimni/production/releases
 install -d -m 755 -o fahimni -g fahimni /opt/fahimni/staging/releases
 install -d -m 750 -o root -g fahimni /etc/fahimni
+install -d -m 750 -o fahimni -g fahimni /var/lib/fahimni
 install -d -m 755 -o fahimni -g fahimni /var/log/fahimni
 ```
 
@@ -176,46 +185,47 @@ the API domain for server-generated links and Freemius callbacks.
 Never reuse the same DB/Redis/admin/Freemius secrets across production and
 staging. Never put staging Freemius **live** keys on staging; use Sandbox keys.
 
-## 7. Caddy (additive, LooksLoop-safe)
+## 7. Caddy (additive, inside the LooksLoop Docker container)
 
-The repo file `deploy/caddy/fahimni.caddy` only defines the four Fahimni hosts.
-The installer appends this single line to the existing Caddyfile:
+The host's public TLS terminator is the **LooksLoop Caddy container**
+(`caddy:2-alpine`), not a systemd unit. Its Caddyfile is a read-only bind mount
+from an immutable release path and has no `import`, so the Fahimni vhosts are
+merged into the running config through Caddy's admin API instead of editing the
+host tree. Full rationale, topology, continuity and rollback live in
+**`deploy/caddy-docker.md`**.
 
-```caddyfile
-import /etc/caddy/fahimni/*.caddy
-```
-
-It never replaces the Caddyfile or edits LooksLoop blocks.
-
-```bash
-# Generate a bcrypt hash interactively; do not put the password in shell history.
-caddy hash-password
-export FAHIMNI_STAGING_BASIC_HASH='$2a$...'
-
-# Validate everything first (no changes).
-sudo env FAHIMNI_STAGING_BASIC_HASH="$FAHIMNI_STAGING_BASIC_HASH" \
-  deploy/scripts/caddy-activate.sh --check
-
-# Install, validate again, graceful reload; auto-restores on failure.
-sudo env FAHIMNI_STAGING_BASIC_HASH="$FAHIMNI_STAGING_BASIC_HASH" \
-  deploy/scripts/caddy-activate.sh --apply
-```
-
-The script:
-
-1. renders the staging hash into a private temp copy;
-2. validates the Fahimni vhosts;
-3. refuses if a Fahimni host is already defined elsewhere;
-4. backs up `/etc/caddy/Caddyfile`;
-5. installs `/etc/caddy/fahimni/fahimni.caddy` (mode 600);
-6. validates the full Caddyfile and reloads gracefully;
-7. restores the backup and reloads if anything fails.
-
-Manual rollback if ever needed:
+`deploy/caddy/fahimni.caddy` defines only the four Fahimni hosts, with upstreams
+pointing at the nginx alias on the shared `fahimni-proxy` network
+(`fahimni-prod:80` / `fahimni-staging:80`).
 
 ```bash
-sudo cp /etc/caddy/Caddyfile.bak.<timestamp> /etc/caddy/Caddyfile
-sudo systemctl reload caddy
+cd /opt/fahimni/production/current
+
+# bcrypt hash for the staging password (never paste it into shell history)
+docker exec looksloop-production-caddy-1 caddy hash-password
+
+# READ-ONLY validation of the merged (LooksLoop + Fahimni) config
+FAHIMNI_STAGING_BASIC_HASH='$2a$...' deploy/scripts/caddy-docker-integrate.sh --check
+
+# apply: connect the shared network, install the merged config, reload gracefully
+FAHIMNI_STAGING_BASIC_HASH='$2a$...' deploy/scripts/caddy-docker-integrate.sh --apply --yes
+
+deploy/scripts/caddy-docker-integrate.sh --status
+```
+
+It never replaces the Caddyfile, restarts the container, or edits LooksLoop
+blocks. `caddy-activate.sh` is now a thin forwarder to the integrator.
+
+**Continuity across LooksLoop updates.** A LooksLoop redeploy recreates its Caddy
+container, which drops the runtime network attachment and the merged config. The
+`fahimni-caddy-reconcile` systemd timer (every ~60s, `--reconcile --yes`)
+re-reads the new release's Caddyfile, re-attaches the network and re-applies —
+preserving LooksLoop's own changes. Install per `deploy/caddy-docker.md` §5.
+
+**Rollback** (fast, in place):
+
+```bash
+deploy/scripts/caddy-docker-integrate.sh --rollback --yes --disconnect
 ```
 
 After reload, verify LooksLoop still responds and that Fahimni gets certificates.
@@ -399,7 +409,10 @@ Merging any PR does **not** deploy: there is no deploy workflow on push.
 ## 14. Security guardrails
 
 - `BIND_ADDR=127.0.0.1`: only Caddy listens publicly.
-- PostgreSQL/Redis have no published ports and separate volumes per stack.
+- PostgreSQL/Redis have no published ports, separate volumes per stack, and live
+  on an `internal: true` network (no egress).
+- The shared `fahimni-proxy` network carries nginx only — no database or Redis of
+  either project is attached to it.
 - Staging is basic-auth protected and sends `X-Robots-Tag: noindex`.
 - No fixed `container_name`; projects cannot collide.
 - Env files are 600 and never baked into images.
@@ -415,8 +428,21 @@ Merging any PR does **not** deploy: there is no deploy workflow on push.
 
 Executed during preparation (2026-11-14):
 
-- `docker compose config` validated for both stacks; volume/network/port
-  isolation confirmed.
+- `docker compose config` validated for both stacks; project/image/volume
+  isolation, the internal `*_db` network, the shared **external** `fahimni-proxy`
+  network (nginx-only, unique per-stack alias) and the env-driven memory limits
+  confirmed.
+- The additive Fahimni Caddy fragment validates against a simulated LooksLoop
+  Caddyfile (global options block + `:443` on-demand catch-all + `:80` redirect)
+  under real Caddy 2: `deploy/tests/caddy-merge-validate.sh` passes and its
+  duplicate-host guard is exercised.
+- `caddy-docker-integrate.sh` was run end-to-end against a local fake LooksLoop
+  Caddy container: `--apply` merged + reloaded while preserving LooksLoop sites;
+  `--reconcile` was a no-op when unchanged; a simulated LooksLoop container
+  recreation was re-attached and re-merged (the new LooksLoop host preserved);
+  `--rollback` removed the Fahimni vhosts with LooksLoop still serving.
+- `deploy/scripts/*.sh` and `deploy/tests/*.sh`: `bash -n` and `shellcheck -x`
+  clean.
 - Production images `fahimni-{app,frontend,scheduler,horizon}` built
   successfully (no build errors).
 - A disposable local staging stack was started from the generated env:
@@ -437,8 +463,10 @@ Executed during preparation (2026-11-14):
 
 Still blocked (requires access or approval this repository cannot provide):
 
-- No SSH key is authorized on the candidate server yet; real deploy, Caddy
-  reload and TLS issuance are pending.
+- No `fahimni` deploy user/key is authorized on the server yet; only the
+  LooksLoop deploy user was available, and it was used **read-only** (inspect,
+  `docker ps`/`stats`, `cat`) — real deploy, Caddy integration apply and TLS
+  issuance are pending owner approval.
 - `fahimni.me` still resolves to Hostinger parking; the A records in §5 are a
   proposal, not an executed change.
 - The local drill did not use Caddy, public DNS or TLS; Caddy was syntax-checked
@@ -447,3 +475,58 @@ Still blocked (requires access or approval this repository cannot provide):
   in `FREEMIUS_SETUP.md` remains unchecked.
 - No real off-site upload was performed (no rclone remote/age key); only a local
   plaintext drill with `BACKUP_ALLOW_UNENCRYPTED=1` on disposable data.
+
+## 16. KVM 2 resource budget
+
+Measured on the host (read-only, 2026-11-14): **2 vCPU**, **7940 MB RAM**
+(~1231 MB used, ~6709 MB available), **swap 0**, **96 GB disk** (18 GB used),
+with LooksLoop already running:
+
+| LooksLoop container | RSS (approx.) |
+|---|---|
+| api | ~166 MB |
+| store | ~176 MB |
+| control | ~126 MB |
+| web | ~88 MB |
+| caddy | ~62 MB |
+| mirror | ~60 MB |
+| postgres | ~60 MB |
+| redis | ~17 MB |
+| scheduler / queue | ~tens of MB |
+| **total** | **~0.8 GB** |
+
+Fahimni caps are hard memory limits set per service (env-driven, see
+`deploy/env/common.env.example`):
+
+| Service | Cap | Notes |
+|---|---|---|
+| postgres | `MEM_POSTGRES` = 768M | |
+| redis | `MEM_REDIS` = 256M | |
+| app (php-fpm) | `MEM_APP` = 384M | |
+| frontend (Next) | `MEM_FRONTEND` = 384M | |
+| scheduler | `MEM_SCHEDULER` = 256M | |
+| horizon | `MEM_HORIZON` = 512M | keep worker counts consistent |
+| nginx | `MEM_NGINX` = 64M | |
+| migrate (one-shot) | `MEM_MIGRATE` = 512M | only during a deploy |
+
+**Steady state ≈ 2.6 GiB per stack; peak (with `migrate`) ≈ 3.1 GiB.** Staging +
+production ≈ 5.1 GiB, which fits next to LooksLoop (~6 GiB total of 7940 MB) with
+~1.9 GiB for the OS and page cache. Constraints and rules:
+
+- **Run one stack at a time while building images.** A Laravel `composer install`
+  plus `next build` can spike; keep `COMPOSE_PARALLEL_LIMIT=1` and never build
+  both stacks at once.
+- **Add ~2 GB swap before running both stacks together** (the host currently has
+  none) — a server change requiring owner approval.
+- 2 vCPU is fine for staging + a light production; Horizon worker counts and any
+  k6 load test must stay within these caps.
+- Increase a cap only with evidence.
+
+Measurement commands (run during/after an approved deploy):
+
+```bash
+docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}'
+docker system df
+free -m
+df -h /
+```

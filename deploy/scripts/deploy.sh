@@ -65,6 +65,17 @@ load_env_file "$env_file"
 [[ "${APP_ENV:-}" == "$env_name" ]] \
   || die "APP_ENV=$APP_ENV in $env_file does not match --env $env_name"
 [[ -n "${COMPOSE_PROJECT_NAME:-}" ]] || die "COMPOSE_PROJECT_NAME is not set"
+[[ -n "${PROXY_ALIAS:-}" && "${PROXY_ALIAS}" != CHANGE_ME* ]] \
+  || die "PROXY_ALIAS is not set (unique nginx alias on the shared proxy network)"
+
+# External networks are never created by compose. The shared reverse-proxy
+# network must exist before `compose up`, but is created (not deleted) here so a
+# re-deploy or a rollback never removes the bridge to the LooksLoop Caddy.
+proxy_net="${FAHIMNI_PROXY_NETWORK:-fahimni-proxy}"
+if ! docker network inspect "$proxy_net" >/dev/null 2>&1; then
+  log "creating shared reverse-proxy network: $proxy_net"
+  docker network create "$proxy_net" >/dev/null
+fi
 
 for key in APP_KEY DB_PASSWORD REDIS_PASSWORD VIDEO_SIGNING_KEY \
            SUPER_ADMIN_EMAIL SUPER_ADMIN_PASSWORD; do
