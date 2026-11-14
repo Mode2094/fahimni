@@ -123,6 +123,9 @@ install -d -m 755 -o fahimni -g fahimni /var/log/fahimni
 
 ## 5. DNS (requires owner approval; do not change silently)
 
+Exact records, verification commands and rollback live in
+`deploy/dns-cutover.md`. Summary:
+
 | Record | Type | Value | Notes |
 |---|---|---|---|
 | `fahimni.me` | A | `187.127.87.101` | currently Hostinger parking `2.57.91.91` |
