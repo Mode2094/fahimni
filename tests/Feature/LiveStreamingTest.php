@@ -452,6 +452,71 @@ class LiveStreamingTest extends TenantTestCase
 
     // ─── Tenant isolation & lifecycle ───────────────────
 
+    public function test_teacher_can_attach_and_clear_a_session_recording(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [$teacher, $course] = $this->makeCourseWithLesson($tenant);
+
+        $session = $this->makeLiveSession($tenant, 'google_meet', $course->id);
+        $session->update(['user_id' => $teacher->id]);
+
+        $headers = $this->authHeaders($teacher, $tenant);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => 'https://drive.google.com/file/d/abc/view',
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('session.record_url', 'https://drive.google.com/file/d/abc/view');
+
+        $this->assertDatabaseHas('live_sessions', [
+            'id' => $session->id,
+            'record_enabled' => true,
+            'record_url' => 'https://drive.google.com/file/d/abc/view',
+        ]);
+
+        // Clearing the link removes the "has a recording" claim too.
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => null,
+        ], $headers)->assertOk();
+
+        $this->assertDatabaseHas('live_sessions', [
+            'id' => $session->id,
+            'record_enabled' => false,
+            'record_url' => null,
+        ]);
+    }
+
+    public function test_attaching_a_recording_rejects_an_invalid_url(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [$teacher] = $this->makeCourseWithLesson($tenant);
+
+        $session = $this->makeLiveSession($tenant, 'google_meet');
+        $session->update(['user_id' => $teacher->id]);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => 'not-a-url',
+        ], $this->authHeaders($teacher, $tenant))->assertStatus(422);
+    }
+
+    public function test_a_student_cannot_attach_a_recording(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [, $course] = $this->makeCourseWithLesson($tenant);
+
+        $student = $this->makeUser();
+        $this->attachToTenant($student, $tenant, 'student');
+
+        $session = $this->makeLiveSession($tenant, 'google_meet', $course->id);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => 'https://drive.google.com/file/d/abc/view',
+        ], $this->authHeaders($student, $tenant))->assertStatus(403);
+    }
+
     public function test_tenant_isolation_blocks_cross_tenant_management(): void
     {
         $tenantA = $this->makeTenant();
