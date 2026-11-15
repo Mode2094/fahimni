@@ -89,7 +89,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Unit tests
-        # Node test runner: BFF origin reconstruction + CSP nonce contract.
+        # Node test runner (BFF origin, CSP, manifest) + vitest component tests.
         run: npm run test:unit
 
       - name: Build

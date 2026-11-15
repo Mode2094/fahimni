@@ -47,23 +47,29 @@ export default function TeacherDashboard() {
 
   const loadAll = async () => {
     setLoading(true);
-    const [planR, anaR, lesR, bkR, appR, onbR] = await Promise.all([
-      fetch(`${API}/teacher/plan`, { headers: headers() }),
-      fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }),
-      fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
-      fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
-      fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
-      fetch(`${API}/teacher/onboarding`, { headers: headers() }).catch(() => null),
-    ]);
+    try {
+      // Each request degrades on its own: one failing endpoint must never blank
+      // the dashboard or leave it stuck on skeletons forever.
+      const [planR, anaR, lesR, bkR, appR, onbR] = await Promise.all([
+        fetch(`${API}/teacher/plan`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/onboarding`, { headers: headers() }).catch(() => null),
+      ]);
 
-    if (planR.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
-    if (anaR.ok) { const d = await anaR.json(); setAnalytics(d.overview || null); }
-    if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
-    if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
-    if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
-    if (onbR?.ok) { const d = await onbR.json(); setOnboarding(d || null); }
-
-    setLoading(false);
+      if (planR?.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
+      if (anaR?.ok) { const d = await anaR.json(); setAnalytics(d.overview || null); }
+      if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
+      if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
+      if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
+      if (onbR?.ok) { const d = await onbR.json(); setOnboarding(d || null); }
+    } catch {
+      // Malformed payloads etc. — render whatever we have instead of locking up.
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
