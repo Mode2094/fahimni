@@ -96,6 +96,25 @@ class BunnyStreamProvider implements MediaProviderInterface
         return (string) ($this->credentials()['hostname'] ?? '');
     }
 
+    /**
+     * Whether Bunny CDN Token Authentication is enabled on the pull zone.
+     *
+     * Off by default: signing a URL whose pull zone has token auth disabled
+     * makes Bunny answer 404. The flag lives in media_providers.config
+     * (per-deployment, set from the admin Media panel) with a BUNNY_TOKEN_AUTH
+     * env fallback.
+     */
+    private function tokenAuthEnabled(): bool
+    {
+        $config = $this->model?->config ?? [];
+
+        if (array_key_exists('token_auth', $config)) {
+            return (bool) $config['token_auth'];
+        }
+
+        return (bool) config('bunny.token_auth', false);
+    }
+
     private function videoBase(): string
     {
         return self::VIDEO_API.'/'.$this->libraryId();
@@ -200,11 +219,22 @@ class BunnyStreamProvider implements MediaProviderInterface
     {
         // المسار الرسمي لـ HLS على Pull Zone المكتبة:
         //   https://{hostname}/{videoId}/playlist.m3u8  (بلا Library ID)
-        // حماية المكتبة عبر Referer Domains (Block direct url file access) —
-        // إضافة توقيع بلا تفعيل CDN token authentication يكسر الرابط (404).
         $host = $this->hostname() ?: 'video.bunnycdn.com';
+        $url = 'https://'.$host.'/'.$assetId.'/playlist.m3u8';
 
-        return 'https://'.$host.'/'.$assetId.'/playlist.m3u8';
+        // Token Authentication (روابط موقّعة بانتهاء صلاحية) تُنتَج فقط عندما
+        // يُفعّل النشرُ ذلك صراحةً (hostname + security_key + token_auth).
+        // توقيع رابط على Pull Zone لم يُفعَّل عليها Token Auth يجعل Bunny
+        // يرد 404 — أي أن كل فيديو يتعطل. حتى التفعيل، نُعيد رابط الصلاحية
+        // المحمية بالـReferer (Block direct url file access + نطاقات مسموحة)،
+        // ويبقى توكن المنصة الموقّع /stream/{id} هو من يقرر من يستلم الرابط.
+        if ($this->hostname() !== '' && $this->securityKey() !== '' && $this->tokenAuthEnabled()) {
+            $expires = time() + max(60, $ttlSeconds);
+
+            return $this->sign($url, $expires, directory: true);
+        }
+
+        return $url;
     }
 
     /**

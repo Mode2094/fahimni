@@ -24,13 +24,16 @@ class BunnyMediaProviderTest extends TenantTestCase
 {
     private const LIBRARY = '112233';
 
-    private function setupBunnyProvider(bool $withSecurityKey = true): void
-    {
+    private function setupBunnyProvider(
+        bool $withSecurityKey = true,
+        string $hostname = '',
+        bool $tokenAuth = false,
+    ): void {
         $creds = [
             'library_id' => self::LIBRARY,
             'api_key' => 'test-api-key',
             'security_key' => $withSecurityKey ? 'test-security-key' : '',
-            'hostname' => '',
+            'hostname' => $hostname,
         ];
 
         MediaProvider::where('provider', 'bunny')->delete();
@@ -43,7 +46,7 @@ class BunnyMediaProviderTest extends TenantTestCase
             'webhook_secret' => 'bunny-webhook-secret',
             'environment' => 'sandbox',
             'connection_status' => 'unknown',
-            'config' => [],
+            'config' => ['token_auth' => $tokenAuth],
             'metadata' => [],
         ]);
     }
@@ -126,6 +129,36 @@ class BunnyMediaProviderTest extends TenantTestCase
         $plain = app(MediaProviderManager::class)->provider('bunny')
             ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
         $this->assertSame($url, $plain);
+    }
+
+    public function test_playback_url_is_signed_only_when_token_auth_is_enabled(): void
+    {
+        // Token Auth مفعّل + نطاق مخصص → رابط HLS موقّع بانتهاء صلاحية.
+        $this->setupBunnyProvider(hostname: 'stream.example.com', tokenAuth: true);
+
+        $signed = app(MediaProviderManager::class)->provider('bunny')
+            ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
+
+        $this->assertStringContainsString('https://stream.example.com/bcdn_token=HS256-', $signed);
+        $this->assertStringContainsString('token_path=', $signed);
+        $this->assertStringContainsString('expires=', $signed);
+        $this->assertStringContainsString('/bunny-video-1/playlist.m3u8', $signed);
+
+        // المفتاح نفسه يعطي توقيعاً حتمياً لنفس المدى الزمني (المُدخل الوحيد
+        // المتغيّر هو الطابع الزمني)، لذا نتحقق أن التوقيع ليس رابطاً عارياً.
+        $this->assertNotSame('https://stream.example.com/bunny-video-1/playlist.m3u8', $signed);
+
+        // نطاق مخصص لكن Token Auth معطّل → لا توقيع (لا يكسر التشغيل).
+        $this->setupBunnyProvider(hostname: 'stream.example.com', tokenAuth: false);
+        $unsigned = app(MediaProviderManager::class)->provider('bunny')
+            ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
+        $this->assertSame('https://stream.example.com/bunny-video-1/playlist.m3u8', $unsigned);
+
+        // Token Auth مفعّل لكن بلا نطاق مخصص (المضيف الافتراضي لا يدعم التوقيع).
+        $this->setupBunnyProvider(hostname: '', tokenAuth: true);
+        $noHost = app(MediaProviderManager::class)->provider('bunny')
+            ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
+        $this->assertSame('https://video.bunnycdn.com/bunny-video-1/playlist.m3u8', $noHost);
     }
 
     public function test_video_webhook_events_are_mapped(): void
