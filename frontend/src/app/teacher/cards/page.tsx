@@ -130,6 +130,18 @@ export default function TeacherCardsPage() {
     } catch { toast.error(t('تعذر تحميل القالب', 'Cannot download template')); }
   };
 
+  const exportCards = async () => {
+    try {
+      const res = await fetch(`${API}/cards/export`, { headers: headers() });
+      if (!res.ok) { toast.error(t('فشل التصدير', 'Export failed')); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `activation-cards-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error(t('تعذر التصدير', 'Cannot export')); }
+  };
+
   const copyCode = (code: string) => { navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(''), 2000); };
 
   const ensureQr = async (code: string) => {
@@ -284,6 +296,7 @@ export default function TeacherCardsPage() {
             </div>
           </div>
           <Button variant="outline" size="sm" className="gap-2 rounded-full" onClick={downloadTemplate}><FileDown className="h-4 w-4 text-teal-700" /> {t('تحميل القالب', 'Download template')}</Button>
+          <Button variant="outline" size="sm" className="gap-2 rounded-full" onClick={exportCards}><FileDown className="h-4 w-4 text-teal-700" /> {t('تصدير CSV', 'Export CSV')}</Button>
         </div>
         <p className="text-xs text-muted-foreground">{t('العمود الأول في الملف يجب أن يحتوي على أكواد البطاقات (سطر لكل كود). الصيغة: .xlsx أو .csv', 'First column of the file must contain card codes (one per row). Supported: .xlsx or .csv')}</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">

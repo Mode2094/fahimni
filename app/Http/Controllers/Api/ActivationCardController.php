@@ -23,6 +23,7 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Uid\UuidV7;
 
 class ActivationCardController extends Controller
@@ -310,6 +311,50 @@ class ActivationCardController extends Controller
             ],
             'cards' => ActivationCardResource::collection($created),
         ], 201);
+    }
+
+    /**
+     * Export the (optionally filtered) cards as CSV for the teacher. Columns
+     * mirror the import format plus the lifecycle columns so an export can be
+     * audited or re-imported. Streamed + chunked so a large batch does not
+     * exhaust memory.
+     */
+    public function export(Request $request): StreamedResponse
+    {
+        $this->authorize('viewAny', ActivationCard::class);
+
+        $query = ActivationCard::with('course')
+            ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->course_id))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
+            ->when($request->filled('batch_id'), fn ($q) => $q->where('batch_id', $request->batch_id))
+            ->orderByDesc('created_at');
+
+        $filename = 'activation-cards-'.now()->format('Ymd-His').'.csv';
+
+        return response()->streamDownload(function () use ($query) {
+            $out = fopen('php://output', 'w');
+
+            // UTF-8 BOM so Excel renders Arabic course titles correctly.
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, ['code', 'status', 'course', 'batch_id', 'student_id', 'expires_at', 'used_at', 'created_at']);
+
+            $query->chunk(500, function ($cards) use ($out) {
+                foreach ($cards as $card) {
+                    fputcsv($out, [
+                        $card->code,
+                        $card->status,
+                        $card->course?->title,
+                        $card->batch_id,
+                        $card->student_id,
+                        optional($card->expires_at)->toIso8601String(),
+                        optional($card->used_at)->toIso8601String(),
+                        optional($card->created_at)->toIso8601String(),
+                    ]);
+                }
+            });
+
+            fclose($out);
+        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     public function importTemplate(): JsonResponse
