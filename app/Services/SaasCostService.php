@@ -32,6 +32,30 @@ class SaasCostService
         private readonly MediaProviderManager $manager,
     ) {}
 
+    // ─── العملة ────────────────────────────────────────
+
+    /**
+     * Convert an amount to USD using the platform currency_rate.
+     *
+     * Platform-subscription prices are stored in USD (Freemius is the only
+     * gateway and does not support JOD), so a USD amount must NEVER be
+     * multiplied again — doing so inflated profit/margin whenever
+     * currency_rate was not 1. Only legacy non-USD amounts are converted.
+     */
+    private function toUsd(float $amount, ?string $currency): float
+    {
+        $currency = strtoupper((string) ($currency ?: 'USD'));
+
+        if ($currency === 'USD') {
+            return round($amount, 2);
+        }
+
+        $rate = (float) \App\Models\PlatformSetting::get('currency_rate', 1);
+        $rate = $rate > 0 ? $rate : 1;
+
+        return round($amount * $rate, 2);
+    }
+
     // ─── أسعار الوحدات (DB) ────────────────────────────
 
     public function unitCost(string $provider, string $resource): float
@@ -191,13 +215,11 @@ class SaasCostService
      */
     public function planProfitability(SubscriptionPlan $plan, string $billingCycle = 'monthly'): array
     {
-        // التكلفة محسوبة بالدولار — نحول سعر الخطة لنفس العملة عبر
-        // currency_rate من إعدادات المنصة (المصدر الوحيد للحقيقة).
         $rate = (float) \App\Models\PlatformSetting::get('currency_rate', 1);
         $rate = $rate > 0 ? $rate : 1;
 
         $price = $billingCycle === 'yearly' ? (float) $plan->yearly_price : (float) $plan->monthly_price;
-        $priceUsd = round($price * $rate, 2);
+        $priceUsd = $this->toUsd($price, $plan->currency);
         $estimated = $this->planExpectedCost($plan);
         $profit = round($priceUsd - $estimated, 2);
 
@@ -209,7 +231,7 @@ class SaasCostService
             'margin_percentage' => $priceUsd > 0 ? round(($profit / $priceUsd) * 100, 2) : 0.0,
             'roi_percentage' => $estimated > 0 ? round(($profit / $estimated) * 100, 2) : 0.0,
             'loss' => $profit < 0,
-            'currency' => $plan->currency ?? 'JOD',
+            'currency' => $plan->currency ?? 'USD',
             'fx_rate' => $rate,
         ];
     }
@@ -329,17 +351,25 @@ class SaasCostService
 
         $monthlyInfraCost = (float) $infrastructure->sum('total');
 
-        // الإيراد بعملة المنصة (JOD) — الاشتراكات المدفوعة النشطة فقط
-        // (التجارب لا تدر إيراداً) + معادله بالدولار عبر سعر الصرف الرسمي.
+        // الإيراد: الاشتراكات المدفوعة النشطة فقط (التجارب لا تدر إيراداً).
+        // أسعار الخطط مخزنة بالدولار، فلا تُضرب بسعر الصرف مرة أخرى — التحويل
+        // يتم لكل اشتراك حسب عملة خطته المخزنة (toUsd يتجاهل التحويل للدولار).
         $rate = (float) \App\Models\PlatformSetting::get('currency_rate', 1);
         $rate = $rate > 0 ? $rate : 1;
 
-        $monthlyRevenue = TenantSubscription::withoutTenant()
-            ->whereIn('status', ['active'])
-            ->get()
-            ->sum(fn ($s) => (float) ($s->billing_cycle === 'yearly' ? $s->plan?->yearly_price / 12 : $s->plan?->monthly_price));
+        $monthlyRevenue = 0.0;
+        $monthlyRevenueUsd = 0.0;
 
-        $monthlyRevenueUsd = round($monthlyRevenue * $rate, 2);
+        foreach (TenantSubscription::withoutTenant()->whereIn('status', ['active'])->with('plan')->get() as $subscription) {
+            $amount = (float) ($subscription->billing_cycle === 'yearly'
+                ? ($subscription->plan?->yearly_price ?? 0) / 12
+                : ($subscription->plan?->monthly_price ?? 0));
+
+            $monthlyRevenue += $amount;
+            $monthlyRevenueUsd += $this->toUsd($amount, $subscription->plan?->currency);
+        }
+
+        $monthlyRevenueUsd = round($monthlyRevenueUsd, 2);
 
         return [
             'plans' => $plans,
@@ -350,7 +380,7 @@ class SaasCostService
             'monthly_revenue_usd' => $monthlyRevenueUsd,
             'platform_margin' => round($monthlyRevenueUsd - $monthlyInfraCost, 2),
             'currency' => 'USD',     // عملة التكاليف/الهامش
-            'revenue_currency' => 'JOD', // عملة الإيراد
+            'revenue_currency' => 'USD', // أسعار الاشتراكات مخزنة بالدولار
             'fx_rate' => $rate,
         ];
     }
