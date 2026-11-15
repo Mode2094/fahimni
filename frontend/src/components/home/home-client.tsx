@@ -69,7 +69,6 @@ export default function HomeClient() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [cycle, setCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [allExpanded, setAllExpanded] = useState(false);
-  const [mouse, setMouse] = useState({ x: 0, y: 0 });
 
   const [quizState, setQuizState] = useState<'idle' | 'wrong' | 'right'>('idle');
   const [quizPick, setQuizPick] = useState<number | null>(null);
@@ -101,18 +100,6 @@ export default function HomeClient() {
     }, { threshold: 0.3 });
     io.observe(calcRef.current);
     return () => io.disconnect();
-  }, []);
-
-  /* بارالاكس بالفأرة على أيقونات الهيرو العائمة */
-  useEffect(() => {
-    const el = heroRef.current;
-    if (!el) return;
-    const onMove = (e: MouseEvent) => {
-      const r = el.getBoundingClientRect();
-      setMouse({ x: (e.clientX - r.left) / r.width - 0.5, y: (e.clientY - r.top) / r.height - 0.5 });
-    };
-    el.addEventListener('mousemove', onMove);
-    return () => el.removeEventListener('mousemove', onMove);
   }, []);
 
   const calcRevenue = Math.round(calcStudents * calcPrice);
@@ -281,50 +268,26 @@ export default function HomeClient() {
       <section ref={heroRef} className="relative overflow-hidden">
         <div className="absolute inset-0 animate-gradient" style={{ background: 'linear-gradient(130deg, #0f2e2b 0%, #115e54 30%, #0d9488 55%, #115e54 80%, #0f2e2b 100%)' }}>
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-teal-300/20 rounded-full blur-3xl float-y" />
-          <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-emerald-300/15 rounded-full blur-3xl float-y-delay" />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] opacity-[0.06]"
-            style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '30px 30px' }} />
-        </div>
-
-        {/* أيقونات تعليمية عائمة مع بارالاكس */}
-        <div className="pointer-events-none absolute inset-0 z-[5] hidden lg:block" aria-hidden="true">
-          {[
-            { icon: BookOpen, cls: 'top-[18%] left-[6%]', depth: 28, color: '#5eead4', delay: '' },
-            { icon: Atom, cls: 'top-[30%] left-[12%]', depth: 44, color: '#a5f3fc', delay: 'float-y-delay' },
-            { icon: Calculator, cls: 'top-[62%] left-[7%]', depth: 34, color: '#fde68a', delay: '' },
-            { icon: Pencil, cls: 'top-[22%] right-[7%]', depth: 38, color: '#fca5a5', delay: 'float-y-delay' },
-            { icon: GraduationCap, cls: 'top-[55%] right-[10%]', depth: 26, color: '#86efac', delay: '' },
-            { icon: Trophy, cls: 'top-[70%] right-[4%]', depth: 48, color: '#fcd34d', delay: 'float-y-delay' },
-          ].map((it, i) => (
-            <div
-              key={i}
-              className={`absolute ${it.cls}`}
-              style={{ transform: `translate(${mouse.x * it.depth}px, ${mouse.y * it.depth}px)`, transition: 'transform 0.4s cubic-bezier(0.16,1,0.3,1)' }}
-            >
-              <div className={`${it.delay || 'drift-y'}`}>
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl glass shadow-2xl">
-                  <it.icon className="h-7 w-7" style={{ color: it.color }} />
-                </div>
-              </div>
-            </div>
-          ))}
+          <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-amber-200/10 rounded-full blur-3xl float-y-delay" />
+          <div className="absolute inset-0 opacity-[0.05]"
+            style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '34px 34px' }} />
         </div>
 
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-16 sm:py-24">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-8 items-center">
+          <div className="grid lg:grid-cols-2 gap-12 lg:gap-10 items-center">
             {/* النص */}
             <div className="text-center lg:text-start animate-in">
               <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium mb-6 glass" style={{ borderColor: seg.color + '55' }}>
                 <Sparkles className="h-3.5 w-3.5 text-teal-200" /> <span className="text-white">{t(seg.badge[0], seg.badge[1])}</span>
               </span>
-              <h1 className="text-3xl sm:text-4xl lg:text-[2.9rem] font-black text-white leading-[1.2]">
-                <span className="block">{t('منصتك التعليمية الخاصة بك', 'Your own teaching platform')}</span>
+              <h1 className="text-4xl sm:text-5xl lg:text-[3.4rem] font-black text-white leading-[1.15] tracking-tight">
+                <span className="block">{t('منصتك التعليمية،', 'Your teaching platform,')}</span>
                 <span className="underline-draw text-shimmer block text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-300">
-                  {t('كورسات، طلاب، حصص مباشرة — من مكان واحد', 'courses, students, live classes — one place')}
+                  {t('باسمك', 'in your name')}
                 </span>
               </h1>
-              <p className="text-white/65 text-base sm:text-lg mt-5 max-w-xl mx-auto lg:mx-0 leading-relaxed">
-                {t('أنشئ منصة تحمل اسمك وشعارك: دروس مسجلة، حصص مباشرة عبر Google Meet، اختبارات وبطاقات تسجيل — وأدر طلابك وأرباحك بدون وسطاء.', 'Create a platform with your name and logo: recorded lessons, live classes on Google Meet, quizzes and registration cards — manage your students and revenue with no middlemen.')}
+              <p className="text-white/70 text-base sm:text-lg mt-6 max-w-xl mx-auto lg:mx-0 leading-relaxed">
+                {t('موقعك التعليمي الخاص بشعارك وألوانك — أنشئ كورساتك، أدر طلابك، وتابع أرباحك من لوحة تحكم واحدة.', 'Your own branded teaching site — build your courses, manage your students and track your revenue from one dashboard.')}
               </p>
 
               <div className="flex flex-wrap justify-center lg:justify-start gap-3 mt-8">
@@ -332,108 +295,113 @@ export default function HomeClient() {
                   style={{ background: `linear-gradient(135deg, ${seg.color}, ${seg.color}cc)` }}>
                   {t(seg.cta[0], seg.cta[1])} {locale === 'ar' ? '←' : '→'}
                 </Link>
-                <button onClick={() => scrollTo('pricing')} className="px-8 py-4 rounded-2xl font-bold text-white border-2 border-white/30 bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors">
+                <button onClick={() => scrollTo('pricing')} className="px-8 py-4 rounded-2xl font-bold text-white border-2 border-white/25 bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors">
                   {t('شاهد الأسعار', 'See Pricing')}
-                </button>
-                <button onClick={() => scrollTo('quran-teachers')} className="px-8 py-4 rounded-2xl font-bold text-emerald-600 bg-white/90 backdrop-blur-sm hover:bg-white transition-colors shadow-lg">
-                  {t('مجانا لمدرسي القرءان الكريم', 'Free for Quran Teachers')}
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mt-10">
-                {seg.bullets.map((b, i) => (
-                  <div key={i} className="flex items-center gap-2 text-start rounded-xl glass px-3.5 py-3 text-sm text-white/85 transition-all hover:bg-white/10 hover:translate-x-1">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-400/15"><CheckCircle className="h-3.5 w-3.5 text-teal-300" /></span>
-                    <span className="leading-snug">{t(b[0], b[1])}</span>
-                  </div>
+              <div className="flex flex-wrap justify-center lg:justify-start gap-x-6 gap-y-2 mt-8 text-sm text-white/80">
+                {seg.bullets.slice(0, 3).map((b, i) => (
+                  <span key={i} className="inline-flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 shrink-0 text-teal-300" />
+                    {t(b[0], b[1])}
+                  </span>
                 ))}
               </div>
             </div>
 
-            {/* منظومة امتلاك الأرباح — 100% لك */}
-            <div className="relative mx-auto w-full max-w-lg lg:max-w-none animate-in">
-              <div className="relative mx-auto w-full max-w-[380px] sm:max-w-[420px] pt-6 pb-10">
-                {/* حلقة مدارية تدور */}
-                <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-                  <div className="absolute w-[340px] h-[340px] sm:w-[400px] sm:h-[400px] rounded-full border border-dashed border-teal-300/20 orbit-ring" />
-                  <div className="absolute w-[250px] h-[250px] sm:w-[290px] sm:h-[290px] rounded-full border border-white/8" />
+            {/* عنصر بصري واحد: لوحة تحكم المنصة */}
+            <div className="relative mx-auto w-full max-w-xl lg:max-w-none animate-in">
+              <div className="float-y relative overflow-hidden rounded-3xl border border-white/15 bg-white shadow-2xl shadow-teal-950/40">
+                {/* شريط المتصفح */}
+                <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
+                  <span className="h-3 w-3 rounded-full bg-rose-400/80" />
+                  <span className="h-3 w-3 rounded-full bg-amber-400/80" />
+                  <span className="h-3 w-3 rounded-full bg-emerald-400/80" />
+                  <span className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-1 text-[11px] text-slate-400" dir="ltr">
+                    <Lock className="h-3 w-3" /> fahimni.me/<span className="font-semibold text-teal-600">{locale === 'ar' ? 'اسمك' : 'your-name'}</span>
+                  </span>
                 </div>
 
-                {/* أيقونات على المدار */}
-                <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-                  <div className="relative w-[340px] h-[340px] sm:w-[400px] sm:h-[400px] orbit-ring">
-                    <span className="orbit-icon absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-2xl shadow-xl" style={{ background: 'linear-gradient(135deg, rgba(94,234,212,0.18), rgba(255,255,255,0.05))', border: '1px solid rgba(94,234,212,0.3)' }}><BookOpen className="h-5 w-5 text-teal-200" /></span>
-                    <span className="orbit-icon absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-2xl shadow-xl" style={{ background: 'linear-gradient(135deg, rgba(251,191,36,0.18), rgba(255,255,255,0.05))', border: '1px solid rgba(251,191,36,0.3)' }}><CreditCard className="h-5 w-5 text-amber-200" /></span>
-                    <span className="orbit-icon absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-2xl shadow-xl" style={{ background: 'linear-gradient(135deg, rgba(52,211,153,0.18), rgba(255,255,255,0.05))', border: '1px solid rgba(52,211,153,0.3)' }}><GraduationCap className="h-5 w-5 text-emerald-200" /></span>
-                    <span className="orbit-icon absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-2xl shadow-xl" style={{ background: 'linear-gradient(135deg, rgba(96,165,250,0.18), rgba(255,255,255,0.05))', border: '1px solid rgba(96,165,250,0.3)' }}><Wallet className="h-5 w-5 text-sky-200" /></span>
-                  </div>
-                </div>
-
-                {/* النواة: 100% لك */}
-                <div className="relative z-10 flex flex-col items-center">
-                  <div className="core-pulse relative flex h-44 w-44 sm:h-52 sm:w-52 items-center justify-center rounded-full" style={{ background: 'radial-gradient(circle at 35% 30%, rgba(251,191,36,0.30), rgba(45,212,191,0.14) 55%, rgba(11,26,38,0.92))', border: '1px solid rgba(251,191,36,0.35)' }}>
-                    <svg viewBox="0 0 36 36" className="absolute inset-0 h-full w-full -rotate-90" aria-hidden="true">
-                      <circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1.2" />
-                      <circle cx="18" cy="18" r="16" fill="none" stroke="url(#ownRing)" strokeWidth="1.2" strokeLinecap="round" strokeDasharray="100" strokeDashoffset="0" />
-                      <defs>
-                        <linearGradient id="ownRing" x1="0" y1="0" x2="1" y2="1">
-                          <stop offset="0%" stopColor="#fbbf24" />
-                          <stop offset="100%" stopColor="#2dd4bf" />
-                        </linearGradient>
-                      </defs>
-                    </svg>
-                    <div className="text-center">
-                      <div className="text-4xl sm:text-5xl font-black text-white">100%</div>
-                      <div className="text-sm font-bold" style={{ color: '#fde68a' }}>{t('لك أنت', 'yours')}</div>
-                    </div>
-                  </div>
-
-                  {/* عملات تصعد نحو نصيبك */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40" aria-hidden="true">
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <span
-                        key={i}
-                        className="coin-up absolute bottom-2 flex h-7 w-7 items-center justify-center rounded-full border-2 text-[10px] font-black"
-                        style={{
-                          borderColor: '#fcd34d',
-                          background: 'radial-gradient(circle at 35% 30%, #fef9c3, #f59e0b)',
-                          color: '#78350f',
-                          left: `${18 + i * 17}%`,
-                          animationDelay: `${i * 0.5}s`,
-                        }}
-                      >
-                        {locale === 'ar' ? 'د' : 'JD'}
+                <div className="grid grid-cols-[62px_1fr] sm:grid-cols-[84px_1fr]">
+                  {/* الشريط الجانبي */}
+                  <div className="flex flex-col items-center gap-3 border-e border-white/5 bg-[#0f2e2b] p-3 sm:p-4">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl shadow-lg" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                      <GraduationCap className="h-5 w-5 text-white" />
+                    </span>
+                    {[LayoutGrid, BookOpen, Users, CreditCard, BarChart3, Video].map((I, i) => (
+                      <span key={i} className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${i === 0 ? 'bg-teal-500/20 text-teal-200' : 'text-white/40'}`}>
+                        <I className="h-4 w-4" />
                       </span>
                     ))}
                   </div>
-                </div>
 
-                {/* بطاقة الإيراد */}
-                <div className="float-y absolute -bottom-2 start-0 z-20 flex items-center gap-2.5 rounded-2xl bg-white px-4 py-3 shadow-2xl">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400/20 to-teal-400/20"><TrendingUp className="h-4.5 w-4.5 text-emerald-500" /></span>
-                  <div>
-                    <p className="text-xs font-black text-slate-800">{t('إيراداتك الشهرية', 'Your monthly revenue')}</p>
-                    <p className="text-[10px] text-slate-400">{t('تذهب لك بالكامل', 'goes fully to you')}</p>
-                  </div>
-                  <span className="text-sm font-black text-emerald-600 ms-1">+1,250 <span dir="ltr">{locale === 'ar' ? 'د.أ' : 'JOD'}</span></span>
-                </div>
+                  {/* المحتوى */}
+                  <div className="space-y-4 bg-white p-4 sm:p-5" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[11px] text-slate-400">{t('لوحة تحكم المعلم', 'Teacher dashboard')}</p>
+                        <p className="text-sm font-black text-slate-800">{t('مرحباً، أ. محمد 👋', 'Welcome, Mr. Mohammed 👋')}</p>
+                      </div>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-50 text-teal-600"><Users className="h-4 w-4" /></span>
+                    </div>
 
-                {/* بطاقة الدومين */}
-                <div className="float-y-delay absolute top-0 end-0 z-20 flex items-center gap-2.5 rounded-2xl bg-white px-4 py-3 shadow-2xl">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sky-400/20 to-teal-400/20"><Globe className="h-4.5 w-4.5 text-sky-500" /></span>
-                  <div>
-                    <p className="text-xs font-black text-slate-800">{t('دومينك الخاص', 'Your own domain')}</p>
-                    <p className="text-[10px] text-slate-400" dir="ltr">teacher.com</p>
+                    {/* بطاقات الإحصاء */}
+                    <div className="grid grid-cols-3 gap-2.5">
+                      {[
+                        { label: t('الطلاب', 'Students'), value: '318', icon: Users, color: '#0d9488' },
+                        { label: t('الكورسات', 'Courses'), value: '12', icon: BookOpen, color: '#d97706' },
+                        { label: t('الإيرادات', 'Revenue'), value: locale === 'ar' ? '4,250 د.أ' : '4,250 JOD', icon: Wallet, color: '#059669' },
+                      ].map((s, i) => (
+                        <div key={i} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-2.5">
+                          <s.icon className="mb-1.5 h-4 w-4" style={{ color: s.color }} />
+                          <p className="text-sm font-black leading-none text-slate-800 sm:text-base">{s.value}</p>
+                          <p className="mt-1 text-[10px] text-slate-400">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* رسم الإيرادات */}
+                    <div className="rounded-2xl border border-slate-100 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-[11px] font-bold text-slate-700">{t('الإيرادات الشهرية', 'Monthly revenue')}</p>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600"><TrendingUp className="h-3 w-3" /> +18%</span>
+                      </div>
+                      <div className="flex h-16 items-end gap-1.5">
+                        {[45, 62, 38, 74, 55, 88, 70].map((h, i) => (
+                          <span key={i} className="flex-1 rounded-t-md" style={{ height: `${h}%`, background: i === 5 ? 'linear-gradient(180deg,#fbbf24,#d97706)' : 'linear-gradient(180deg,#5eead4,#0d9488)' }} />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* صفوف الكورسات */}
+                    <div className="space-y-2.5">
+                      {[
+                        { name: t('كورس الرياضيات', 'Mathematics course'), pct: 82 },
+                        { name: t('كورس الفيزياء', 'Physics course'), pct: 64 },
+                      ].map((c, i) => (
+                        <div key={i} className="flex items-center gap-3">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600"><Play className="h-3.5 w-3.5" /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[11px] font-bold text-slate-700">{c.name}</p>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                              <span className="block h-full rounded-full" style={{ width: `${c.pct}%`, background: 'linear-gradient(90deg,#0d9488,#5eead4)' }} />
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400">{c.pct}%</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
+              </div>
 
-                {/* بطاقة البطاقات */}
-                <div className="float-y absolute top-1/2 -start-2 z-20 hidden sm:flex items-center gap-2.5 rounded-2xl bg-white px-4 py-3 shadow-2xl">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-amber-400/20 to-orange-400/20"><QrCode className="h-4.5 w-4.5 text-amber-500" /></span>
-                  <div>
-                    <p className="text-xs font-black text-slate-800">{t('بطاقات QR', 'QR cards')}</p>
-                    <p className="text-[10px] text-slate-400">{t('تسجيل فوري', 'Instant enrollment')}</p>
-                  </div>
+              {/* شريحة عائمة: أرباحك لك بالكامل */}
+              <div className="float-y-delay absolute -bottom-4 start-2 z-20 flex items-center gap-2.5 rounded-2xl border border-slate-100 bg-white px-4 py-2.5 shadow-2xl sm:start-6">
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400/20 to-teal-400/20"><TrendingUp className="h-4 w-4 text-emerald-500" /></span>
+                <div>
+                  <p className="text-xs font-black text-slate-800">{t('أرباحك 100% لك', 'Your earnings, 100% yours')}</p>
+                  <p className="text-[10px] text-slate-400">{t('بدون وسطاء', 'no middlemen')}</p>
                 </div>
               </div>
             </div>
