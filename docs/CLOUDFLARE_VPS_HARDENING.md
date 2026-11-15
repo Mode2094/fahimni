@@ -37,19 +37,34 @@ docker compose ps          # every service healthy
   (https://www.cloudflare.com/ips/ — sync occasionally) and SSH from the
   admin IP. Deny everything else.
 
+> **This host is shared.** The same Caddy container terminates TLS for **both**
+> `fahimni.me` and **LooksLoop**, so restricting `80/443` to Cloudflare IPs only
+> is safe **iff every vhost on the host is behind Cloudflare**. If LooksLoop is
+> ever reachable without Cloudflare, a blanket deny takes it offline. Never run
+> a blanket `ufw deny 22` or a catch-all `ufw deny` here.
+>
+> Use the committed, dry-run-by-default script instead of typing rules by hand.
+> It always allows SSH from `ADMIN_SSH_IP` first, never touches port 22 with a
+> deny, is idempotent, and **refuses `--apply` unless LooksLoop-behind-Cloudflare
+> is explicitly confirmed**:
+
 ```bash
-# ufw example (adjust the SSH source)
-for net in 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 \
-           141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 \
-           197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 \
-           104.24.0.0/14 172.64.0.0/13 131.0.72.0/22; do
-  ufw allow from "$net" to any port 80,443 proto tcp
-done
-ufw default deny incoming
-ufw allow from <ADMIN_IP> to any port 22 proto tcp
-ufw enable
+# 1) dry run — prints the exact rules, changes nothing
+ADMIN_SSH_IP=<your.ssh.ip> ./deploy/scripts/cloudflare-ufw.sh
+
+# 2) apply (ONLY after LooksLoop is confirmed behind Cloudflare)
+sudo ADMIN_SSH_IP=<your.ssh.ip> CONFIRM_LOOKSLOOP_OK=yes \
+     ./deploy/scripts/cloudflare-ufw.sh --apply
+
+# rollback at any time, over the same SSH session:
+sudo ufw disable
 ```
 
+- Verify from a **second** SSH session before closing the first. Keep an
+  out-of-band console (Hostinger VNC) reachable in case SSH locks out.
+- IPv6 is deliberately **not** in the script's allow list — add the
+  `cloudflare.com/ips-v6` ranges only after confirming v6 is actually used,
+  otherwise v6 clients are black-holed.
 - Stronger: **Authenticated Origin Pulls** (mTLS) in Cloudflare + nginx
   `ssl_verify_client on` on the origin, so even a leaked IP cannot be used.
 - Optional: Cloudflare Access on `/horizon*` as an extra gate (the app also
@@ -69,23 +84,104 @@ ufw enable
   cache `/_next/static/*` aggressively (immutable).
 - Turn off "Rocket Loader" and HTML minification if it interferes with the
   Next.js CSP/hydration; keep "Email Address Obfuscation" off for API paths.
+- **Do not move `fahimni.me` to Cloudflare nameservers** as part of this
+  hardening pass. That is a separate, owner-approved DNS migration, and it
+  requires copying the SPF/DKIM/DMARC/Resend records first — see
+  `deploy/dns-cutover.md` §3b. Enabling the **proxy** (orange cloud) is also a
+  separate step: it changes the certificate challenge and the client-IP path
+  (§5), so do it deliberately, not while debugging.
 
 ## 5. Real client IP (required for rate limits + audit)
 
-1. Uncomment the `set_real_ip_from ...` block at the top of
-   `docker/nginx/default.conf` and reload nginx (`docker compose restart nginx`).
-2. Keep `real_ip_header CF-Connecting-IP;` — nginx then replaces
-   `$remote_addr` with the true client IP and **overwrites**
-   `X-Forwarded-For` for Laravel (`fastcgi_param HTTP_X_FORWARDED_FOR $remote_addr`).
-3. Laravel trusts only private-network proxies (`bootstrap/app.php`), so a
-   client-sent `X-Forwarded-For` cannot spoof the IP even if the app port leaks.
-4. Verify: send a request with a forged header and confirm logs/rate limits use
-   the real IP, not the forged one:
+### 5.1 The real hop chain
+
+The earlier draft of this section assumed Cloudflare talks **directly** to nginx.
+It does not. The verified production path is:
+
+```text
+ internet ──▶ Cloudflare edge ──▶ Caddy container ──▶ nginx ──▶ PHP-FPM
+             (CF-Connecting-IP)   (LooksLoop's,      (127.0.0.1:8080
+                                   publishes 80/443)   / fahimni-proxy)
+```
+
+Consequences that matter:
+
+- nginx's peer (`$remote_addr`) is the **Caddy container's private IP**, never
+  Cloudflare's and never the client's.
+- Caddy passes the client-facing headers through unchanged and adds its own
+  `X-Forwarded-For`/`X-Real-IP` (the address **it** saw — i.e. a Cloudflare edge
+  IP). So a plain `real_ip_header X-Forwarded-For` resolves to a **Cloudflare
+  edge IP**, and per-IP rate limits collapse to ~15 CDN addresses. `X-Forwarded-For`
+  is therefore the **wrong** header on this host.
+- `CF-Connecting-IP` survives the Caddy hop intact and always carries the true
+  client IP. Use it.
+
+### 5.2 Enable it in nginx (no Caddy / LooksLoop change)
+
+The cleanest fix is **nginx-native** and touches nothing LooksLoop owns (its
+Caddyfile is a read-only bind mount and must not be edited — see
+`deploy/caddy-docker.md`):
+
+1. Uncomment the `set_real_ip_from ...` block near the top of
+   `docker/nginx/default.conf` and set the header directive to
+   `CF-Connecting-IP`:
+   ```nginx
+   set_real_ip_from 192.168.0.0/16;          # the Caddy hop (private docker net)
+   # ... keep the Cloudflare IPv4 ranges from cleanup/dns docs ...
+   real_ip_header CF-Connecting-IP;
+   real_ip_recursive on;
+   ```
+   Trust the private hop **and** the Cloudflare ranges. The private entry is
+   what lets nginx read `CF-Connecting-IP` at all (the peer is Caddy); the CF
+   ranges are what make a **direct-to-origin** request fall back to the
+   attacker's real IP instead of a spoofed header value.
+2. Keep `fastcgi_param HTTP_X_FORWARDED_FOR $remote_addr;` (already present):
+   after the rewrite, Laravel receives the true client IP.
+3. Reload: `docker compose restart nginx`.
+4. Laravel still trusts only private-network proxies (`bootstrap/app.php`), so a
+   client-sent `X-Forwarded-For` cannot spoof the app's `$request->ip()` even if
+   the app port leaks.
+
+> **Hard prerequisite.** This makes nginx trust `CF-Connecting-IP` from the
+> private hop. If the origin IP is reachable **without** Cloudflare, an attacker
+> can reach Caddy directly and forge `CF-Connecting-IP`. Pair §5 with §3
+> (firewall: only Cloudflare can reach 80/443) or Authenticated Origin Pulls
+> (mTLS). Do §3 **before** or at the same time as §5 — never §5 alone on a
+> Cloudflare-proxied setup.
+
+### 5.3 Why not fix it in Caddy?
+
+Caddy's `trusted_proxies` / `client_ip_headers` are **global options**, and the
+single global options block on this host is owned by LooksLoop's read-only
+Caddyfile. The Fahimni fragment (`deploy/caddy/fahimni.caddy`) deliberately
+defines no global options block, so it cannot set them without editing
+LooksLoop's config — out of scope. The nginx-native fix above gives the same
+result and stays inside the Fahimni stack.
+
+### 5.4 Verify
+
+Forge the header from **outside** Cloudflare (i.e. hitting the origin directly)
+and confirm the app still logs your real IP, then check a proxied request:
 
 ```bash
-curl -sk -H 'X-Forwarded-For: 203.0.113.9' https://<domain>/api/v1/health/live
-docker compose logs --tail=5 nginx | grep health   # $remote_addr is the real IP
+# Direct-to-origin with a forged header — must NOT be trusted.
+curl -sk -H 'CF-Connecting-IP: 203.0.113.9' https://<origin-ip>/api/v1/health/live \
+     --resolve fahimni.me:443:<origin-ip>
+docker compose logs --tail=5 nginx | grep health   # $remote_addr = your real IP
+
+# Through Cloudflare — $remote_addr must be the real client, not a CF edge IP.
+docker compose logs --tail=5 nginx | grep health
 ```
+
+Also confirm rate limiting keys on the real client (repeated logins from one IP
+trip the limit even while the CF edge IP changes).
+
+### 5.5 Rollback
+
+Re-comment the `set_real_ip_from` lines and restore `real_ip_header
+X-Forwarded-For;`, then `docker compose restart nginx`. Worst case the origin
+reports Cloudflare edge IPs again (rate limits coarse, audit IPs wrong) — no
+outage.
 
 ## 6. Production `.env` checklist
 

@@ -22,7 +22,8 @@ repository; the owner applies it in the Hostinger DNS panel.
 
 - **MX** and any mail-related TXT (SPF `v=spf1`, DKIM `*._domainkey`, DMARC
   `_dmarc`). If mail is delegated to another provider, do not touch those
-  records or nameservers.
+  records or nameservers. See **§3b** for the Resend records and how to verify
+  them before and after the cutover.
 - Any record belonging to **LooksLoop** (its own A/AAAA/CNAME and TLS-related
   TXT/ACME records). Adding `fahimni.me` A records for a name that is already
   an A/CNAME pair does not affect other hostnames on the same IP, but do not
@@ -37,6 +38,46 @@ repository; the owner applies it in the Hostinger DNS panel.
 3. Add `A api`, `A staging`, `A api-staging` → `187.127.87.101`.
 4. Ensure `www` is `CNAME www → fahimni.me`.
 5. Leave MX/TXT/LooksLoop entries untouched. Save.
+
+## 3b. Email DNS (Resend) — record now, verify, then never touch
+
+Outbound mail goes through **Resend** (`MAIL_MAILER=resend`) for
+`support@fahimni.me` and transactional mail. Resend authenticates the sending
+domain with three DNS records that **must survive** the cutover and any
+Cloudflare migration. They are **TXT/CNAME only** — they do not move when the
+apex `A` record changes, but they are easy to lose during a "clean up the zone"
+pass, and losing them silently pushes mail to spam or makes it fail SPF/DKIM.
+
+Record the current values **before** touching anything:
+
+```bash
+dig +short fahimni.me TXT                     # SPF: "v=spf1 include:amazonses.com ~all" (Resend) or similar
+dig +short resend._domainkey.fahimni.me TXT   # DKIM (Resend publishes a CNAME/TXT pair)
+dig +short _dmarc.fahimni.me TXT              # DMARC policy
+dig +short fahimni.me MX                      # inbound (if any)
+dig +short send.fahimni.me CNAME              # Resend return-path / MX subdomain records
+```
+
+Guidance:
+
+- **SPF (TXT on the apex)**: keep a single `v=spf1` record; if both Resend and
+  another sender exist, they must be `include:`-ed in **one** record, never two.
+- **DKIM**: Resend's `resend._domainkey` / `send` subdomain records are added
+  from the Resend dashboard (Domains → fahimni.me → DNS records). Do not edit
+  their values; if Resend rotates keys, re-copy from the dashboard.
+- **DMARC (`_dmarc`)**: keep the existing policy. If it is missing, adding
+  `v=DMARC1; p=none; rua=mailto:support@fahimni.me` is safe (monitor-only) and
+  never blocks mail.
+- **MX**: only relevant if `fahimni.me` receives mail directly. Leave untouched.
+- **Nameservers**: moving `fahimni.me` to Cloudflare's nameservers is a **later,
+  separately-approved** step. If it ever happens, every record above must be
+  **copied into Cloudflare DNS first** (Cloudflare's scanner usually imports
+  them, but verify each one by hand) — a missing SPF/DKIM after the move breaks
+  login e-mails, password resets and receipts.
+
+After any change, verify deliverability on the **Staging** stack before
+Production, and check Resend's dashboard for a green "Verified" domain with no
+SPF/DKIM warnings.
 
 ## 4. Verification (run before touching Caddy)
 
