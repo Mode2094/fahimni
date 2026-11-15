@@ -427,6 +427,35 @@ class LiveSessionController extends Controller
         return response()->json(['session' => $this->payload($session->fresh(), $request)]);
     }
 
+    /**
+     * Attach (or clear) the recording of a finished session. Google Meet has no
+     * API to record automatically, so the teacher records in Meet and pastes the
+     * resulting link (Drive/YouTube/unlisted) here; it then surfaces inside the
+     * lesson for enrolled students and in the session payload.
+     */
+    public function attachRecording(Request $request, string $id): JsonResponse
+    {
+        $session = LiveSession::where('tenant_id', $request->current_tenant->id)
+            ->findOrFail($id);
+
+        $this->requireTenantStaff($request, $session->tenant_id);
+
+        $validated = $request->validate([
+            'record_url' => 'nullable|url|max:2000',
+        ]);
+
+        $url = $validated['record_url'] ?? null;
+
+        // "Has a recording" is derived from the URL: the flag no longer claims a
+        // recording exists when there is nothing to play.
+        $session->update([
+            'record_url' => $url,
+            'record_enabled' => $url !== null,
+        ]);
+
+        return response()->json(['session' => $this->payload($session->fresh(), $request)]);
+    }
+
     public function cancel(Request $request, string $id): JsonResponse
     {
         $session = LiveSession::where('tenant_id', $request->current_tenant->id)

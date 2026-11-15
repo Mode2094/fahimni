@@ -556,6 +556,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('{session}/start', [LiveSessionController::class, 'start']);
                 Route::post('{session}/end', [LiveSessionController::class, 'end']);
                 Route::post('{session}/cancel', [LiveSessionController::class, 'cancel']);
+                Route::post('{session}/recording', [LiveSessionController::class, 'attachRecording']);
                 Route::get('by-lesson/{lesson}', [LiveSessionController::class, 'byLesson']);
                 Route::post('{session}/join-ticket', [LiveSessionController::class, 'joinTicket'])->middleware('throttle:join-ticket');
                 Route::delete('{session}', [LiveSessionController::class, 'destroy']);
