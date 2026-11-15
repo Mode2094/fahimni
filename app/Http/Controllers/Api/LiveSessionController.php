@@ -133,6 +133,13 @@ class LiveSessionController extends Controller
 
         unset($validated['meeting_url']); // لا يُخزن في $validated — يذهب لـ metadata فقط.
 
+        // حد دقائق البث الشهرية — يُفرض عند الإنشاء بالمدة المخططة، فلا
+        // يستطيع المعلم حجز جلسات تتجاوز حصته من الدقائق.
+        app(MediaQuotaService::class)->assertLiveMinutes(
+            $tenantId,
+            (int) ($validated['duration_minutes'] ?? 60),
+        );
+
         // 2) ربط الجلسة بالدرس: محتوى نوع live داخل الدرس نفسه.
         $lessonContentId = null;
         $courseId = $validated['course_id'] ?? null;
@@ -374,6 +381,14 @@ class LiveSessionController extends Controller
 
         $this->fireZapierEvent('live_session_started', $session, $request->current_tenant->id);
 
+        $this->notifySessionStudents(
+            $session->fresh(),
+            'live.started',
+            'بدأ البث المباشر',
+            'بدأ بث: '.($session->title ?? ''),
+            ['session_id' => $session->id],
+        );
+
         return response()->json(['session' => $this->payload($session->fresh(), $request)]);
     }
 
@@ -396,6 +411,18 @@ class LiveSessionController extends Controller
         }
 
         $session->update(['status' => 'ended', 'ended_at' => now()]);
+
+        // احتساب دقائق البث الفعلية شهرياً (كان live_minutes يُقرأ في الحصص
+        // والتكلفة ولا يُكتب أبداً، فلم يُفرض حد دقائق البث إطلاقاً).
+        $this->recordLiveMinutes($session->fresh());
+
+        $this->notifySessionStudents(
+            $session->fresh(),
+            'live.ended',
+            'انتهى البث المباشر',
+            'انتهى بث: '.($session->title ?? ''),
+            ['session_id' => $session->id],
+        );
 
         return response()->json(['session' => $this->payload($session->fresh(), $request)]);
     }
@@ -576,5 +603,70 @@ class LiveSessionController extends Controller
         if ($used >= $limit) {
             throw new QuotaExceededException('دقائق البث', $used, $limit);
         }
+    }
+
+    /**
+     * Record the elapsed live minutes of a finished session against the
+     * tenant's monthly usage. Idempotent per session, so a duplicated
+     * end/webhook call can never double-charge the quota.
+     */
+    private function recordLiveMinutes(LiveSession $session): void
+    {
+        if (! $session->started_at) {
+            return;
+        }
+
+        $endedAt = $session->ended_at ?? now();
+        $seconds = $session->started_at->diffInSeconds($endedAt, true);
+        // A session that actually ran counts at least one minute.
+        $minutes = max(1, (int) ceil($seconds / 60));
+
+        app(MediaUsageService::class)->applyDelta(
+            $session->tenant_id,
+            'live_minutes',
+            $minutes,
+            'live_ended',
+            $session->user_id,
+            'live_session',
+            $session->id,
+            idempotencyKey: 'live:minutes:'.$session->id,
+        );
+    }
+
+    /**
+     * Notify the enrolled students of a session's course about a live event.
+     * Sessions without a course have no audience to notify.
+     */
+    private function notifySessionStudents(LiveSession $session, string $type, string $title, string $body, array $data = []): void
+    {
+        if (! $session->course_id) {
+            return;
+        }
+
+        $students = Enrollment::withoutTenant()
+            ->where('tenant_id', $session->tenant_id)
+            ->where('course_id', $session->course_id)
+            ->whereIn('status', ['active', 'completed'])
+            ->with('student')
+            ->get()
+            ->pluck('student')
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        if ($students->isEmpty()) {
+            return;
+        }
+
+        app(\App\Services\NotificationService::class)->dispatch(
+            $students,
+            $type,
+            $title,
+            $body,
+            $session->user,
+            $session->tenant_id,
+            $data,
+            ['database'],
+        );
     }
 }
