@@ -6,7 +6,8 @@
 #
 #  WHAT THIS DOES
 #    * fetches the approved release commit from GitHub (default: the brand
-#      commit dd13c63 — override with FAHIMNI_RELEASE_SHA=<sha|ref> so the
+#      commit dd13c63 on integration/launch-2026-11 — override with
+#      FAHIMNI_RELEASE_SHA=<sha|ref> and FAHIMNI_RELEASE_BRANCH=<branch> so the
 #      unified Release Candidate, which also carries the P0 Google/session fix
 #      from PR #24, is what gets deployed instead of a brand-only checkout),
 #    * builds images tagged prod-brand1 and replaces ONLY these four containers:
@@ -47,7 +48,9 @@ SHA="${FAHIMNI_RELEASE_SHA:-dd13c63988bea78b5b1fc232c0b259f8be49f4cf}"
 REL="$STACK/releases/$SHA"
 ENVF=/etc/fahimni/production.env
 REPO_URL=https://github.com/Mode2094/fahimni.git
-BRANCH=integration/launch-2026-11
+# The unified Release Candidate lives on its own branch; the clone/fetch is
+# single-branch, so the branch that carries $SHA must be named here too.
+BRANCH="${FAHIMNI_RELEASE_BRANCH:-integration/launch-2026-11}"
 NEW_TAG=prod-brand1
 PORT="${APP_PORT:-8080}"
 BASE="http://127.0.0.1:$PORT"

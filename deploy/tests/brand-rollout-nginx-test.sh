@@ -246,6 +246,11 @@ if grep -q 'FAHIMNI_RELEASE_SHA' "$SCRIPT"; then
 else
   fail "the release commit is hard-coded — cannot ship the unified RC"
 fi
+if grep -q 'FAHIMNI_RELEASE_BRANCH' "$SCRIPT"; then
+  pass "the release branch is overridable (FAHIMNI_RELEASE_BRANCH)"
+else
+  fail "the release branch is hard-coded — the RC branch cannot be fetched"
+fi
 if grep -q 'request-origin.ts' "$SCRIPT" && grep -q 'refusing to deploy an older checkout' "$SCRIPT"; then
   pass "the rollout refuses a checkout without the Google/session BFF fix"
 else
