@@ -155,8 +155,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   formatPrice: (amount) => {
     const { currency } = get().settings;
-    // الأسعار مخزنة بعملة المنصة (JOD) وتُعرض كما هي — currency_rate
-    // يُستخدم للتحويل الداخلي (التكلفة بالدولار) فقط ولا يضرب العرض.
+    // أسعار الاشتراكات مخزنة بالدولار (Freemius لا يدعم JOD) وتُعرض كما هي —
+    // currency_rate يُستخدم للتحويل الداخلي للتكاليف فقط ولا يضرب العرض.
     const num = Number(amount) || 0;
     const value = Math.round(num * 100) / 100;
     return `${value.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;

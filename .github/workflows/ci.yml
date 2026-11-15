@@ -88,6 +88,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Frontend unit tests
+        run: npm run test:unit
+
       - name: Build
         env:
           # Public, non-secret placeholders — enough to compile the app.
