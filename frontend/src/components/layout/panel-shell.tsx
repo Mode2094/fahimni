@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { GraduationCap, LogOut, Globe, ChevronRight, Menu, X, PanelLeftClose, PanelLeftOpen, Crown } from 'lucide-react';
 import { useAuth } from '@/store';
@@ -265,7 +266,7 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
           <h1 className="min-w-0 truncate text-sm font-bold sm:text-base">{title}</h1>
           <div className="ms-auto flex shrink-0 items-center gap-1.5">
             {settings.logo_url && <img src={settings.logo_url} alt="logo" className="hidden h-7 w-7 rounded-lg object-cover sm:block" />}
-            {!settings.logo_url && <img src="/logo.png" alt="logo" className="hidden h-7 w-7 rounded-lg object-cover sm:block" />}
+            {!settings.logo_url && <Image src="/logo.png" alt="logo" width={28} height={28} className="hidden h-7 w-7 rounded-lg object-cover sm:block" />}
             <button
               onClick={() => setLocale(locale === 'ar' ? 'en' : 'ar')}
               className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted"

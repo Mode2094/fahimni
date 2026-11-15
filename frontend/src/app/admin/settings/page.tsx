@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
@@ -210,7 +211,7 @@ export default function AdminSettingsPage() {
                 {form.logo_url ? (
                   <img src={form.logo_url} alt="logo" className="h-24 w-24 rounded-2xl border object-cover bg-gray-50" />
                 ) : (
-                  <img src="/logo.png" alt="logo" className="h-24 w-24 rounded-2xl border object-cover bg-gray-50" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                  <Image src="/logo.png" alt="logo" width={96} height={96} className="h-24 w-24 rounded-2xl border object-cover bg-gray-50" />
                 )}
                 <div>
                   <p className="text-sm font-medium">{t('شعار المنصة', 'Platform logo')}</p>
