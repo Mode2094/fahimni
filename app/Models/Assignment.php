@@ -15,7 +15,7 @@ class Assignment extends Model
     use BelongsToTenant, HasFactory, HasUuid, SoftDeletes;
 
     protected $fillable = [
-        'tenant_id', 'course_id', 'section_id', 'title', 'description',
+        'tenant_id', 'course_id', 'section_id', 'lesson_id', 'title', 'description',
         'points', 'due_at', 'allow_late', 'is_published', 'sort_order',
         'file_url', 'file_name', 'file_size_bytes', 'metadata',
     ];
@@ -43,6 +43,11 @@ class Assignment extends Model
     public function section(): BelongsTo
     {
         return $this->belongsTo(Section::class);
+    }
+
+    public function lesson(): BelongsTo
+    {
+        return $this->belongsTo(Lesson::class);
     }
 
     public function submissions(): HasMany

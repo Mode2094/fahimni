@@ -242,6 +242,9 @@ Route::prefix('v1')->group(function () {
             Route::post('assignments/{assignment}/submit', [AssignmentController::class, 'submit']);
             Route::post('assignments/{assignment}/submissions/{submission}/grade', [AssignmentController::class, 'grade']);
             Route::post('submissions/{submission}/comments', [AssignmentController::class, 'comment']);
+            // Authorised private-file downloads (attachments + submission files).
+            Route::get('assignments/{assignment}/file', [AssignmentController::class, 'download'])->middleware('throttle:playback');
+            Route::get('submissions/{submission}/file', [AssignmentController::class, 'submissionFile'])->middleware('throttle:playback');
 
             // ─── Question Bank ───────────────────────────
             Route::get('questions', [QuestionController::class, 'index']);
