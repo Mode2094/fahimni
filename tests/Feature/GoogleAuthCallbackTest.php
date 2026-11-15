@@ -10,6 +10,8 @@ use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
 use App\Services\TeacherCodeService;
+use App\Support\TOTP;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Contracts\Provider as SocialiteProvider;
 use Laravel\Socialite\Contracts\User as SocialiteUser;
@@ -31,10 +33,32 @@ use Symfony\Component\Uid\UuidV7;
  */
 class GoogleAuthCallbackTest extends TenantTestCase
 {
+    /** The public origin an SPA/browser request carries in production. */
+    private const STATE_ORIGIN = 'https://fahimni.me';
+
     protected function tearDown(): void
     {
         Mockery::close();
         parent::tearDown();
+    }
+
+    /**
+     * Pin `sanctum.stateful` to the production list. The test default includes
+     * `localhost`, which would hide the exact failure this file guards against.
+     */
+    private function useProductionStatefulDomains(): void
+    {
+        config(['sanctum.stateful' => ['fahimni.me', 'www.fahimni.me']]);
+    }
+
+    /** The browser's session cookie as a raw `Cookie` header value. */
+    private function sessionCookie($response): string
+    {
+        $name = (string) config('session.cookie');
+        $cookie = $response->getCookie($name);
+        $this->assertNotNull($cookie, 'Expected the session cookie '.$name.' to be set.');
+
+        return $name.'='.$cookie->getValue();
     }
 
     private function fakeGoogle(string $email, string $name = 'New Teacher'): void
@@ -263,5 +287,126 @@ class GoogleAuthCallbackTest extends TenantTestCase
         // The gate must be enforced BEFORE any write.
         $this->assertNull(User::where('email', $email)->first(), 'a blocked signup must not create a user');
         $this->assertSame(0, Tenant::count());
+    }
+
+    /**
+     * The full production hop: Google callback → Set-Cookie → the BFF's
+     * `/api/session/me` → `/api/v1/auth/me` with the PUBLIC origin. This is the
+     * chain that showed «تعذر إنشاء الجلسة» when the BFF forwarded an internal
+     * origin that is absent from `SANCTUM_STATEFUL_DOMAINS`.
+     */
+    public function test_google_callback_session_authenticates_auth_me_for_the_public_origin(): void
+    {
+        $this->useProductionStatefulDomains();
+        PlatformSetting::set('teacher_registration_enabled', true);
+        $this->makePlan();
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher']));
+        $response->assertRedirect();
+        $this->assertStringContainsString('step=done', (string) $response->headers->get('Location'));
+
+        $cookie = $this->sessionCookie($response);
+
+        // A fresh request: reset the guard the callback authenticated.
+        $this->app['auth']->forgetGuards();
+
+        $me = $this->withHeaders([
+            'Cookie' => $cookie,
+            'Origin' => self::STATE_ORIGIN,
+            'Accept' => 'application/json',
+        ])->getJson('/api/v1/auth/me');
+
+        $me->assertOk()->assertJsonPath('user.email', $email);
+        $this->assertContains('Teacher', (array) $me->json('user.roles'));
+
+        // Stateful middleware ran: the session middleware refreshed the cookie.
+        $this->assertNotNull(
+            $me->getCookie((string) config('session.cookie')),
+            'a stateful request must pass through the session middleware',
+        );
+    }
+
+    /**
+     * The failing hop, pinned: the SAME valid session cookie is ignored when
+     * the forwarded origin is not in `SANCTUM_STATEFUL_DOMAINS` — no stateful
+     * middleware, no session, 401, and not even a session cookie in response.
+     */
+    public function test_google_callback_session_is_ignored_for_a_non_stateful_origin(): void
+    {
+        $this->useProductionStatefulDomains();
+        PlatformSetting::set('teacher_registration_enabled', true);
+        $this->makePlan();
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $cookie = $this->sessionCookie($this->callbackWith($this->signedState(['role' => 'teacher'])));
+
+        // A fresh request in its own process: reset the shared session store and
+        // the guard the callback authenticated.
+        $this->flushSession();
+        $this->app['auth']->forgetGuards();
+
+        // `http://localhost:3000` is exactly what Next.js forwarded behind the
+        // proxy (its own listen address), and it is not a stateful domain.
+        $response = $this->withHeaders([
+            'Cookie' => $cookie,
+            'Origin' => 'http://localhost:3000',
+            'Accept' => 'application/json',
+        ])->getJson('/api/v1/auth/me');
+
+        $response->assertStatus(401);
+
+        // Decisive signal: with no stateful middleware there is no session
+        // middleware either, so Laravel never issues (or refreshes) a cookie.
+        $this->assertNull(
+            $response->getCookie((string) config('session.cookie')),
+            'a non-stateful request must not start or refresh a session',
+        );
+    }
+
+    /** Google login must never bypass an enabled second factor. */
+    public function test_google_login_for_a_2fa_user_defers_until_the_second_factor(): void
+    {
+        $this->useProductionStatefulDomains();
+        PlatformSetting::set('teacher_registration_enabled', true);
+        $this->makePlan();
+
+        $email = $this->freshEmail('teacher');
+        $user = User::factory()->create([
+            'email' => $email,
+            'password' => bcrypt('password-123'),
+            'is_active' => true,
+            'email_verified_at' => now(),
+        ]);
+        $user->forceFill([
+            'two_factor_enabled' => true,
+            'two_factor_secret' => Crypt::encryptString('JBSWY3DPEHPK3PXP'),
+        ])->save();
+
+        $this->fakeGoogle($email, 'New Teacher');
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher']));
+        $response->assertRedirect();
+        $this->assertStringContainsString('step=2fa', (string) $response->headers->get('Location'));
+        $this->assertStringNotContainsString('token=', (string) $response->headers->get('Location'));
+
+        $cookie = $this->sessionCookie($response);
+        $this->app['auth']->forgetGuards();
+
+        // Still not signed in: the pending challenge lives server-side.
+        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+            ->getJson('/api/v1/auth/me')
+            ->assertStatus(401);
+
+        // Completing the factor signs the user in over the same session.
+        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+            ->postJson('/api/v1/auth/2fa/confirm', ['code' => TOTP::code('JBSWY3DPEHPK3PXP')])
+            ->assertOk()
+            ->assertJsonPath('user.email', $email)
+            ->assertJsonMissingPath('token');
     }
 }

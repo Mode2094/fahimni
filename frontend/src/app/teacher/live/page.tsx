@@ -33,6 +33,7 @@ export default function LiveSessionsPage() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>({ ...EMPTY });
   const [busyId, setBusyId] = useState('');
+  const [recInputs, setRecInputs] = useState<Record<string, string>>({});
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -81,6 +82,22 @@ export default function LiveSessionsPage() {
       const res = await fetch(`${API}/teacher/live-sessions/${id}/${act}`, { method: 'POST', headers: headers() });
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(act === 'start' ? t('الحصة جاهزة — افتح رابط Google Meet كمضيف', 'Session ready — open the Google Meet link as host') : act === 'end' ? t('تم إنهاء الحصة', 'Session ended') : t('تم إلغاء الجلسة', 'Session cancelled'));
+      load();
+    } catch { toast.error('Failed'); }
+    setBusyId('');
+  };
+
+  const attachRecording = async (id: string) => {
+    const url = (recInputs[id] || '').trim();
+    if (!url) { toast.error(t('ألصق رابط التسجيل أولاً', 'Paste the recording link first')); return; }
+    setBusyId(id);
+    try {
+      const res = await fetch(`${API}/teacher/live-sessions/${id}/recording`, {
+        method: 'POST', headers: headers(), body: JSON.stringify({ record_url: url }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      toast.success(t('تم حفظ رابط التسجيل', 'Recording link saved'));
+      setRecInputs((p) => ({ ...p, [id]: '' }));
       load();
     } catch { toast.error('Failed'); }
     setBusyId('');
@@ -160,8 +177,12 @@ export default function LiveSessionsPage() {
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-gray-500">
                         <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{s.scheduled_at ? new Date(s.scheduled_at).toLocaleString() : t('فوري', 'Now')}</span>
                         <span className="flex items-center gap-1"><Users className="h-3 w-3" />{s.max_participants}</span>
-                        {s.record_enabled && <Badge className="bg-red-50 text-red-600 border-0 text-[10px]">● {t('تسجيل', 'Rec')}</Badge>}
-                        {s.record_url && <span className="text-gray-400">{t('تسجيل:', 'Rec:')} <a href={s.record_url} target="_blank" className="text-teal-600 underline">{t('عرض', 'view')}</a></span>}
+                        {s.record_url ? (
+                          <span className="text-gray-400">{t('التسجيل:', 'Rec:')} <a href={s.record_url} target="_blank" rel="noreferrer" className="text-teal-600 underline">{t('عرض', 'view')}</a></span>
+                        ) : s.record_enabled ? (
+                          // Google Meet لا يسجّل تلقائياً — التذكير صريح.
+                          <span className="text-[10px] text-amber-600">{t('سجّل في Meet ثم ألصق الرابط بالأسفل', 'Record in Meet, then paste the link below')}</span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -198,6 +219,21 @@ export default function LiveSessionsPage() {
                       <span className="font-mono text-teal-700 truncate" dir="ltr">{s.join_url}</span>
                     )}
                   </div>
+                  {(s.status === 'ended' || s.record_enabled || s.record_url) && (
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <Input
+                        value={recInputs[s.id] || ''}
+                        onChange={(e) => setRecInputs((p) => ({ ...p, [s.id]: e.target.value }))}
+                        placeholder={t('ألصق رابط التسجيل (Drive / YouTube)', 'Paste recording link (Drive / YouTube)')}
+                        dir="ltr"
+                        className="h-9 text-xs max-w-sm"
+                      />
+                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full text-xs" onClick={() => attachRecording(s.id)} disabled={busyId === s.id}>
+                        {busyId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                        {t('حفظ رابط التسجيل', 'Save recording link')}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

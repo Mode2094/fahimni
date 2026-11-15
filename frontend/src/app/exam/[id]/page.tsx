@@ -30,6 +30,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [metaError, setMetaError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deadline, setDeadline] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -55,9 +56,25 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     return locale === 'ar' ? l[0] : l[1];
   };
 
+  const loadMeta = () => {
+    setLoading(true);
+    setMetaError(false);
+    // /exams/{id} is tenant-protected: without X-Tenant-Id the API answers 400
+    // and the intro card would silently show zeros.
+    const tenantId = localStorage.getItem('tenant_id') || '';
+    fetch(`${API}/exams/${id}`, {
+      headers: { Accept: 'application/json', 'X-Tenant-Id': tenantId },
+      credentials: 'same-origin',
+    })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((d) => setExam(d.exam || null))
+      .catch(() => setMetaError(true))
+      .finally(() => setLoading(false));
+  };
+
   useEffect(() => {
     if (!check()) { router.replace('/student/login'); return; }
-    fetch(`${API}/exams/${id}`, { headers: { Accept: 'application/json' } }).then(r => r.json()).then(d => setExam(d.exam || null)).catch(() => {}).finally(() => setLoading(false));
+    loadMeta();
   }, [id]);
 
   // Timer
@@ -174,6 +191,19 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
 
   if (loading) return <div className="flex items-center justify-center h-screen"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>;
 
+  if (metaError) {
+    return (
+      <div className="max-w-md mx-auto py-16 px-4">
+        <Card className="border-0 shadow-sm p-8 text-center space-y-4">
+          <AlertTriangle className="mx-auto h-10 w-10 text-amber-500" />
+          <h1 className="text-xl font-bold">{t('تعذر تحميل الاختبار', 'Could not load the exam')}</h1>
+          <p className="text-sm text-gray-500">{t('تحقق من اتصالك ثم حاول مرة أخرى', 'Check your connection and try again')}</p>
+          <Button onClick={loadMeta} variant="outline" className="gap-2"><RotateCcw className="h-4 w-4" />{t('إعادة المحاولة', 'Retry')}</Button>
+        </Card>
+      </div>
+    );
+  }
+
   if (!started) {
     return (
       <div className="max-w-2xl mx-auto space-y-8 py-8 px-4">
@@ -203,7 +233,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
             </div>
           ) : (
             <>
-              <p className="text-gray-500">{t(`لديك ${exam?.duration_minutes || 30} دقيقة. نسبة النجاح ${exam?.pass_mark_percent || 70}%.`, 'You have X minutes.')}</p>
+              <p className="text-gray-500">{t(`لديك ${exam?.duration_minutes || 30} دقيقة. نسبة النجاح ${exam?.pass_mark_percent ?? 0}%.`, `You have ${exam?.duration_minutes || 30} minutes. Pass mark ${exam?.pass_mark_percent ?? 0}%.`)}</p>
               {exam?.anti_cheat_enabled !== false && (
                 <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 text-amber-700 text-xs text-start">
                   <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />

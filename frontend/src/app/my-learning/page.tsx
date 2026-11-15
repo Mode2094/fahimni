@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -191,13 +192,22 @@ export default function MyLearningPage() {
                         {l.is_today && <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-0.5 text-[10px] font-semibold text-teal-700"><CalendarClock className="h-3 w-3" />{t('اليوم', 'Today')}</span>}
                       </div>
                     </div>
-                    {l.meeting_url && (
+                    {l.meeting_url ? (
                       <a href={l.meeting_url} target="_blank" rel="noreferrer">
                         <Button className="gap-1.5 rounded-full text-white shadow-brand min-h-[44px] px-4" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                           <Video className="h-3.5 w-3.5" />{t('الانضمام للدرس', 'Join lesson')}<ExternalLink className="h-3 w-3" />
                         </Button>
                       </a>
-                    )}
+                    ) : l.course_id ? (
+                      // Students never receive the raw meeting link here; the
+                      // course lesson page releases it once enrollment is
+                      // verified, so link them into the course instead.
+                      <Link href={`/course/${l.course_id}/learn`}>
+                        <Button variant="outline" className="gap-1.5 rounded-full min-h-[44px] px-4">
+                          <BookOpen className="h-3.5 w-3.5" />{t('فتح الدرس في الكورس', 'Open in course')}
+                        </Button>
+                      </Link>
+                    ) : null}
                   </div>
                 </Card>
               );

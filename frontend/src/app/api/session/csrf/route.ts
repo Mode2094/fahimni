@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { csrfHandshake } from '@/lib/bff';
+import { requestOrigin } from '@/lib/request-origin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -10,7 +11,7 @@ export const runtime = 'nodejs';
  * XSRF token is a CSRF token, not an authentication credential.
  */
 export async function GET(request: NextRequest) {
-  const origin = new URL(request.url).origin;
+  const origin = requestOrigin(request);
 
   try {
     const { cookies } = await csrfHandshake(origin);

@@ -159,7 +159,7 @@ class QuranTeacherRequestController extends Controller
             $planName = $qr->plan?->name;
 
             $body = "أهلاً {$user->name}،\n\n";
-            $body .= "تمت الموافقة على طلبك كمعلم قرءان في منصة شahead.\n\n";
+            $body .= "تمت الموافقة على طلبك كمعلم قرءان في منصة فهمني.\n\n";
             $body .= "لإنشاء كلمة المرور والدخول للمنصة، اضغط على الرابط التالي:\n";
             $body .= "{$resetUrl}\n\n";
             $body .= "بيانات الدخول:\n";
@@ -170,7 +170,7 @@ class QuranTeacherRequestController extends Controller
 
             Mail::to($user->email)->queue(
                 new PlatformNotification(
-                    title: 'مرحباً بك في شahead — تم تفعيل حسابك كمعلم قرءان',
+                    title: 'مرحباً بك في منصة فهمني — تم تفعيل حسابك كمعلم قرءان',
                     body: $body,
                     data: ['action_url' => $resetUrl, 'action_text' => 'تسجيل الدخول'],
                 )

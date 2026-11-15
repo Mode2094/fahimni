@@ -85,6 +85,19 @@ function shortName(name: string): string {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * The same URL (/manifest.webmanifest) serves a DIFFERENT document per tenant,
+ * resolved from Referer/Host. A shared cache (Cloudflare/CDN) that keys on the
+ * URL alone could hand teacher A's name/logo/start_url to teacher B, so the
+ * response must never be publicly shareable: `private, no-store` stops shared
+ * caches storing it at all, and `Vary` keeps any honouring cache correct.
+ */
+const MANIFEST_HEADERS = {
+  'Content-Type': 'application/manifest+json; charset=utf-8',
+  'Cache-Control': 'private, no-store',
+  'Vary': 'Referer, Host',
+} as const;
+
 export async function GET(request: Request) {
   const referer = request.headers.get('referer') || '';
   const host = (request.headers.get('host') || '').split(':')[0]?.toLowerCase() || '';
@@ -105,7 +118,7 @@ export async function GET(request: Request) {
 
   if (!site || !site.slug) {
     return new NextResponse(JSON.stringify(PLATFORM_MANIFEST), {
-      headers: { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'public, max-age=60' },
+      headers: MANIFEST_HEADERS,
     });
   }
 
@@ -137,6 +150,6 @@ export async function GET(request: Request) {
   };
 
   return new NextResponse(JSON.stringify(manifest), {
-    headers: { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'public, max-age=60' },
+    headers: MANIFEST_HEADERS,
   });
 }

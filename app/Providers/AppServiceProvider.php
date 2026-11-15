@@ -169,6 +169,9 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('join-ticket', fn (Request $request) => Limit::perMinute(60)->by($request->user()?->id ?: $request->ip()));
 
+        // تفعيل البطاقات: حد لكل مستخدم — يحبط تخمين الأكواد بالقوة الغاشمة.
+        RateLimiter::for('redeem', fn (Request $request) => Limit::perMinute(10)->by($request->user()?->id ?: $request->ip()));
+
         Enrollment::observe(EnrollmentObserver::class);
         LessonProgress::observe(LessonProgressObserver::class);
         ExamAttempt::observe(ExamAttemptObserver::class);

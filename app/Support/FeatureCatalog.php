@@ -33,7 +33,7 @@ class FeatureCatalog
             ['key' => 'appointments_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد المواعيد', 'en' => 'Appointments limit', 'desc_ar' => 'عدد المواعيد النشطة المتاحة', 'desc_en' => 'Number of active appointments available'],
             ['key' => 'services_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الخدمات المدفوعة', 'en' => 'Paid services limit', 'desc_ar' => 'عدد الخدمات المدفوعة التي يمكنك عرضها', 'desc_en' => 'Number of paid services you can offer'],
             ['key' => 'live_minutes_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد دقائق البث شهرياً', 'en' => 'Monthly live minutes limit', 'desc_ar' => 'عدد دقائق البث المباشر المسموح بها شهرياً', 'desc_en' => 'Live streaming minutes allowed per month'],
-            ['key' => 'recordings_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد التسجيلات', 'en' => 'Recordings limit', 'desc_ar' => 'عدد تسجيلات البث المباشر المحفوظة', 'desc_en' => 'Number of stored live recordings'],
+            ['key' => 'recordings_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد التسجيلات', 'en' => 'Recordings limit', 'desc_ar' => 'عدد روابط تسجيل البث التي يمكن إرفاقها بجلساتك (تُرفَق يدوياً)', 'desc_en' => 'Number of live-session recording links you can attach (attached manually)'],
             ['key' => 'delivery_minutes_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد دقائق المشاهدة', 'en' => 'Delivery minutes limit', 'desc_ar' => 'دقائق تشغيل الفيديو المسموح بها (التسليم)', 'desc_en' => 'Allowed video playback minutes (delivery)'],
 
             // ── Gates ───────────────────────────────────────
@@ -57,7 +57,10 @@ class FeatureCatalog
             ['key' => 'announcements_enabled', 'type' => 'boolean', 'ar' => 'الإعلانات', 'en' => 'Announcements', 'desc_ar' => 'إرسال إعلانات لطلابك داخل المنصة', 'desc_en' => 'Send announcements to your students'],
             ['key' => 'video_upload_enabled', 'type' => 'boolean', 'ar' => 'رفع الفيديو', 'en' => 'Video upload', 'desc_ar' => 'رفع فيديوهاتك مباشرة إلى المنصة', 'desc_en' => 'Upload your videos directly to the platform'],
             ['key' => 'file_upload_enabled', 'type' => 'boolean', 'ar' => 'رفع الملفات', 'en' => 'File upload', 'desc_ar' => 'رفع ملفات PDF والمستندات إلى دروسك', 'desc_en' => 'Upload PDFs and documents to your lessons'],
-            ['key' => 'live_recording_enabled', 'type' => 'boolean', 'ar' => 'تسجيل البث المباشر', 'en' => 'Live recording', 'desc_ar' => 'تسجيل البث تلقائياً وتحويله لفيديو مسجل', 'desc_en' => 'Automatically record live streams and save them as videos'],
+            // ملاحظة: لا يوجد مفتاح `live_recording_enabled` — لا يمكن لـ Google
+            // Meet التسجيل تلقائياً، والمعلم يُرفق رابط التسجيل يدوياً بعد الجلسة
+            // (POST /teacher/live-sessions/{id}/recording، غير محجوب بأي ميزة).
+            // تفادي الوعد بميزة تسجيل تلقائي غير موجودة.
             ['key' => 'secure_playback_enabled', 'type' => 'boolean', 'ar' => 'تشغيل آمن', 'en' => 'Secure playback', 'desc_ar' => 'روابط تشغيل موقعة ومنتهية الصلاحية للفيديوهات', 'desc_en' => 'Signed, expiring playback URLs for videos'],
             ['key' => 'video_watermark', 'type' => 'boolean', 'ar' => 'علامة مائية للفيديو', 'en' => 'Video watermark', 'desc_ar' => 'عرض اسم الطالب كعلامة مائية متحركة أثناء مشاهدة الفيديو', 'desc_en' => 'Show the student name as an animated watermark while watching videos'],
             ['key' => 'video_analytics_enabled', 'type' => 'boolean', 'ar' => 'تحليلات الفيديو', 'en' => 'Video analytics', 'desc_ar' => 'إحصائيات مشاهدة لكل فيديو', 'desc_en' => 'Per-video viewing analytics'],

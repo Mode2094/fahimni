@@ -27,7 +27,7 @@ const CAPABILITIES: [string, string][] = [
   ['Student management', 'Enrollments, progress tracking, exam results and student profiles — every learner in one place.'],
   ['Quizzes and registration cards', 'Build quizzes with multiple question types, and use QR registration cards that enroll a student in one scan.'],
   ['Your own branding', 'A public site with your logo, colors and domain. You build your own name — not a marketplace’s.'],
-  ['Direct payments', 'PayTabs, PayPal and more, with automatic invoices. Every payment lands in your account.'],
+  ['Direct payments', 'Connect your own payment gateway (PayPal, or cards via PayTabs) and every course payment lands in your account, with automatic invoices.'],
 ];
 
 const FAQ: [string, string][] = [

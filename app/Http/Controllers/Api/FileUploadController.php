@@ -377,10 +377,15 @@ class FileUploadController extends Controller
         // Storage quota enforcement (students submit too).
         app(QuotaService::class)->assertCan($tenantId, 'storage', $file->getSize());
 
-        $path = $file->store('uploads', 'public');
+        // Assignment/worksheet attachments (and student submission files) are
+        // private course material: they live on the private disk and are only
+        // reachable through the authorised /assignments/{id}/file and
+        // /submissions/{id}/file endpoints. The returned value is an opaque
+        // private storage reference, NOT a public URL.
+        $path = $file->store('assignments/'.$tenantId, 'local');
 
         return response()->json([
-            'url' => '/storage/'.$path,
+            'url' => $path,
             'name' => $file->getClientOriginalName(),
         ], 201);
     }

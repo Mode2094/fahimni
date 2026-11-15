@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\MonitoringController;
 use App\Http\Controllers\Api\MonitoringIngestController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\NotificationPreferenceController;
+use App\Http\Controllers\Api\OnboardingController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PaymentInitiateController;
 use App\Http\Controllers\Api\PlanFeatureController;
@@ -242,6 +243,9 @@ Route::prefix('v1')->group(function () {
             Route::post('assignments/{assignment}/submit', [AssignmentController::class, 'submit']);
             Route::post('assignments/{assignment}/submissions/{submission}/grade', [AssignmentController::class, 'grade']);
             Route::post('submissions/{submission}/comments', [AssignmentController::class, 'comment']);
+            // Authorised private-file downloads (attachments + submission files).
+            Route::get('assignments/{assignment}/file', [AssignmentController::class, 'download'])->middleware('throttle:playback');
+            Route::get('submissions/{submission}/file', [AssignmentController::class, 'submissionFile'])->middleware('throttle:playback');
 
             // ─── Question Bank ───────────────────────────
             Route::get('questions', [QuestionController::class, 'index']);
@@ -286,7 +290,10 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/generate', [ActivationCardController::class, 'generate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::post('cards/import', [ActivationCardController::class, 'import'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::get('cards/import-template', [ActivationCardController::class, 'importTemplate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
-            Route::post('cards/redeem', [ActivationCardController::class, 'redeem']);
+            Route::get('cards/export', [ActivationCardController::class, 'export'])->middleware('role:teacher,owner,admin,permission:cards.export', 'feature:cards_enabled');
+            // No feature gate on redeem: cards already handed to students must
+            // stay activatable even if the workspace plan later changes.
+            Route::post('cards/redeem', [ActivationCardController::class, 'redeem'])->middleware('throttle:redeem');
             Route::get('cards/{card}', [ActivationCardController::class, 'show']);
             Route::post('cards/{card}/cancel', [ActivationCardController::class, 'cancel'])->middleware('role:teacher,owner,admin,permission:cards.manage');
             Route::get('cards/batch/{batchId}', [ActivationCardController::class, 'batchInfo'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
@@ -550,6 +557,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('{session}/start', [LiveSessionController::class, 'start']);
                 Route::post('{session}/end', [LiveSessionController::class, 'end']);
                 Route::post('{session}/cancel', [LiveSessionController::class, 'cancel']);
+                Route::post('{session}/recording', [LiveSessionController::class, 'attachRecording']);
                 Route::get('by-lesson/{lesson}', [LiveSessionController::class, 'byLesson']);
                 Route::post('{session}/join-ticket', [LiveSessionController::class, 'joinTicket'])->middleware('throttle:join-ticket');
                 Route::delete('{session}', [LiveSessionController::class, 'destroy']);
@@ -606,6 +614,9 @@ Route::prefix('v1')->group(function () {
 
             // ─── Teacher: Plan & Limits ───────────────────
             Route::get('teacher/plan', [TeacherPlanController::class, 'index']);
+
+            // ─── Teacher: Getting-started checklist ───────
+            Route::middleware('role:teacher,owner,admin')->get('teacher/onboarding', [OnboardingController::class, 'index']);
 
             // ─── Teacher: Site Design ─────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/site-design')->group(function () {

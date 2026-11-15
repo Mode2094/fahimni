@@ -9,9 +9,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Activity, Wallet, ChevronLeft, ChevronRight, Smartphone, Copy, Check, Construction } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Activity, Wallet, ChevronLeft, ChevronRight, Smartphone, Copy, Check, Construction, Ticket, CalendarDays, Sparkles } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+const ONBOARDING_META: Record<string, { ar: string; en: string; icon: any; href: string }> = {
+  course: { ar: 'أنشئ كورسك الأول', en: 'Create your first course', icon: BookOpen, href: '/courses' },
+  lesson: { ar: 'أضف درساً داخل الكورس', en: 'Add a lesson to the course', icon: BookOpen, href: '/courses' },
+  video: { ar: 'ارفع فيديو تعليمياً', en: 'Upload a teaching video', icon: Video, href: '/courses' },
+  card: { ar: 'أنشئ بطاقة تسجيل لطلابك', en: 'Create a registration card', icon: Ticket, href: '/teacher/cards' },
+  assignment: { ar: 'أضف واجباً لطلابك', en: 'Add an assignment', icon: ClipboardList, href: '/courses' },
+  live: { ar: 'ابدأ بثاً مباشراً', en: 'Hold a live session', icon: Radio, href: '/teacher/live' },
+  schedule: { ar: 'جدوِل درساً بموعد ثابت', en: 'Schedule a lesson', icon: CalendarDays, href: '/teacher/schedule' },
+};
 
 export default function TeacherDashboard() {
   const { user, check } = useAuth();
@@ -26,6 +36,7 @@ export default function TeacherDashboard() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [studentApp, setStudentApp] = useState<any>(null);
+  const [onboarding, setOnboarding] = useState<any>(null);
   const [copied, setCopied] = useState(false);
 
   const headers = () => {
@@ -36,21 +47,29 @@ export default function TeacherDashboard() {
 
   const loadAll = async () => {
     setLoading(true);
-    const [planR, anaR, lesR, bkR, appR] = await Promise.all([
-      fetch(`${API}/teacher/plan`, { headers: headers() }),
-      fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }),
-      fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
-      fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
-      fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
-    ]);
+    try {
+      // Each request degrades on its own: one failing endpoint must never blank
+      // the dashboard or leave it stuck on skeletons forever.
+      const [planR, anaR, lesR, bkR, appR, onbR] = await Promise.all([
+        fetch(`${API}/teacher/plan`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/onboarding`, { headers: headers() }).catch(() => null),
+      ]);
 
-    if (planR.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
-    if (anaR.ok) { const d = await anaR.json(); setAnalytics(d.overview || null); }
-    if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
-    if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
-    if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
-
-    setLoading(false);
+      if (planR?.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
+      if (anaR?.ok) { const d = await anaR.json(); setAnalytics(d.overview || null); }
+      if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
+      if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
+      if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
+      if (onbR?.ok) { const d = await onbR.json(); setOnboarding(d || null); }
+    } catch {
+      // Malformed payloads etc. — render whatever we have instead of locking up.
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -150,6 +169,50 @@ export default function TeacherDashboard() {
           </a>
         ))}
       </div>
+
+      {/* ─── خطوات البدء (تظهر فقط حتى يكتمل الإعداد) ─── */}
+      {onboarding && !onboarding.all_done && Array.isArray(onboarding.steps) && onboarding.steps.length > 0 && (
+        <Card className="border-0 shadow-sm overflow-hidden">
+          <CardContent className="p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+              <h2 className="font-bold flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-500/10"><Sparkles className="h-4 w-4 text-teal-600" /></span>
+                {t('خطواتك الأولى', 'Getting started')}
+              </h2>
+              <span className="text-xs font-semibold text-teal-700 bg-teal-50 rounded-full px-3 py-1">
+                {onboarding.completed} / {onboarding.total}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">{t('أكمل هذه الخطوات لتجهيز منصتك لطلابك.', 'Complete these steps to get your platform ready for students.')}</p>
+
+            <div className="h-1.5 rounded-full bg-slate-100 mb-5 overflow-hidden">
+              <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${onboarding.total ? Math.round((onboarding.completed / onboarding.total) * 100) : 0}%` }} />
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-2">
+              {onboarding.steps.map((s: any) => {
+                const meta = ONBOARDING_META[s.key];
+                if (!meta) return null;
+                const Icon = meta.icon;
+                return (
+                  <a
+                    key={s.key}
+                    href={meta.href}
+                    className={`flex items-center gap-3 rounded-xl border p-3 transition ${s.done ? 'border-slate-100 bg-slate-50/50' : 'border-teal-100 bg-white hover:bg-teal-50/40'}`}
+                    aria-label={s.done ? `${t(meta.ar, meta.en)} — ${t('تم', 'Done')}` : t(meta.ar, meta.en)}
+                  >
+                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${s.done ? 'bg-emerald-50' : 'bg-teal-500/10'}`}>
+                      {s.done ? <Check className="h-4 w-4 text-emerald-600" /> : <Icon className="h-4 w-4 text-teal-600" />}
+                    </span>
+                    <span className={`flex-1 text-sm font-medium ${s.done ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{t(meta.ar, meta.en)}</span>
+                    {!s.done && (locale === 'ar' ? <ChevronLeft className="h-4 w-4 text-teal-500" /> : <ChevronRight className="h-4 w-4 text-teal-500" />)}
+                  </a>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── تطبيق الطلاب (Student App) ─────────────── */}
       {!settings.student_app_hidden && studentApp && (

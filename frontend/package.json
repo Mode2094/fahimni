@@ -9,7 +9,11 @@
     "validate:env": "node scripts/validate-env.mjs",
     "prebuild": "npm run validate:env",
     "typecheck": "tsc --noEmit",
-    "test:csp": "node --test scripts/csp.test.ts"
+    "test:csp": "node --test scripts/csp.test.ts",
+    "test:bff": "node --test scripts/bff-origin.test.ts",
+    "test:scripts": "node --test scripts/*.test.ts",
+    "test:ui": "vitest run",
+    "test:unit": "npm run test:scripts && vitest run"
   },
   "dependencies": {
     "axios": "^1.21.1",
@@ -31,11 +35,18 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.10",
     "@types/node": "^22.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "jsdom": "^31.0.1",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vite": "^7.3.8",
+    "vitest": "^5.1.0"
   }
 }

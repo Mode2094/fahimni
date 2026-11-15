@@ -244,6 +244,9 @@ class PublicSiteController extends Controller
         return response()->json([
             'course' => $this->coursePayload($course),
             'sections' => $sections,
+            // Whether the caller is enrolled (owner/staff count as enrolled):
+            // drives the "Enrolled / Guest" badge on the lesson page.
+            'is_enrolled' => $enrolled,
             'drip' => [
                 'enabled' => $dripEnabled,
                 'interval_days' => $dripEnabled ? $intervalDays : null,

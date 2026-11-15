@@ -88,6 +88,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Unit tests
+        # Node test runner (BFF origin, CSP, manifest) + vitest component tests.
+        run: npm run test:unit
+
       - name: Build
         env:
           # Public, non-secret placeholders — enough to compile the app.
@@ -113,6 +117,12 @@ jobs:
       - name: Migrate script fails loudly (no '|| true' swallow)
         # migrate / plans:sync / seed / count-probe: every failure must abort.
         run: deploy/tests/migrate-script-test.sh
+
+      - name: Brand rollout reloads nginx (no 502 after redeploy)
+        # Recreating app/frontend leaves nginx on the old container IPs -> 502.
+        # Pins the reload, the readiness gate, the failure diagnostics and the
+        # rollback behaviour with a stubbed Docker.
+        run: deploy/tests/brand-rollout-nginx-test.sh
 
       - name: Redis maxmemory stays below the container cap
         # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
