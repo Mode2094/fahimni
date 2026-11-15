@@ -17,7 +17,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { requestOrigin } from '../src/lib/request-origin.ts';
+import { requestOrigin, isTrustedHost } from '../src/lib/request-origin.ts';
+
+// Pin the platform domain so the host allowlist is deterministic in CI (the
+// build step sets a *different* placeholder, and the unit step must not depend
+// on whatever the shell happens to export).
+delete process.env.NEXT_PUBLIC_SITE_URL;
+process.env.NEXT_PUBLIC_PLATFORM_DOMAIN = 'fahimni.me';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (rel: string) => readFileSync(join(here, '..', rel), 'utf8');
@@ -91,4 +97,59 @@ test('the BFF pins Origin and Referer on every Laravel call', () => {
 
   assert.ok(bff.includes('Origin: origin'), 'bff must send an explicit Origin');
   assert.ok(bff.includes('Referer: `' + '${origin}/`'), 'bff must pin Referer (Sanctum checks it first)');
+});
+
+// ── Host-header spoofing ─────────────────────────────────────────────────
+// The forwarded Origin decides whether Sanctum treats the call as stateful, so
+// an attacker-supplied Host / X-Forwarded-Host must never be able to point it
+// at an arbitrary domain (or a look-alike of ours).
+
+test('a spoofed x-forwarded-host is ignored in favour of the real host', () => {
+  // Client sends a fake XFH but nginx forwards the true Host.
+  assert.equal(
+    requestOrigin(req({ host: 'fahimni.me', 'x-forwarded-host': 'evil.com', 'x-forwarded-proto': 'https' })),
+    'https://fahimni.me',
+  );
+});
+
+test('a spoofed Host alone falls back to the canonical origin, never the attacker host', () => {
+  const origin = requestOrigin(req({ host: 'evil.com', 'x-forwarded-proto': 'https' }));
+
+  assert.equal(origin, 'https://fahimni.me');
+  assert.ok(!origin.includes('evil.com'));
+});
+
+test('look-alike hosts (suffix, not subdomain) are rejected', () => {
+  // "fahimni.me.evil.com" is NOT a subdomain of fahimni.me.
+  assert.equal(requestOrigin(req({ host: 'fahimni.me.evil.com', 'x-forwarded-proto': 'https' })), 'https://fahimni.me');
+  assert.equal(requestOrigin(req({ host: 'notfahimni.me', 'x-forwarded-proto': 'https' })), 'https://fahimni.me');
+  assert.equal(isTrustedHost('fahimni.me.evil.com'), false);
+  assert.equal(isTrustedHost('notfahimni.me'), false);
+});
+
+test('real tenant subdomains of the platform domain stay trusted', () => {
+  assert.equal(isTrustedHost('teacher.fahimni.me'), true);
+  assert.equal(
+    requestOrigin(req({ host: 'teacher.fahimni.me', 'x-forwarded-proto': 'https' })),
+    'https://teacher.fahimni.me',
+  );
+});
+
+test('an unexpected scheme cannot leak into the origin', () => {
+  assert.equal(requestOrigin(req({ host: 'fahimni.me', 'x-forwarded-proto': 'javascript' })), 'https://fahimni.me');
+});
+
+test('localhost and loopback stay trusted for local development', () => {
+  assert.equal(isTrustedHost('localhost:3000'), true);
+  assert.equal(isTrustedHost('127.0.0.1'), true);
+});
+
+test('nginx overwrites X-Forwarded-Host on both Next.js proxy locations', () => {
+  const conf = src('../docker/nginx/default.conf');
+  const occurrences = conf.match(/proxy_set_header X-Forwarded-Host \$host;/g) ?? [];
+
+  assert.ok(
+    occurrences.length >= 2,
+    'both /api/session/ and / must pin X-Forwarded-Host to the real $host',
+  );
 });
