@@ -72,7 +72,8 @@ class MediaInitCommand extends Command
             'live_minutes_limit' => ['unlimited', 'string'],
             'recordings_limit' => ['unlimited', 'string'],
             'delivery_minutes_limit' => ['unlimited', 'string'],
-            'live_recording_enabled' => ['true', 'boolean'],
+            // لا `live_recording_enabled`: لا يوجد تسجيل تلقائي للبث (Google Meet
+            // لا يدعمه) — المعلم يرفق رابط التسجيل يدوياً، فلا نفعّل ميزة وهمية.
             'secure_playback_enabled' => ['true', 'boolean'],
             'video_analytics_enabled' => ['true', 'boolean'],
             'video_watermark' => ['true', 'boolean'],

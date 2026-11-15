@@ -366,6 +366,9 @@ class MediaQuotaService
             'videos' => $entry($current['video_count'], $videoLimit),
             'live_sessions' => $entry($liveSessionsCount, $liveLimit),
             'live_minutes' => $entry($liveMinutes, $liveMinutesLimit),
+            // تنبيه: `recording_count` لا منتج له حالياً — Google Meet لا يسجّل
+            // تلقائياً، وتسجيلات البث تُرفَق كروابط خارجية (live_sessions.record_url)
+            // ولا تُخزَّن كأصول. لذلك هذا العدّاد إعلامي حتى يتوفر تخزين تسجيلات.
             'recordings' => $entry($current['recording_count'], $recordingsLimit),
             'files' => $entry($current['files_count'], $this->engine->limit($tenantId, 'files_limit')),
             'current' => $current,
