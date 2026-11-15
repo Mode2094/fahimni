@@ -16,7 +16,7 @@ const SECTIONS: LegalSection[] = [
       { ar: 'بيانات الحساب: الاسم، البريد الإلكتروني، رقم الهاتف، كلمة المرور (مشفّرة)، الصورة الشخصية، والدولة.', en: 'Account data: name, email, phone number, encrypted password, profile photo and country.' },
       { ar: 'بيانات الاستخدام: المحتوى الذي تنشئه (دورات، دروس، اختبارات، واجبات، تعليقات)، تفاعلاتك مع المنصة، تقدم الطلاب، ونتائج الاختبارات.', en: 'Usage data: content you create (courses, lessons, exams, assignments, comments), your interactions, student progress and exam results.' },
       { ar: 'البيانات التقنية: عنوان IP، نوع المتصفح والجهاز، نظام التشغيل، معرّف الجهاز، وسجلات الوصول والوقت.', en: 'Technical data: IP address, browser and device type, operating system, device identifier, and access logs.' },
-      { ar: 'بيانات الدفع: تُعالج بطاقات الدفع والتحويلات عبر بوابات دفع آمنة (PayPal، PayTabs وغيرها) ولا نخزن بيانات بطاقتك الكاملة على خوادمنا إطلاقًا.', en: 'Payment data: card and transfer payments are processed via secure payment gateways (PayPal, PayTabs, etc.); we never store your full card details on our servers.' },
+      { ar: 'بيانات الدفع: تُعالج بطاقات الدفع والتحويلات عبر بوابات دفع آمنة (Freemius لاشتراكات المنصة، وPayPal/PayTabs لمدفوعات الطلاب) ولا نخزن بيانات بطاقتك الكاملة على خوادمنا إطلاقًا.', en: 'Payment data: card and transfer payments are processed via secure payment gateways (Freemius for platform subscriptions, PayPal/PayTabs for student payments); we never store your full card details on our servers.' },
       { ar: 'إثباتات الدفع اليدوي: صور الوصل وبيانات التحويل التي ترفعها، وتُستخدم حصرًا للتحقق من الدفع.', en: 'Manual payment proofs: receipt images and transfer details you upload, used solely to verify payments.' },
     ],
   },
@@ -38,7 +38,7 @@ const SECTIONS: LegalSection[] = [
     },
     items: [
       { ar: 'مزودو البنية التحتية: شركات الاستضافة، قواعد البيانات، والتخزين السحابي لضمان تشغيل الخدمة.', en: 'Infrastructure providers: hosting, database and cloud storage companies necessary to run the service.' },
-      { ar: 'بوابات الدفع: لمعالجة مدفوعاتك (PayPal، PayTabs) — وهم ملتزمون بمعايير PCI-DSS.', en: 'Payment gateways: to process your payments (PayPal, PayTabs) — they are PCI-DSS compliant.' },
+      { ar: 'بوابات الدفع: لمعالجة مدفوعاتك (Freemius لاشتراكات المنصة، وPayPal/PayTabs لمدفوعات الطلاب) — وهم ملتزمون بمعايير PCI-DSS.', en: 'Payment gateways: to process your payments (Freemius for platform subscriptions, PayPal/PayTabs for student payments) — they are PCI-DSS compliant.' },
       { ar: 'الجهات الرسمية: عند طلب قضائي أو قانوني ملزم من السلطات المختصة وفق القانون.', en: 'Authorities: upon a binding judicial or legal request from competent authorities under law.' },
       { ar: 'داخل المنصة: يرى المعلمون بيانات طلابهم المسجلين في منصاتهم فقط (الاسم، البريد، التقدم).', en: 'Within the Platform: teachers only see data of students enrolled in their own platform (name, email, progress).' },
     ],
