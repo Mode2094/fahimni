@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\ExpirePendingBookingsJob;
+use App\Jobs\ExpireActivationCardsJob;
 use App\Jobs\ExpireSubscriptionsJob;
 use App\Jobs\ExpireTeacherInvitationsJob;
 use App\Jobs\ExpiryFollowUpJob;
@@ -41,6 +42,10 @@ Schedule::job(new ExpiryFollowUpJob)->dailyAt('08:30');
 Schedule::job(new ReconcileFreemiusWebhooksJob)->everyFiveMinutes()->name('freemius-reconcile')->withoutOverlapping();
 
 Schedule::job(new ExpireTeacherInvitationsJob)->hourly();
+
+// Issued-but-unused activation cards past their expiry date become `expired`
+// so counts and redemption stay honest (redeemed cards are never touched).
+Schedule::job(new ExpireActivationCardsJob)->hourly()->name('expire-activation-cards');
 
 // Abandoned bookings hold calendar slots: expire them before users
 // notice the slot is gone.
