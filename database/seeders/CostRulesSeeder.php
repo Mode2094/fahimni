@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\ProviderCostRule;
 use Illuminate\Database\Seeder;
+use Symfony\Component\Uid\UuidV7;
 
 /**
  * قواعد التكلفة الافتراضية للمزودين — أسعار تقريبية قابلة للتعديل من
@@ -38,16 +39,36 @@ class CostRulesSeeder extends Seeder
         ];
 
         foreach ($rules as [$provider, $resource, $unit, $cost, $currency, $metadata]) {
-            ProviderCostRule::updateOrCreate(
-                ['provider' => $provider, 'resource' => $resource],
-                [
+            // DatabaseSeeder runs with WithoutModelEvents, so the HasUuid
+            // `creating` hook does NOT fire here — the primary key must be set
+            // explicitly or a fresh `db:seed` aborts on the NOT NULL id.
+            $existing = ProviderCostRule::query()
+                ->where('provider', $provider)
+                ->where('resource', $resource)
+                ->first();
+
+            if ($existing) {
+                $existing->fill([
                     'unit' => $unit,
                     'cost' => $cost,
                     'currency' => $currency,
                     'metadata' => $metadata,
                     'is_active' => true,
-                ],
-            );
+                ])->save();
+
+                continue;
+            }
+
+            ProviderCostRule::create([
+                'id' => (string) UuidV7::generate(),
+                'provider' => $provider,
+                'resource' => $resource,
+                'unit' => $unit,
+                'cost' => $cost,
+                'currency' => $currency,
+                'metadata' => $metadata,
+                'is_active' => true,
+            ]);
         }
     }
 }
