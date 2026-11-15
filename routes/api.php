@@ -286,6 +286,7 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/generate', [ActivationCardController::class, 'generate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::post('cards/import', [ActivationCardController::class, 'import'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::get('cards/import-template', [ActivationCardController::class, 'importTemplate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
+            Route::get('cards/export', [ActivationCardController::class, 'export'])->middleware('role:teacher,owner,admin,permission:cards.export', 'feature:cards_enabled');
             // No feature gate on redeem: cards already handed to students must
             // stay activatable even if the workspace plan later changes.
             Route::post('cards/redeem', [ActivationCardController::class, 'redeem'])->middleware('throttle:redeem');
