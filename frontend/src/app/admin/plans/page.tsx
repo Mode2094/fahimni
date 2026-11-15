@@ -40,8 +40,7 @@ const FIXED_HIDDEN: Record<string, string> = {
   multi_teacher_enabled: 'true', white_label: 'true', api_access: 'true',
   cards_enabled: 'true', announcements_enabled: 'true',
   video_upload_enabled: 'true', file_upload_enabled: 'true',
-  live_recording_enabled: 'true', secure_playback_enabled: 'true',
-  video_analytics_enabled: 'true', video_hosting: 'true', video_embeds: 'true',
+  secure_playback_enabled: 'true', video_analytics_enabled: 'true', video_hosting: 'true', video_embeds: 'true',
   question_bank_enabled: 'true', certificates_enabled: 'true',
   assignments_enabled: 'true', scheduled_lessons_enabled: 'true',
 };
