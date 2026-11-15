@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ClipboardList, Play, Clock, Target, FileQuestion, CheckCircle2, Sparkles } from 'lucide-react';
+import { ClipboardList, Play, Clock, Target, FileQuestion, CheckCircle2, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -18,18 +18,33 @@ export default function ExamsPage() {
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const [exams, setExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    setError(false);
+    const tid = localStorage.getItem('tenant_id');
+    // /exams is tenant-protected: X-Tenant-Id is required.
+    fetch(`${API}/exams`, { headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' }, credentials: 'same-origin' })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((d) => setExams(d.exams || []))
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
     if (!check()) return;
-    const token = localStorage.getItem('lms_authed');
-    const tid = localStorage.getItem('tenant_id');
-    fetch(`${API}/exams`, { headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' } })
-      .then(r => r.json()).then(d => setExams(d.exams || [])).catch(() => {})
-      .finally(() => setLoading(false));
+    load();
   }, [check()]);
 
   const published = exams.filter((e) => e.is_published);
   const totalQuestions = exams.reduce((a, e) => a + (e.questions_count ?? 0), 0);
+  // Per-exam pass marks differ, so the header shows the average of the
+  // published exams instead of the first exam's mark (which was misleading).
+  const passMarks = published
+    .map((e) => Number(e.pass_mark_percent))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const avgPassMark = passMarks.length ? Math.round(passMarks.reduce((a, n) => a + n, 0) / passMarks.length) : null;
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -52,7 +67,7 @@ export default function ExamsPage() {
           <div className="grid grid-cols-3 gap-2.5 min-w-[240px]">
             {[
               { icon: ClipboardList, label: t('الاختبارات', 'Exams'), value: published.length },
-              { icon: Target, label: t('حد النجاح', 'Pass mark'), value: exams[0] ? `${exams[0].pass_mark_percent}%` : '—' },
+              { icon: Target, label: t('حد النجاح', 'Pass mark'), value: avgPassMark !== null ? `${avgPassMark}%` : '—' },
               { icon: FileQuestion, label: t('أسئلة', 'Questions'), value: totalQuestions },
             ].map((s, i) => (
               <div key={i} className="glass rounded-2xl px-4 py-3 text-center">
@@ -66,6 +81,17 @@ export default function ExamsPage() {
       </section>
 
       {loading ? <CardSkeleton /> :
+        error ? (
+          <Card className="border-0 shadow-sm p-8 text-center">
+            <AlertCircle className="mx-auto h-9 w-9 text-red-500" />
+            <p className="mt-3 font-semibold">{t('تعذر تحميل الاختبارات', 'Could not load exams')}</p>
+            <p className="text-sm text-gray-500 mt-1">{t('تحقق من اتصالك ثم حاول مرة أخرى', 'Check your connection and try again')}</p>
+            <Button onClick={load} variant="outline" className="mt-4 gap-2">
+              <RefreshCw className="h-4 w-4" />
+              {t('إعادة المحاولة', 'Retry')}
+            </Button>
+          </Card>
+        ) :
         published.length === 0 ? (
           <EmptyState icon={ClipboardList} title={t('لا توجد اختبارات', 'No exams')} description={t('ستظهر اختباراتك هنا عند إضافتها من معلمك', 'Exams assigned by your teacher will appear here')} />
         ) : (

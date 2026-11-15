@@ -6,7 +6,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { CheckCircle, XCircle, ClipboardList, Award, TrendingUp, Target, Sparkles } from 'lucide-react';
+import { CheckCircle, XCircle, ClipboardList, Award, TrendingUp, Target, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -15,13 +16,25 @@ export default function ResultsPage() {
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const [attempts, setAttempts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem('lms_authed');
-    fetch(`${API}/student/exam-attempts`, { headers: { Accept: 'application/json' } })
-      .then(r => r.json()).then(d => setAttempts(d.attempts || [])).catch(() => {})
+  const load = () => {
+    setLoading(true);
+    setError(false);
+    // /student/exam-attempts is tenant-protected: without X-Tenant-Id the API
+    // answers 400 and this page would silently look empty.
+    const tenantId = localStorage.getItem('tenant_id') || '';
+    fetch(`${API}/student/exam-attempts`, {
+      headers: { Accept: 'application/json', 'X-Tenant-Id': tenantId },
+      credentials: 'same-origin',
+    })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((d) => setAttempts(d.attempts || []))
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { load(); }, []);
 
   const passed = attempts.filter((a) => a.passed).length;
   const avg = attempts.length ? Math.round(attempts.reduce((a, x) => a + Number(x.percentage || 0), 0) / attempts.length) : 0;
@@ -62,6 +75,17 @@ export default function ResultsPage() {
       </section>
 
       {loading ? <TableSkeleton rows={5} cols={3} /> :
+        error ? (
+          <Card className="border-0 shadow-sm p-8 text-center">
+            <AlertCircle className="mx-auto h-9 w-9 text-red-500" />
+            <p className="mt-3 font-semibold">{t('تعذر تحميل النتائج', 'Could not load your results')}</p>
+            <p className="text-sm text-gray-500 mt-1">{t('تحقق من اتصالك ثم حاول مرة أخرى', 'Check your connection and try again')}</p>
+            <Button onClick={load} variant="outline" className="mt-4 gap-2">
+              <RefreshCw className="h-4 w-4" />
+              {t('إعادة المحاولة', 'Retry')}
+            </Button>
+          </Card>
+        ) :
         attempts.length === 0 ? (
           <EmptyState icon={ClipboardList} title={t('لا توجد نتائج', 'No results')} description={t('عندما تكمل اختباراً ستظهر نتيجتك هنا', 'Your exam results will appear here once you take an exam')} />
         ) : (
@@ -92,7 +116,7 @@ export default function ResultsPage() {
                       </div>
                     </div>
                     <div className="text-start shrink-0">
-                      <div className={`text-3xl font-black ${pct >= 60 ? 'text-emerald-600' : 'text-red-500'}`}>{pct}%</div>
+                      <div className={`text-3xl font-black ${r.passed ? 'text-emerald-600' : 'text-red-500'}`}>{pct}%</div>
                       <div className="text-[10px] text-gray-400 mt-0.5">{r.submitted_at ? new Date(r.submitted_at).toLocaleDateString(locale === 'ar' ? 'ar-EG' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</div>
                     </div>
                   </div>

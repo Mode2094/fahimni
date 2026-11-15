@@ -247,6 +247,11 @@ class ScheduledLessonController extends Controller
         return [
             'id' => $lesson->id,
             'instance_key' => $lesson->id.'::'.$date->toDateString(),
+            // The owning course (may be null for unbound sessions). Students
+            // never receive the join link from this endpoint, so the dashboard
+            // links them into the course instead, where the live player is
+            // gated by enrollment.
+            'course_id' => $lesson->course_id,
             'title' => $lesson->title,
             'description' => $lesson->description,
             'instance_date' => $date->toDateString(),
