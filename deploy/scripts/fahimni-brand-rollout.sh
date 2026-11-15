@@ -5,9 +5,10 @@
 #   live on tag prod-hotfix1 and is NOT rebuilt or touched here.)
 #
 #  WHAT THIS DOES
-#    * fetches the approved commit dd13c63 from GitHub (the same commit that is
-#      already pushed to integration/launch-2026-11, so the change is not lost
-#      by the next full deploy),
+#    * fetches the approved release commit from GitHub (default: the brand
+#      commit dd13c63 — override with FAHIMNI_RELEASE_SHA=<sha|ref> so the
+#      unified Release Candidate, which also carries the P0 Google/session fix
+#      from PR #24, is what gets deployed instead of a brand-only checkout),
 #    * builds images tagged prod-brand1 and replaces ONLY these four containers:
 #        app  frontend  scheduler  horizon
 #    * RELOADS the stack's nginx so it re-resolves the recreated containers'
@@ -40,7 +41,9 @@
 set -Eeuo pipefail
 
 STACK=/opt/fahimni/production
-SHA=dd13c63988bea78b5b1fc232c0b259f8be49f4cf
+# Override to deploy the unified Release Candidate (must include PR #24's
+# Google/session fix + PR #23's nginx reload). Defaults to the brand commit.
+SHA="${FAHIMNI_RELEASE_SHA:-dd13c63988bea78b5b1fc232c0b259f8be49f4cf}"
 REL="$STACK/releases/$SHA"
 ENVF=/etc/fahimni/production.env
 REPO_URL=https://github.com/Mode2094/fahimni.git
@@ -338,6 +341,12 @@ git -C "$REL" merge-base --is-ancestor a85544e6d097572e23e7f42123746eb848431df2 
   || die "$SHA does not descend from the live release (Phase A would be lost)"
 [ -f "$REL/app/Support/PlatformBrand.php" ] && [ -f "$REL/frontend/src/lib/brand.ts" ] \
   || die "the checkout does not contain the brand sources — wrong commit"
+# The release MUST carry the P0 Google/session BFF fix (PR #24). Rebuilding the
+# frontend from a brand-only checkout would drop the public-origin fix and
+# bring back «تعذر إنشاء الجلسة» after the Google callback.
+[ -f "$REL/frontend/src/lib/request-origin.ts" ] \
+  && grep -q 'requestOrigin' "$REL/frontend/src/lib/request-origin.ts" \
+  || die "the release lacks the Google/session BFF fix (request-origin.ts) — refusing to deploy an older checkout"
 [ -z "$(git -C "$REL" -c core.fileMode=false status --porcelain)" ] \
   || die "release worktree is dirty — refusing to build (inspect it first)"
 log "checked out $SHA (clean)"

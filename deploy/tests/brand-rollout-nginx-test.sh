@@ -239,6 +239,19 @@ else
   fail "the health-failure branch does not both diagnose and roll back"
 fi
 
+# ── T6b: release-integrity guard (never deploy a tree without the Google fix) ─
+printf '\n-- T6b structural: the release must carry the Google/session fix\n'
+if grep -q 'FAHIMNI_RELEASE_SHA' "$SCRIPT"; then
+  pass "the release commit is overridable (FAHIMNI_RELEASE_SHA)"
+else
+  fail "the release commit is hard-coded — cannot ship the unified RC"
+fi
+if grep -q 'request-origin.ts' "$SCRIPT" && grep -q 'refusing to deploy an older checkout' "$SCRIPT"; then
+  pass "the rollout refuses a checkout without the Google/session BFF fix"
+else
+  fail "no guard against deploying a checkout without the Google/session fix"
+fi
+
 # ── T7: readiness gate passes on a fully-ready stack ────────────────────────
 printf '\n-- T7 readiness gate accepts a healthy, on-tag, listening stack\n'
 reset_state
