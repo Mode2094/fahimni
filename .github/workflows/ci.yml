@@ -88,6 +88,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Unit tests
+        # Node test runner: BFF origin reconstruction + CSP nonce contract.
+        run: npm run test:unit
+
       - name: Build
         env:
           # Public, non-secret placeholders — enough to compile the app.
