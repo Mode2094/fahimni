@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\MonitoringController;
 use App\Http\Controllers\Api\MonitoringIngestController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\NotificationPreferenceController;
+use App\Http\Controllers\Api\OnboardingController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PaymentInitiateController;
 use App\Http\Controllers\Api\PlanFeatureController;
@@ -606,6 +607,9 @@ Route::prefix('v1')->group(function () {
 
             // ─── Teacher: Plan & Limits ───────────────────
             Route::get('teacher/plan', [TeacherPlanController::class, 'index']);
+
+            // ─── Teacher: Getting-started checklist ───────
+            Route::middleware('role:teacher,owner,admin')->get('teacher/onboarding', [OnboardingController::class, 'index']);
 
             // ─── Teacher: Site Design ─────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/site-design')->group(function () {
