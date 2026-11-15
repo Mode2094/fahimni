@@ -1,0 +1,672 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  Fahimni — PRODUCTION BRAND ROLLOUT  «منصة فهمني» / Fahimni
+#  (Phase B: independent, fully reversible. Phase A — Google + CSP — is already
+#   live on tag prod-hotfix1 and is NOT rebuilt or touched here.)
+#
+#  WHAT THIS DOES
+#    * fetches the approved release commit from GitHub (default: the brand
+#      commit dd13c63 — override with FAHIMNI_RELEASE_SHA=<sha|ref> so the
+#      unified Release Candidate, which also carries the P0 Google/session fix
+#      from PR #24, is what gets deployed instead of a brand-only checkout),
+#    * builds images tagged prod-brand1 and replaces ONLY these four containers:
+#        app  frontend  scheduler  horizon
+#    * RELOADS the stack's nginx so it re-resolves the recreated containers'
+#      new addresses (nginx caches the upstream IPs; without a reload the site
+#      returns 502 even though the new containers are healthy),
+#    * points the platform name (APP_NAME / MAIL_FROM_NAME) at the new identity,
+#    * verifies container readiness, the listening port, the public DNS name,
+#      that the new identity is really served, and that the Google + CSP fixes
+#      from Phase A did not regress,
+#    * on ANY failure, dumps exactly WHY the health check failed and then
+#      restores the previous env file and the previous images automatically
+#      (reloading nginx again so the rollback is not itself left on 502).
+#
+#  WHAT THIS NEVER TOUCHES
+#    DNS, Caddy, LooksLoop, Staging, the nginx *configuration*, postgres, redis,
+#    the one-shot migrate service (no migrations — there is no schema change),
+#    Freemius settings, prices, subscriptions and all user data.
+#    The production database is never written to: the previous brand still
+#    stored in the platform_settings row is remapped on READ by the application.
+#    nginx is only signalled to reload its existing config — its files, volumes
+#    and the shared LooksLoop proxy network are untouched.
+#
+#  MINIMAL SURFACE
+#    `docker compose up -d --no-deps` on exactly four services, plus a
+#    `nginx -t && nginx -s reload` on the stack's own nginx service. `--no-deps`
+#    is what keeps postgres/redis/migrate out of the operation.
+#
+#  Run:  sudo bash /home/fahimni/fahimni-brand-rollout.sh
+# =============================================================================
+set -Eeuo pipefail
+
+STACK=/opt/fahimni/production
+# Override to deploy the unified Release Candidate (must include PR #24's
+# Google/session fix + PR #23's nginx reload). Defaults to the brand commit.
+SHA="${FAHIMNI_RELEASE_SHA:-dd13c63988bea78b5b1fc232c0b259f8be49f4cf}"
+REL="$STACK/releases/$SHA"
+ENVF=/etc/fahimni/production.env
+REPO_URL=https://github.com/Mode2094/fahimni.git
+BRANCH=integration/launch-2026-11
+NEW_TAG=prod-brand1
+PORT="${APP_PORT:-8080}"
+BASE="http://127.0.0.1:$PORT"
+HOSTHDR=fahimni.me
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+BAKDIR="$STACK/backups"
+ENV_BAK="$BAKDIR/production.env.$TS.bak"
+NOTE="$BAKDIR/rollback-$NEW_TAG.$TS.txt"
+SERVICES=(app frontend scheduler horizon)
+# nginx is a compose service in THIS stack (not a host binary); it is the only
+# service that must be reloaded, never rebuilt, after the four above change.
+NGINX_SVC=nginx
+CSP_PAGE=/teacher/dashboard
+
+# Core surfaces: must be 200, must carry the new identity, must not carry the old.
+CORE_PAGES=(/ /teacher/login /student/login /admin/login /register/student /register/teacher)
+# Marketing / legal surfaces: must never leak the old name; a non-200 is only
+# reported (never rolls back a working deployment).
+MORE_PAGES=(/support /terms /privacy /refund-policy /contact /for-teachers
+            /create-online-courses /live-online-classes /lms-for-teachers
+            /online-teaching-platform /teacher-website /teacher/dashboard)
+
+# ── FAHIMNI_LIB_BEGIN ────────────────────────────────────────────────────────
+# Everything between the two markers is also extracted and unit-tested by
+# deploy/tests/brand-rollout-nginx-test.sh (nginx reload, readiness gate,
+# failure diagnostics, rollback). Keep it dependency-free and side-effect-free
+# apart from the commands it runs; the main body below stays thin.
+step(){ printf '\n=== %s ===\n' "$*"; }
+log(){  printf '  %s\n' "$*"; }
+warn(){ printf 'WARN: %s\n' "$*" >&2; }
+die(){  printf '\n!! %s\n' "$*" >&2; exit 1; }
+
+http_code(){ curl -sS -o /dev/null -w '%{http_code}' --max-time "${2:-10}" -H "Host: $HOSTHDR" "$BASE$1" 2>/dev/null || printf '000'; }
+snapshot(){ sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || true; }
+
+# ── nginx: the stack's own compose service ──────────────────────────────────
+# nginx resolves and caches the addresses of the containers it proxies to
+# (app:9000 and frontend:3000, see docker/nginx/default.conf) when it loads its
+# config. Recreating app/frontend hands them NEW addresses, and nginx keeps
+# proxying to the DEAD ones until it re-reads its config — that is the
+# "502 after a redeploy" regression. `nginx -t` (validate) followed by
+# `nginx -s reload` (re-read + re-resolve the compose DNS names) is the fix; a
+# full container restart is the fallback when the config or binary is unusable.
+
+nginx_cid(){  # $1 = release dir holding the compose file ; prints the container id
+  ( cd "$1" && docker compose --env-file "$ENVF" ps -q "$NGINX_SVC" 2>/dev/null | head -1 )
+}
+
+nginx_healthy(){  # $1 = release dir ; 0 = running and not unhealthy
+  local cid st health
+  cid="$(nginx_cid "$1")"
+  [ -n "$cid" ] || return 1
+  st="$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)"
+  [ "$st" = "true" ] || return 1
+  health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo none)"
+  [ "$health" = "unhealthy" ] && return 1
+  return 0
+}
+
+reload_nginx(){  # $1 = release dir holding the compose file ; always leaves nginx up
+  local dir="$1"
+  if ! nginx_healthy "$dir"; then
+    warn "nginx is not running/healthy — starting it (up -d --no-deps $NGINX_SVC)"
+    ( cd "$dir" && docker compose --env-file "$ENVF" up -d --no-deps "$NGINX_SVC" ) \
+      || { warn "could not start the $NGINX_SVC service"; return 1; }
+    sleep 2
+  fi
+  if ( cd "$dir" && docker compose --env-file "$ENVF" exec -T "$NGINX_SVC" nginx -t ) >/dev/null 2>&1; then
+    if ( cd "$dir" && docker compose --env-file "$ENVF" exec -T "$NGINX_SVC" nginx -s reload ) >/dev/null 2>&1; then
+      log "nginx config reloaded — upstream container addresses re-resolved"
+      return 0
+    fi
+    warn "nginx -s reload failed — falling back to a container restart"
+  else
+    warn "nginx -t failed — restarting the container instead of reloading"
+  fi
+  ( cd "$dir" && docker compose --env-file "$ENVF" restart "$NGINX_SVC" ) >/dev/null 2>&1 \
+    && { log "nginx restarted"; return 0; }
+  warn "could not reload OR restart nginx — the site may answer 502"
+  return 1
+}
+
+# Explain WHY a deploy is failing, BEFORE the automatic rollback hides it: the
+# per-endpoint codes, a probe of the upstreams that bypasses nginx (so a stale
+# nginx is told apart from a dead container), the container state, an nginx
+# config test and the tail of the relevant logs.
+dump_diagnostics(){
+  local p cid
+  warn "──────── DIAGNOSTICS: why the health check failed ────────"
+  warn "[endpoint codes via nginx]"
+  for p in /up /api/health/live /api/health/ready /; do
+    printf '  %-22s %s\n' "$p" "$(http_code "$p")" >&2
+  done
+  warn "[upstream probe — bypassing nginx]"
+  printf '  app      (php-fpm app:9000)    %s\n' \
+    "$( cd "$REL" && docker compose --env-file "$ENVF" exec -T app \
+         php -r "echo @fsockopen('127.0.0.1',9000)?'pong':'fail';" 2>/dev/null || echo unavailable)" >&2
+  printf '  frontend (next     frontend:3000) %s\n' \
+    "$( cd "$REL" && docker compose --env-file "$ENVF" exec -T frontend \
+         wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 && echo pong || echo unavailable)" >&2
+  warn "[container state]"
+  ( cd "$REL" && docker compose --env-file "$ENVF" ps ) >&2 2>&1 || true
+  cid="$(nginx_cid "$REL")"
+  warn "[nginx container] id=${cid:-<none>} status=$(docker inspect -f '{{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo unknown)"
+  warn "[nginx -t]"
+  ( cd "$REL" && docker compose --env-file "$ENVF" exec -T "$NGINX_SVC" nginx -t ) >&2 2>&1 || true
+  warn "[last 15 log lines: app / frontend / $NGINX_SVC]"
+  local s
+  for s in app frontend "$NGINX_SVC"; do
+    warn "  --- $s ---"
+    ( cd "$REL" && docker compose --env-file "$ENVF" logs --tail=15 "$s" ) >&2 2>&1 || true
+  done
+  warn "───────────────────────────────────────────────────────────"
+}
+
+# Before the deploy is accepted: every container running (and healthy, when it
+# declares a healthcheck), the four replaced services actually on $NEW_TAG, the
+# loopback port listening, and the public host name resolving.
+verify_readiness(){
+  local rc=0 i cid state health img
+  log "-- containers (${SERVICES[*]} $NGINX_SVC): running, healthy, on the new tag"
+  for i in "${SERVICES[@]}" "$NGINX_SVC"; do
+    cid="$(docker ps -q --filter "name=^fahimni-$i-1\$" 2>/dev/null | head -1)"
+    if [ -z "$cid" ]; then
+      warn "fahimni-$i-1 is NOT running"; rc=1; continue
+    fi
+    state="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo '?')"
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "$cid" 2>/dev/null || echo '-')"
+    img="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || echo '?')"
+    printf '  %-22s %-8s health=%-10s %s\n' "fahimni-$i-1" "$state" "$health" "$img"
+    [ "$state" = "running" ] || { warn "fahimni-$i-1 is '$state', not running"; rc=1; }
+    [ "$health" = "unhealthy" ] && { warn "fahimni-$i-1 is unhealthy"; rc=1; }
+    if [ "$i" != "$NGINX_SVC" ] && [ "$img" != "fahimni-$i:$NEW_TAG" ]; then
+      warn "fahimni-$i-1 runs '$img', expected 'fahimni-$i:$NEW_TAG'"; rc=1
+    fi
+  done
+
+  log "-- port $PORT is listening on the loopback"
+  # Capture first, then match: `ss | grep -q` under `pipefail` can report a
+  # false negative when grep exits early and ss is killed by SIGPIPE.
+  local listeners
+  listeners="$(ss -ltn 2>/dev/null || true)"
+  if grep -qE "[:.]${PORT}[[:space:]]" <<<"$listeners"; then
+    log "  $PORT listening"
+  else
+    warn "nothing is listening on $PORT"; rc=1
+  fi
+
+  log "-- DNS: $HOSTHDR resolves"
+  if getent hosts "$HOSTHDR" >/dev/null 2>&1; then
+    log "  $HOSTHDR -> $(getent hosts "$HOSTHDR" | awk '{print $1}' | tr '\n' ' ')"
+  else
+    # Informational only: a resolver hiccup must not roll back a working deploy,
+    # and the Host-header probes above already prove nginx serves this name.
+    warn "$HOSTHDR did not resolve via getent (informational)"
+  fi
+
+  return "$rc"
+}
+# ── FAHIMNI_LIB_END ──────────────────────────────────────────────────────────
+
+# Stable LooksLoop identity signature (same one the approved production tooling
+# uses). It deliberately EXCLUDES the human 'Up 3 minutes' uptime text, which
+# changes every minute and would flag a false positive; only fields that move
+# on a REAL event are compared.
+ll_snapshot(){
+  docker ps -a --filter name=looksloop --format '{{.ID}}' 2>/dev/null \
+    | while read -r c; do
+        docker inspect -f '{{.Id}}|{{.Image}}|{{.Name}}|{{.RestartCount}}|{{.State.StartedAt}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null
+      done | sort
+}
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+command -v docker >/dev/null 2>&1 || die "docker not found"
+docker compose version >/dev/null 2>&1 || die "docker compose plugin not found"
+command -v curl >/dev/null 2>&1 || die "curl not found"
+
+# Neutralise any inherited compose context so the project is pinned.
+unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES \
+      COMPOSE_PATH_SEPARATOR COMPOSE_PROJECT_NAME
+export COMPOSE_PROJECT_NAME=fahimni
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_TERMINAL_PROMPT=0
+
+# ── 0. preflight ────────────────────────────────────────────────────────────
+step "preflight"
+[ -f "$ENVF" ] || die "missing $ENVF"
+OLD_TAG="$(grep -E '^IMAGE_TAG=' "$ENVF" | head -1 | cut -d= -f2- | tr -d '[:space:]' || true)"
+[ -n "$OLD_TAG" ] || die "could not read IMAGE_TAG from $ENVF"
+OLD_REL="$(readlink -f "$STACK/current" 2>/dev/null || true)"
+[ -n "$OLD_REL" ] && [ -f "$OLD_REL/docker-compose.yml" ] \
+  || die "could not resolve the current release from $STACK/current"
+log "current tag  : $OLD_TAG"
+log "current rel  : $OLD_REL"
+log "brand commit : $SHA"
+log "brand tag    : $NEW_TAG"
+
+[ "$OLD_TAG" != "$NEW_TAG" ] || die "$NEW_TAG is already the pinned tag — nothing to do"
+
+# Guarantee a rollback image exists for EVERY service we are about to replace.
+# The services do not necessarily all run $OLD_TAG (the Google/CSP hotfix only
+# re-tagged app+frontend, so scheduler/horizon still run the base release tag).
+# If the tag is absent we tag whatever the running container actually uses, so
+# the rollback path can always start all four services again.
+step "rollback images (must exist for all ${#SERVICES[@]} services)"
+for i in "${SERVICES[@]}"; do
+  if docker image inspect "fahimni-$i:$OLD_TAG" >/dev/null 2>&1; then
+    log "fahimni-$i:$OLD_TAG present"
+    continue
+  fi
+  cid="$(docker ps -a --filter "name=^fahimni-$i-1\$" --format '{{.ID}}' 2>/dev/null | head -1)"
+  if [ -n "$cid" ]; then
+    img="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+    if [ -n "$img" ] && docker image inspect "$img" >/dev/null 2>&1; then
+      docker tag "$img" "fahimni-$i:$OLD_TAG" >/dev/null 2>&1 || true
+      log "fahimni-$i:$OLD_TAG <- $img (from running container)"
+    fi
+  fi
+  docker image inspect "fahimni-$i:$OLD_TAG" >/dev/null 2>&1 \
+    || die "no rollback image for service '$i' (tag $OLD_TAG missing and no running container) — abort"
+done
+log "rollback images ready for all ${#SERVICES[@]} services"
+
+avail="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)"
+log "MemAvailable : ${avail} MiB"
+# Staging is never stopped (hard constraint), so the same bar the approved
+# production tooling applies while Staging runs is used here.
+[ "$avail" -ge 2500 ] || die "only ${avail} MiB RAM free — free memory first (Staging is not allowed to be stopped by this script)"
+log "disk         : $(df -h / | awk 'NR==2{print $4" free ("$5" used)"}')"
+
+step "LooksLoop baseline (read-only; must be identical afterwards)"
+LL_BEFORE="$(ll_snapshot)"
+[ -n "$LL_BEFORE" ] || die "no LooksLoop containers found — aborting rather than guessing"
+printf '%s\n' "$LL_BEFORE" | sed 's/^/  /'
+
+# ── 1. backup ───────────────────────────────────────────────────────────────
+step "backing up the environment file"
+mkdir -p "$BAKDIR"; chmod 700 "$BAKDIR" 2>/dev/null || true
+chown fahimni:fahimni "$BAKDIR" 2>/dev/null || true
+cp -p "$ENVF" "$ENV_BAK"
+chmod 600 "$ENV_BAK"; chown fahimni:fahimni "$ENV_BAK" 2>/dev/null || true
+log "$ENV_BAK"
+{
+  echo "# Fahimni brand rollout rollback note — $TS"
+  echo "rollback_tag=$OLD_TAG"
+  echo "rollback_release=$OLD_REL"
+  echo "new_tag=$NEW_TAG"
+  echo "new_release=$REL"
+  echo "env_backup=$ENV_BAK"
+  echo "# exact revert:"
+  echo "cp $ENV_BAK $ENVF && chown fahimni:fahimni $ENVF && chmod 600 $ENVF"
+  echo "cd $OLD_REL && IMAGE_TAG=$OLD_TAG docker compose --env-file $ENVF up -d --no-deps ${SERVICES[*]}"
+  echo "# then reload nginx so it re-resolves the restored container addresses:"
+  echo "cd $OLD_REL && docker compose --env-file $ENVF exec -T $NGINX_SVC nginx -t && docker compose --env-file $ENVF exec -T $NGINX_SVC nginx -s reload"
+  echo "# images running before the change:"
+  docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null | sort | sed 's/^/#   /' || true
+  echo "# LooksLoop baseline:"
+  printf '%s\n' "$LL_BEFORE" | sed 's/^/#   /'
+} > "$NOTE"
+chmod 600 "$NOTE"; chown fahimni:fahimni "$NOTE" 2>/dev/null || true
+log "$NOTE"
+
+# ── 2. fetch the approved release ───────────────────────────────────────────
+step "fetching the approved brand commit from git"
+# A failed or older run leaves the release tree owned by root (it is created by
+# root), which would block a later non-root deploy and confuse git. Rebuild it
+# from scratch in that case.
+if [ -e "$REL" ]; then
+  owner="$(stat -c '%U' "$REL" 2>/dev/null || echo '?')"
+  if [ "$owner" != "fahimni" ]; then
+    warn "leftover release $REL is owned by '$owner' — removing it and re-cloning"
+    rm -rf "$REL"
+  fi
+fi
+# git must trust the release tree regardless of who owns it: on a re-run the
+# directory already exists and is owned by `fahimni`, while this script runs as
+# root — without this, git aborts with "detected dubious ownership".
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
+if [ -d "$REL/.git" ]; then
+  git -C "$REL" fetch --quiet origin \
+    || die "git fetch failed — production is untouched"
+else
+  mkdir -p "$STACK/releases"
+  git clone --branch "$BRANCH" --single-branch --quiet "$REPO_URL" "$REL" \
+    || die "git clone failed — production is untouched"
+fi
+git -C "$REL" config core.fileMode false
+git -C "$REL" checkout --detach --quiet "$SHA" || die "could not check out $SHA"
+[ "$(git -C "$REL" rev-parse HEAD)" = "$SHA" ] || die "release HEAD is not $SHA"
+git -C "$REL" merge-base --is-ancestor a85544e6d097572e23e7f42123746eb848431df2 HEAD \
+  || die "$SHA does not descend from the live release (Phase A would be lost)"
+[ -f "$REL/app/Support/PlatformBrand.php" ] && [ -f "$REL/frontend/src/lib/brand.ts" ] \
+  || die "the checkout does not contain the brand sources — wrong commit"
+# The release MUST carry the P0 Google/session BFF fix (PR #24). Rebuilding the
+# frontend from a brand-only checkout would drop the public-origin fix and
+# bring back «تعذر إنشاء الجلسة» after the Google callback.
+[ -f "$REL/frontend/src/lib/request-origin.ts" ] \
+  && grep -q 'requestOrigin' "$REL/frontend/src/lib/request-origin.ts" \
+  || die "the release lacks the Google/session BFF fix (request-origin.ts) — refusing to deploy an older checkout"
+[ -z "$(git -C "$REL" -c core.fileMode=false status --porcelain)" ] \
+  || die "release worktree is dirty — refusing to build (inspect it first)"
+log "checked out $SHA (clean)"
+
+# The compose file declares `env_file: .env` for every service, so `.env` must
+# exist BEFORE any `docker compose` call or compose aborts on the missing file.
+ln -sfn "$ENVF" "$REL/.env"
+mkdir -p "$REL/certs"
+[ "$ENVF" -ef "$REL/.env" ] || die ".env symlink is not the shared env file"
+
+# The compose project must resolve to `fahimni` no matter what the environment
+# or the env file carry — otherwise `up` could create a second, parallel stack.
+eff="$(cd "$REL" && docker compose --env-file "$ENVF" config 2>/dev/null | sed -n 's/^name: //p' | head -n1)"
+[ "$eff" = "fahimni" ] || die "effective compose project is '${eff:-<none>}' (expected fahimni)"
+log "effective compose project: $eff"
+
+# Ownership: the release is created by root, but the stack belongs to fahimni.
+# Leaving root-owned files behind is what blocks the next non-root deploy.
+chown -R fahimni:fahimni "$REL"
+chown fahimni:fahimni "$STACK/releases" 2>/dev/null || true
+log "release ownership set to fahimni:fahimni"
+
+step "brand audit of the release source (the old name must be gone)"
+stale="$(grep -rIl -E 'Tadreesly|tadreesly' "$REL" \
+  --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor \
+  --exclude-dir=.next --exclude-dir=storage 2>/dev/null || true)"
+unexpected="$(printf '%s\n' "$stale" | grep -v -E '/(app/Support/PlatformBrand\.php|frontend/src/lib/brand\.ts)$' | sed '/^$/d' || true)"
+if [ -n "$unexpected" ]; then
+  printf '%s\n' "$unexpected" | sed 's/^/    /' >&2
+  die "the old brand still appears in the release sources listed above"
+fi
+log "old brand appears only inside the two intentional remapping helpers"
+
+# ── 3. build ────────────────────────────────────────────────────────────────
+step "building images for $NEW_TAG (several minutes; production keeps running)"
+( cd "$REL" && COMPOSE_PARALLEL_LIMIT=1 IMAGE_TAG="$NEW_TAG" \
+    docker compose --env-file "$ENVF" build "${SERVICES[@]}" ) \
+  || die "image build failed — production is untouched"
+for i in "${SERVICES[@]}"; do
+  docker image inspect "fahimni-$i:$NEW_TAG" >/dev/null 2>&1 || die "image fahimni-$i:$NEW_TAG missing after build"
+done
+log "4 images built"
+
+# ── 4. verify the built artifacts ───────────────────────────────────────────
+step "verifying the brand inside the built images"
+docker run --rm --entrypoint php "fahimni-app:$NEW_TAG" -l /var/www/html/app/Support/PlatformBrand.php >/dev/null 2>&1 \
+  || die "PlatformBrand.php fails php -l inside the image"
+expect="$(snapshot "$REL/app/Support/PlatformBrand.php")"
+got="$(docker run --rm --entrypoint sha256sum "fahimni-app:$NEW_TAG" /var/www/html/app/Support/PlatformBrand.php 2>/dev/null | cut -d' ' -f1 || true)"
+[ "$expect" = "$got" ] || die "app image does not carry the brand helper (want $expect, got ${got:-none})"
+log "app image carries the brand helper ($got)"
+
+for f in frontend/public/logo.png frontend/public/og.png frontend/public/icon-maskable-512.png; do
+  expect="$(snapshot "$REL/$f")"
+  got="$(docker run --rm --entrypoint sha256sum "fahimni-frontend:$NEW_TAG" "/app/${f#frontend/}" 2>/dev/null | cut -d' ' -f1 || true)"
+  [ -n "$expect" ] && [ "$expect" = "$got" ] \
+    || die "frontend image asset ${f#frontend/} does not match the release (want $expect, got ${got:-none})"
+  log "frontend ${f#frontend/} verified ($got)"
+done
+
+# ── 5. rollback helper ──────────────────────────────────────────────────────
+# ── FAHIMNI_ROLLBACK_BEGIN ──────────────────────────────────────────────────
+# (also extracted by deploy/tests/brand-rollout-nginx-test.sh)
+rollback(){
+  ROLLBACK_REQUIRED=0
+  warn "ROLLING BACK to $OLD_TAG"
+  install -m 600 -o fahimni -g fahimni "$ENV_BAK" "$ENVF" || warn "could not restore $ENVF from backup"
+  ( cd "$OLD_REL" && IMAGE_TAG="$OLD_TAG" docker compose --env-file "$ENVF" \
+      up -d --no-deps "${SERVICES[@]}" ) || warn "rollback 'up' failed"
+  # The rollback re-creates the containers with new addresses too: reload nginx
+  # or the restored build is served behind a stale upstream (still 502).
+  reload_nginx "$OLD_REL" || warn "could not reload nginx during the rollback"
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if [ "$(http_code /api/health/ready)" = "200" ] && [ "$(http_code /)" = "200" ]; then
+      warn "rollback health: OK"; return 0
+    fi
+    sleep 5
+  done
+  warn "rollback health still failing — escalate: sudo bash /home/fahimni/production-deploy.sh"
+  return 1
+}
+# ── FAHIMNI_ROLLBACK_END ────────────────────────────────────────────────────
+ROLLBACK_REQUIRED=0
+on_exit(){
+  local rc=$?
+  if [ "$ROLLBACK_REQUIRED" = 1 ]; then
+    warn "unexpected exit with $NEW_TAG live — rolling back automatically"
+    rollback || true
+  fi
+  # Any file root created inside the stack must not outlive this script.
+  chown -R fahimni:fahimni "$REL" 2>/dev/null || true
+  chown fahimni:fahimni "$STACK/releases" "$ENVF" 2>/dev/null || true
+  exit "$rc"
+}
+trap on_exit EXIT
+
+# ── 6. point the platform at the new identity ───────────────────────────────
+step "switching the platform identity in $ENVF"
+tmp="$(mktemp)"
+sed -E \
+  -e "s/^IMAGE_TAG=.*/IMAGE_TAG=$NEW_TAG/" \
+  -e "s/^APP_NAME=.*/APP_NAME=منصة فهمني/" \
+  -e "s/^MAIL_FROM_NAME=.*/MAIL_FROM_NAME=\"منصة فهمني\"/" \
+  "$ENVF" > "$tmp"
+grep -qE "^IMAGE_TAG=${NEW_TAG}$" "$tmp" || die "could not set IMAGE_TAG"
+grep -qE '^APP_NAME=منصة فهمني$' "$tmp" || die "could not set APP_NAME"
+grep -qE '^MAIL_FROM_NAME="منصة فهمني"$' "$tmp" || die "could not set MAIL_FROM_NAME"
+chmod 600 "$tmp"; chown fahimni:fahimni "$tmp" 2>/dev/null || true
+install -m 600 -o fahimni -g fahimni "$tmp" "$ENVF"; rm -f "$tmp"
+log "$(grep -E '^(IMAGE_TAG|APP_NAME|MAIL_FROM_NAME)=' "$ENVF" | tr '\n' ' ')"
+ROLLBACK_REQUIRED=1
+
+# ── 7. replace only the four application containers ─────────────────────────
+step "replacing ONLY: ${SERVICES[*]}  ($NEW_TAG)"
+( cd "$REL" && IMAGE_TAG="$NEW_TAG" docker compose --env-file "$ENVF" \
+    up -d --no-deps "${SERVICES[@]}" ) \
+  || { dump_diagnostics; rollback; die "docker compose up failed"; }
+
+# The containers above were just re-created with NEW IPs. nginx still points at
+# the old ones until it re-reads its config, so reload FIRST — otherwise every
+# health probe below hits a stale upstream and a HEALTHY deploy would be rolled
+# back on a phantom 502.
+step "reloading nginx so it re-resolves the new container addresses"
+reload_nginx "$REL" || warn "nginx reload failed — verifying with the health probe anyway"
+
+step "waiting for core health (budget 180s)"
+healthy=0
+deadline=$(( SECONDS + 180 ))
+while (( SECONDS < deadline )); do
+  ok=1
+  for p in /up /api/health/live /api/health/ready /; do
+    [ "$(http_code "$p")" = "200" ] || ok=0
+  done
+  [ "$ok" = 1 ] && { healthy=1; break; }
+  sleep 5
+done
+if [ "$healthy" != 1 ]; then
+  dump_diagnostics
+  rollback
+  die "health checks did not pass within 180s"
+fi
+for p in /up /api/health/live /api/health/ready /; do
+  log "$(printf '%-18s %s' "$p" "$(http_code "$p")")"
+done
+
+# ── 7b. readiness gate: containers, port, DNS ───────────────────────────────
+step "container readiness, port and DNS (must pass before the deploy is accepted)"
+if ! verify_readiness; then
+  dump_diagnostics
+  rollback
+  die "the stack is not fully ready after the rollout"
+fi
+
+# ── 8. Phase A regression guard (Google + CSP must still be fixed) ──────────
+step "CSP re-verification on $CSP_PAGE (Phase A must not regress)"
+csp_ok=0; attempt=0
+while [ "$attempt" -lt 6 ]; do
+  attempt=$(( attempt + 1 ))
+  # Headers and body MUST come from ONE request: the nonce is per-request.
+  rh="$(mktemp)"; rb="$(mktemp)"
+  curl -sS --max-time 20 -H "Host: $HOSTHDR" -D "$rh" -o "$rb" "$BASE$CSP_PAGE" 2>/dev/null || true
+  hdr="$(tr -d '\r' < "$rh" 2>/dev/null || true)"
+  body="$(cat "$rb" 2>/dev/null || true)"
+  rm -f "$rh" "$rb"
+  nonce="$(printf '%s' "$hdr" | grep -i '^content-security-policy:' | grep -oE "'nonce-[^']+'" | head -1 | sed "s/'nonce-//; s/'//" || true)"
+  scripts="$(printf '%s' "$body" | grep -oE '<script' | wc -l | tr -d ' ' || true)"
+  nonced="$(printf '%s' "$body" | grep -oE '<script[^>]*nonce="[^"]+"' | wc -l | tr -d ' ' || true)"
+  hnonce="$(printf '%s' "$body" | grep -oE 'nonce="[^"]+"' | head -1 | sed 's/nonce="//; s/"//' || true)"
+  prerender="$(printf '%s' "$hdr" | grep -ci '^x-nextjs-prerender:' || true)"
+  log "attempt $attempt: nonce=${nonce:-<none>} scripts=$scripts nonced=$nonced html=${hnonce:-<none>} prerender=$prerender"
+  if [ -n "$nonce" ] && [ "$scripts" -gt 0 ] && [ "$nonced" = "$scripts" ] \
+     && [ "$hnonce" = "$nonce" ] && [ "$prerender" = "0" ]; then
+    csp_ok=1; break
+  fi
+  sleep 5
+done
+[ "$csp_ok" = 1 ] || { dump_diagnostics; rollback; die "the CSP nonce fix regressed"; }
+log "CSP still fixed: every script carries the exact header nonce, page is dynamic"
+
+step "Google OAuth re-verification"
+gjson="$(curl -sS --max-time 15 -H "Host: $HOSTHDR" "$BASE/api/v1/auth/google/redirect?role=teacher" 2>/dev/null || true)"
+case "$gjson" in
+  *'client_id='*) log "redirect endpoint returns a URL carrying client_id" ;;
+  *) rollback; die "Google redirect did not return a client_id" ;;
+esac
+
+# ── 9. the actual deliverable: the new identity is served ───────────────────
+step "brand verification on the live stack"
+brand_fail=0
+R_CODE=; R_OLD=; R_NEW=
+check_page(){  # $1 = path ; sets R_CODE R_OLD R_NEW
+  local tmp; tmp="$(mktemp)"
+  R_CODE="$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 20 -H "Host: $HOSTHDR" "$BASE$1" 2>/dev/null || printf '000')"
+  R_OLD="$(grep -c -E 'Tadreesly|tadreesly' "$tmp" 2>/dev/null || true)"
+  R_NEW="$(grep -c -E 'فهمني|Fahimni' "$tmp" 2>/dev/null || true)"
+  rm -f "$tmp"
+  log "$(printf '%-30s %s  new=%-3s old=%-3s' "$1" "$R_CODE" "$R_NEW" "$R_OLD")"
+}
+
+log "-- core surfaces (must be 200, branded, clean)"
+for p in "${CORE_PAGES[@]}"; do
+  check_page "$p"
+  [ "$R_CODE" = "200" ] || { warn "$p returned $R_CODE"; brand_fail=1; }
+  [ "$R_OLD" = "0" ]    || { warn "$p still serves the old brand"; brand_fail=1; }
+  [ "$R_NEW" != "0" ]   || { warn "$p does not carry the new brand"; brand_fail=1; }
+done
+
+log "-- remaining public surfaces (must never leak the old brand)"
+for p in "${MORE_PAGES[@]}"; do
+  check_page "$p"
+  [ "$R_OLD" = "0" ] || { warn "$p still serves the old brand"; brand_fail=1; }
+  case "$R_CODE" in 5*) warn "$p returned $R_CODE"; brand_fail=1 ;; esac
+done
+
+log "-- the DB-driven platform name (the value the live settings row still holds)"
+ps_json="$(curl -sS --max-time 15 -H "Host: $HOSTHDR" "$BASE/api/v1/platform-settings" 2>/dev/null || true)"
+printf '%s' "$ps_json" | grep -oE '"platform_name":"[^"]*"' | head -1 | sed 's/^/    /' || true
+case "$ps_json" in
+  *'منصة فهمني'*) log "platform-settings serves the new name" ;;
+  *) warn "platform-settings does not serve the new name"; brand_fail=1 ;;
+esac
+case "$ps_json" in
+  *Tadreesly*) warn "platform-settings still exposes the old name"; brand_fail=1 ;;
+esac
+
+log "-- manifest, social card and the served logo"
+check_page /manifest.webmanifest
+[ "$R_CODE" = "200" ] || { warn "manifest returned $R_CODE"; brand_fail=1; }
+[ "$R_OLD" = "0" ] || { warn "manifest still serves the old brand"; brand_fail=1; }
+[ "$R_NEW" != "0" ] || { warn "manifest does not carry the new brand"; brand_fail=1; }
+
+expect="$(snapshot "$REL/frontend/public/logo.png")"
+served="$(mktemp)"
+curl -sS --max-time 20 -H "Host: $HOSTHDR" -o "$served" "$BASE/logo.png" 2>/dev/null || true
+got="$(snapshot "$served")"; rm -f "$served"
+log "/logo.png expected=$expect served=$got"
+[ -n "$expect" ] && [ "$expect" = "$got" ] \
+  || { warn "the served /logo.png is not the approved logo from the release"; brand_fail=1; }
+for p in /og.png /icon-192.png /icon-512.png /icon-maskable-512.png /apple-icon.png; do
+  c="$(http_code "$p")"; log "$(printf '%-30s %s' "$p" "$c")"
+  [ "$c" = "200" ] || { warn "$p returned $c"; brand_fail=1; }
+done
+
+log "-- browser tab title"
+title="$(curl -sS --max-time 20 -H "Host: $HOSTHDR" "$BASE$CSP_PAGE" 2>/dev/null | grep -oE '<title>[^<]*</title>' | head -1 || true)"
+log "${title:-<none>}"
+case "$title" in *فهمني*) : ;; *) warn "the tab title does not carry the new name"; brand_fail=1 ;; esac
+
+if [ "$brand_fail" != 0 ]; then
+  dump_diagnostics
+  rollback
+  die "the new identity is not fully served — rolled back"
+fi
+log "BRAND OK — «منصة فهمني» is served everywhere checked"
+
+# ── 10. LooksLoop must be untouched ─────────────────────────────────────────
+step "LooksLoop after (must equal baseline)"
+LL_AFTER="$(ll_snapshot)"
+if [ "$LL_BEFORE" = "$LL_AFTER" ]; then
+  log "unchanged"
+else
+  diff <(printf '%s\n' "$LL_BEFORE") <(printf '%s\n' "$LL_AFTER") || true
+  warn "LooksLoop state changed — investigate"
+fi
+
+# ── 11. bookkeeping so the standard rollback tooling stays coherent ─────────
+step "bookkeeping (current symlink + deployed tag)"
+printf '%s\n' "$OLD_REL" > "$STACK/.previous-release"
+printf '%s\n' "$OLD_TAG" > "$STACK/.previous-tag"
+printf '%s\n' "$NEW_TAG" > "$STACK/.deployed-tag.new"
+mv "$STACK/.deployed-tag.new" "$STACK/.deployed-tag"
+ln -sfn "$REL" "$STACK/current"
+chown fahimni:fahimni "$REL" "$STACK/.deployed-tag" "$STACK/.previous-tag" "$STACK/.previous-release" \
+  "$STACK/releases" "$ENVF" 2>/dev/null || true
+log "$(grep -E '^IMAGE_TAG=' "$ENVF")"
+log "current -> $REL"
+[ "$(readlink -f "$STACK/current")" = "$REL" ] || die "current symlink did not switch"
+
+ROLLBACK_REQUIRED=0
+
+# ── 12. no root-owned leftovers ─────────────────────────────────────────────
+step "ownership check"
+# Anything this script created as root inside the stack is handed back to the
+# fahimni user, so a later non-root deploy or editor is never blocked by a
+# root-owned file. `-h` also fixes the symlinks (chown follows them otherwise).
+chown -R fahimni:fahimni "$STACK/releases" "$BAKDIR" 2>/dev/null || true
+chown -h fahimni:fahimni "$STACK/current" "$STACK/.deployed-tag" \
+      "$STACK/.previous-tag" "$STACK/.previous-release" 2>/dev/null || true
+chown fahimni:fahimni "$ENVF" 2>/dev/null || true
+rootfiles="$(find "$STACK" -user root -print 2>/dev/null | head -20 || true)"
+if [ -n "$rootfiles" ]; then
+  printf '%s\n' "$rootfiles" | sed 's/^/  still root-owned: /'
+  warn "the paths above predate this run and are NOT part of the release tree"
+else
+  log "no root-owned files under $STACK"
+fi
+log "env file: $(stat -c '%U:%G %a' "$ENVF")"
+log "release tree: $(stat -c '%U:%G' "$REL")  ($(find "$REL" -user root | wc -l | tr -d ' ') root-owned files inside)"
+
+# ── 13. summary ─────────────────────────────────────────────────────────────
+step "done"
+cat <<EOF
+
+  ✅ BRAND LIVE — «منصة فهمني» / Fahimni   (image tag: $NEW_TAG)
+
+  Replaced exactly: ${SERVICES[*]}
+  Reloaded: $NGINX_SVC (existing config; upstream addresses re-resolved — no 502)
+  Untouched: DNS, Caddy, LooksLoop, Staging, the nginx configuration,
+             postgres, redis, migrate (no migrations), Freemius, prices,
+             subscriptions, user data and the production database.
+
+  Verified live: ${#CORE_PAGES[@]} core pages + ${#MORE_PAGES[@]} public pages,
+  the settings API, the web manifest, the served logo hash, the tab title,
+  container readiness + port + DNS, the CSP nonce fix and the Google redirect.
+
+  REVERT (restores the previous build and the previous env exactly):
+    sudo bash -c 'cp $ENV_BAK $ENVF && chown fahimni:fahimni $ENVF && chmod 600 $ENVF'
+    sudo bash -c 'cd $OLD_REL && IMAGE_TAG=$OLD_TAG docker compose --env-file $ENVF up -d --no-deps ${SERVICES[*]}'
+    sudo bash -c 'cd $OLD_REL && docker compose --env-file $ENVF exec -T $NGINX_SVC nginx -t && docker compose --env-file $ENVF exec -T $NGINX_SVC nginx -s reload'
+
+  Rollback note: $NOTE
+EOF
