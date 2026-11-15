@@ -494,7 +494,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                             <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500" />{a.points} {locale === 'ar' ? 'درجة' : 'pts'}</span>
                           </div>
                           {a.description && <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{a.description}</p>}
-                          {a.file_name && <a href={a.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 mt-2 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{a.file_name}</a>}
+                          {a.file_name && <a href={`${API}/assignments/${a.id}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 mt-2 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{a.file_name}</a>}
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
                           {my ? (
@@ -511,7 +511,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                       {my ? (
                         <div className="space-y-3 border-t pt-4">
                           {my.submission_text && <div className="bg-gray-50 rounded-xl p-3 text-sm whitespace-pre-wrap">{my.submission_text}</div>}
-                          {my.file_name && <a href={my.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{my.file_name}</a>}
+                          {my.file_name && <a href={`${API}/submissions/${my.id}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{my.file_name}</a>}
                           {my.grade_comment && <p className="text-sm bg-green-50 border border-green-100 rounded-xl p-3"><b className="text-green-700">{locale === 'ar' ? 'ملاحظة المعلم:' : 'Teacher note:'}</b> <span className="text-gray-700">{my.grade_comment}</span></p>}
                           <div className="space-y-2">
                             {(my.comments || []).map((c: any) => (
