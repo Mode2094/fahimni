@@ -286,7 +286,9 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/generate', [ActivationCardController::class, 'generate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::post('cards/import', [ActivationCardController::class, 'import'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::get('cards/import-template', [ActivationCardController::class, 'importTemplate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
-            Route::post('cards/redeem', [ActivationCardController::class, 'redeem']);
+            // No feature gate on redeem: cards already handed to students must
+            // stay activatable even if the workspace plan later changes.
+            Route::post('cards/redeem', [ActivationCardController::class, 'redeem'])->middleware('throttle:redeem');
             Route::get('cards/{card}', [ActivationCardController::class, 'show']);
             Route::post('cards/{card}/cancel', [ActivationCardController::class, 'cancel'])->middleware('role:teacher,owner,admin,permission:cards.manage');
             Route::get('cards/batch/{batchId}', [ActivationCardController::class, 'batchInfo'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
