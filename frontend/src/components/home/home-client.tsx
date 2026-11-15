@@ -27,12 +27,12 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 const HERO = {
   icon: GraduationCap, label: ['المعلم الفردي', 'Individual Teacher'], badge: ['المنصة المثالية للمعلمين', 'The ideal platform for teachers'],
   title: ['امتلك موقعك التعليمي', 'Own your teaching brand'],
-  subtitle: ['وأنشئ علامتك التجارية — كورسات، بطاقات تسجيل، بوابات دفع، وتحليلات، كل ما يحتاجه معلم ناجح في منصة واحدة.', 'Courses, registration cards, payment gateways & analytics — everything a successful teacher needs in one platform.'],
+  subtitle: ['وأنشئ علامتك التجارية — كورسات، بطاقات تسجيل، أرباحك، وتحليلات، كل ما يحتاجه معلم ناجح في منصة واحدة.', 'Courses, registration cards, your earnings & analytics — everything a successful teacher needs in one platform.'],
   bullets: [
     ['منشئ كورسات كامل', 'Complete course builder'],
     ['بطاقات تسجيل برمز QR', 'QR registration cards'],
     ['موقع عام بعلامتك + دومين خاص', 'Public site + custom domain'],
-    ['بوابات دفع: مدى، باي بال وأكثر', 'PayTabs, PayPal & more'],
+    ['تحصيل أرباحك عبر بوابتك', 'Collect earnings via your own gateway'],
   ],
   cta: ['ابدأ الآن', 'Start now'], href: '/register/teacher', color: '#0d9488',
 };
@@ -40,7 +40,7 @@ const HERO = {
 const MAIN_FEATURES = [
   { icon: LayoutGrid, title: ['منشئ كورسات', 'Course Builder'], desc: ['أقسام، دروس، فيديو، وملفات — أنشئ كورساً احترافياً في دقائق', 'Sections, lessons, video & files — build a professional course in minutes'], color: '#0d9488' },
   { icon: CreditCard, title: ['بطاقات تسجيل ذكية', 'Smart Registration Cards'], desc: ['رمز واحد يسجل طلابك تلقائياً — اطبعها أو أرسلها واتساب', 'One code enrolls students automatically — print or send via WhatsApp'], color: '#059669' },
-  { icon: Wallet, title: ['بوابات دفع متعددة', 'Multiple Payment Gateways'], desc: ['مدى، باي بال — مع فواتير تلقائية لكل عملية دفع', 'PayTabs, PayPal — with automatic invoices for every payment'], color: '#d97706' },
+  { icon: Wallet, title: ['حصّل أرباحك', 'Collect Your Earnings'], desc: ['اربط بوابة الدفع الخاصة بك لاستقبال أرباح دوراتك، مع فواتير تلقائية', 'Connect your own payment gateway to receive your course earnings, with automatic invoices'], color: '#d97706' },
   { icon: BarChart3, title: ['تحليلات وإيرادات', 'Analytics & Revenue'], desc: ['تقارير أداء طلابك وإيراداتك لحظياً في لوحة واحدة', 'Real-time student performance & revenue reports in one dashboard'], color: '#ca8a04' },
   { icon: Globe, title: ['موقع خاص بعلامتك', 'Your Own Branded Site'], desc: ['موقع عام بألوانك وشعارك، يبني علامتك التجارية تلقائياً', 'Public site with your colors & logo, building your brand automatically'], color: '#14b8a6' },
   { icon: Video, title: ['بث مباشر', 'Live Streaming'], desc: ['جلسات مباشرة مع طلابك، حجز وحضور وإشعارات تلقائية', 'Live sessions with your students, booking, attendance & auto notifications'], color: '#dc2626' },
@@ -49,13 +49,13 @@ const MAIN_FEATURES = [
 const STEPS = [
   { icon: Sparkles, title: ['أنشئ حسابك', 'Create your account'], desc: ['سجّل واحصل على موقعك التعليمي الخاص فوراً', 'Sign up and get your own educational site instantly'] },
   { icon: BookOpen, title: ['أضف كورساتك', 'Add your courses'], desc: ['أنشئ الأقسام والدروس والاختبارات وحدد أسعارك', 'Create sections, lessons, exams and set your prices'] },
-  { icon: TrendingUp, title: ['اجذب طلابك واربح', 'Attract students & earn'], desc: ['شارك بطاقات التسجيل واحصل على مدفوعاتك تلقائياً', 'Share registration cards and receive payments automatically'] },
+  { icon: TrendingUp, title: ['اجذب طلابك واربح', 'Attract students & earn'], desc: ['شارك بطاقات التسجيل وحصّل أرباحك عبر بوابتك', 'Share registration cards and collect your earnings via your gateway'] },
 ];
 
 const FAQS: [string, string][] = [
   ['كيف أبدأ مع المنصة؟', 'سجّل حسابك، أنشئ كورساتك وأقسامك ودروسك خلال دقائق، ثم شارك رابط موقعك مع طلابك.'],
   ['هل يمكنني بيع الكورسات ببطاقات التسجيل؟', 'نعم — ولّد بطاقات برمز QR أو اطبعها أو أرسلها واتساب، وعند الاسترداد يُسجل الطالب تلقائياً في كورسك.'],
-  ['هل المنصة تدعم الدفع الإلكتروني؟', 'نعم، ندعم بوابات متعددة (مدى، باي بال وأخرى) مع فواتير تلقائية وملخص إيرادات لحظي.'],
+  ['كيف أستلم أرباح دوراتي؟', 'اربط بوابة الدفع الخاصة بك (باي بال، أو بطاقات عبر PayTabs) لاستقبال أرباح دوراتك مباشرة، مع فواتير تلقائية وملخص إيرادات لحظي. واشتراكك في منصة فهمني يُدفع أونلاين بأمان.'],
   ['هل أحصل على موقع خاص بعلامتي التجارية؟', 'نعم — موقع عام كامل بألوانك وشعارك مع إمكانية ربط دومين مخصص، وأدوات تصميم متقدمة.'],
   ['هل يمكنني متابعة أداء طلابي؟', 'نعم — تقارير تقدم الطلاب، نسب الإكمال، نتائج الامتحانات، ومتابعة الأجهزة في لوحة تحليلات متكاملة.'],
   ['كيف ألغي اشتراكي؟', 'من لوحة التحكم أو بمراسلة الدعم — الإلغاء فوري.'],
@@ -1016,7 +1016,7 @@ export default function HomeClient() {
                 <ul className="relative space-y-3.5">
                   {[
                     t('الطلاب يسجلون بأنفسهم عبر بطاقات QR', 'Students enroll themselves via QR cards'),
-                    t('بوابات دفع وفواتير تلقائية', 'Payment gateways & automatic invoices'),
+                    t('اربط بوابتك وفواتير تلقائية', 'Connect your gateway & automatic invoices'),
                     t('موقعك الخاص بألوانك ودومينك', 'Your own site with your colors & domain'),
                     t('تحليلات أداء وإيرادات لحظية', 'Live performance & revenue analytics'),
                     t('شهادات موثقة تصل تلقائياً', 'Verified certificates issued automatically'),
