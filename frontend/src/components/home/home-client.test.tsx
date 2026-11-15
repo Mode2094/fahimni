@@ -43,7 +43,7 @@ describe('Landing page (home-client)', () => {
     render(<HomeClient />);
 
     // Real hero copy (RTL) + brand from settings.
-    expect(screen.getAllByText('منصتك التعليمية الخاصة بك').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('منصتك التعليمية،').length).toBeGreaterThan(0);
     expect(screen.getAllByText('فهمني').length).toBeGreaterThan(0);
 
     // Plans come from the real endpoint, not hardcoded.
@@ -84,7 +84,7 @@ describe('Landing page (home-client)', () => {
     stubPlans();
     render(<HomeClient />);
 
-    expect(screen.getAllByText('Your own teaching platform').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Your teaching platform,').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'See Pricing' }).length).toBeGreaterThan(0);
   });
 });
