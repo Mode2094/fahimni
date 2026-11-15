@@ -20,6 +20,11 @@ return [
     // الروابط الموقّعة (يجب تفعيل Token Auth على نطاق البث من لوحة Bunny).
     'security_key' => env('BUNNY_SECURITY_KEY', ''),
 
+    // تفعيل Bunny CDN Token Authentication على نطاق البث. لا تُفعّله قبل تفعيله
+    // فعلاً على Pull Zone من لوحة Bunny وإلا ردّ المتصفح 404 لكل الفيديوهات.
+    // عند التفعيل تُنتَج روابط HLS موقّعة (bcdn_token + expires).
+    'token_auth' => env('BUNNY_TOKEN_AUTH', false),
+
     'webhook_secret' => env('BUNNY_WEBHOOK_SECRET', ''),
 
     // النطاق المخصص الذي يبث عليه (مثال: stream.yourdomain.com) — اختياري.
