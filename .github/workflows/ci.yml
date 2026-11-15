@@ -114,6 +114,12 @@ jobs:
         # migrate / plans:sync / seed / count-probe: every failure must abort.
         run: deploy/tests/migrate-script-test.sh
 
+      - name: Brand rollout reloads nginx (no 502 after redeploy)
+        # Recreating app/frontend leaves nginx on the old container IPs -> 502.
+        # Pins the reload, the readiness gate, the failure diagnostics and the
+        # rollback behaviour with a stubbed Docker.
+        run: deploy/tests/brand-rollout-nginx-test.sh
+
       - name: Redis maxmemory stays below the container cap
         # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
         run: deploy/tests/redis-memory-check.sh
