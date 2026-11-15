@@ -97,24 +97,49 @@ class ActivationCardController extends Controller
         $user = $request->user();
         $tenantId = $request->header('X-Tenant-Id');
 
+        // Codes are stored uppercase; normalise so a lowercase paste from the
+        // dashboard works exactly like the /card/{code} page.
+        $code = strtoupper(trim((string) $request->code));
+
         $this->authorize('redeem', ActivationCard::class);
 
-        $card = ActivationCard::where('code', $request->code)
-            ->where('status', 'generated')
-            ->first();
-
-        if (! $card) {
-            return response()->json(['message' => 'Invalid or already used card code.'], 404);
+        // Staff must never redeem a card: it would silently enroll the teacher
+        // as a student in a course of their own workspace.
+        if ($this->isActiveStaff($user, (string) $tenantId)) {
+            return response()->json(['message' => 'Staff accounts cannot redeem activation cards.'], 403);
         }
 
-        if ($card->expires_at && now()->gt($card->expires_at)) {
-            $card->update(['status' => 'expired']);
+        // Resolve the card WITHOUT a status filter so cancelled/expired cards
+        // get an honest message. Tenant isolation happens before any mutation
+        // (the global scope already filters by the current tenant, and the
+        // explicit check below keeps it defence-in-depth).
+        $card = ActivationCard::where('code', $code)->first();
 
-            return response()->json(['message' => 'Card has expired.'], 410);
+        if (! $card) {
+            return response()->json(['message' => 'Invalid card code.'], 404);
         }
 
         if ($card->tenant_id !== $tenantId) {
             return response()->json(['message' => 'Card does not belong to this tenant.'], 403);
+        }
+
+        if ($card->status === 'cancelled') {
+            return response()->json(['message' => 'This card has been cancelled.'], 410);
+        }
+
+        if ($card->status === 'redeemed') {
+            // 404 is the long-standing contract for "not redeemable" (the
+            // /card/{code} page and the dashboard both rely on it).
+            return response()->json(['message' => 'This card has already been used.'], 404);
+        }
+
+        if ($card->status === 'expired'
+            || ($card->expires_at && now()->gt($card->expires_at))) {
+            if ($card->status !== 'expired') {
+                $card->update(['status' => 'expired']);
+            }
+
+            return response()->json(['message' => 'Card has expired.'], 410);
         }
 
         $exists = Enrollment::where('course_id', $card->course_id)
@@ -380,5 +405,30 @@ class ActivationCardController extends Controller
             'generated' => $cards->where('status', 'generated')->count(),
             'cards' => ActivationCardResource::collection($cards),
         ]);
+    }
+
+    /**
+     * True when the caller is a workspace staff member (teacher/owner/admin)
+     * or the platform super-admin — such accounts must not redeem cards.
+     */
+    private function isActiveStaff($user, string $tenantId): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->is_super_admin) {
+            return true;
+        }
+
+        if ($tenantId === '') {
+            return false;
+        }
+
+        return $user->tenantPivots()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('role', ['teacher', 'owner', 'admin'])
+            ->where('status', 'active')
+            ->exists();
     }
 }
