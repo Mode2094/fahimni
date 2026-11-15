@@ -13,6 +13,7 @@ use App\Models\TenantUser;
 use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -95,7 +96,7 @@ class GoogleAuthController extends Controller
         $state = $this->verifyState((string) $request->query('state', ''));
 
         if ($state === null) {
-            return redirect()->away($frontend.'/auth/google/callback?error=invalid_state');
+            return $this->redirectToFrontend($frontend, null, ['error' => 'invalid_state']);
         }
 
         $role = in_array($state['role'] ?? '', ['teacher', 'student', 'admin'], true)
@@ -114,14 +115,14 @@ class GoogleAuthController extends Controller
         } catch (\Throwable $e) {
             Log::error('google.callback_failed', ['error' => $e->getMessage()]);
 
-            return redirect()->away($frontend.'/auth/google/callback?error=google_failed');
+            return $this->redirectToFrontend($frontend, $role, ['error' => 'google_failed']);
         }
 
         $email = strtolower(trim((string) $google->getEmail()));
         $name = $regData['name'] ?? $google->getName() ?? $google->getNickname() ?? 'User';
 
         if ($email === '') {
-            return redirect()->away($frontend.'/auth/google/callback?error=no_email');
+            return $this->redirectToFrontend($frontend, $role, ['error' => 'no_email']);
         }
 
         $user = User::where('email', $email)->first();
@@ -133,7 +134,7 @@ class GoogleAuthController extends Controller
         // Admin accounts are never self-provisioned through OAuth: only the
         // configured platform super-admin email may be promoted.
         if (! $user && $role === 'admin' && ! $this->isConfiguredSuperAdminEmail($email)) {
-            return redirect()->away($frontend.'/auth/google/callback?error=not_authorized');
+            return $this->redirectToFrontend($frontend, $role, ['error' => 'not_authorized']);
         }
 
         // Provisioning a *new* teacher workspace (new identity, or an existing
@@ -144,11 +145,11 @@ class GoogleAuthController extends Controller
             && $role === 'teacher'
             && ! ($user && $user->hasRole('Teacher'))
             && ! $this->teacherRegistrationAllowed($email)) {
-            return redirect()->away($frontend.'/auth/google/callback?error=teacher_registration_disabled');
+            return $this->redirectToFrontend($frontend, $role, ['error' => 'teacher_registration_disabled']);
         }
 
         if ($user && ! $user->is_active) {
-            return redirect()->away($frontend.'/auth/google/callback?error=inactive');
+            return $this->redirectToFrontend($frontend, $role, ['error' => 'inactive']);
         }
 
         // Google login must never bypass an enabled second factor.
@@ -160,7 +161,7 @@ class GoogleAuthController extends Controller
                     'expires_at' => now()->addMinutes(5)->getTimestamp(),
                 ]);
 
-                return redirect()->away($frontend.'/auth/google/callback?step=2fa');
+                return $this->redirectToFrontend($frontend, $role, ['step' => '2fa']);
             }
 
             $pending = bin2hex(random_bytes(16));
@@ -223,7 +224,7 @@ class GoogleAuthController extends Controller
             if (! $user) {
                 Log::warning('google.callback_unique_collision');
 
-                return redirect()->away($frontend.'/auth/google/callback?error=retry');
+                return $this->redirectToFrontend($frontend, $role, ['error' => 'retry']);
             }
 
             $tenant = $wantsStaffTenant ? Tenant::where('owner_id', $user->id)->first() : null;
@@ -236,7 +237,7 @@ class GoogleAuthController extends Controller
             Auth::guard('web')->login($user);
             $request->session()->regenerate();
 
-            return redirect()->away($frontend.'/auth/google/callback?step=done');
+            return $this->redirectToFrontend($frontend, $role, ['step' => 'done']);
         }
 
         $token = $user->createToken('auth-token')->plainTextToken;
@@ -355,6 +356,21 @@ class GoogleAuthController extends Controller
     {
         return ($e->errorInfo[0] ?? null) === '23505'
             || str_contains(strtolower($e->getMessage()), 'unique');
+    }
+
+    /**
+     * Redirect the browser to the frontend OAuth callback with non-sensitive
+     * step markers only. `role` is a UI hint (which login page to return to),
+     * never a grant — the session the callback just established decides access.
+     */
+    private function redirectToFrontend(string $frontend, ?string $role, array $params): RedirectResponse
+    {
+        $query = array_filter(
+            array_merge(['role' => $role], $params),
+            static fn ($value) => $value !== null && $value !== '',
+        );
+
+        return redirect()->away($frontend.'/auth/google/callback?'.http_build_query($query));
     }
 
     /**

@@ -82,7 +82,7 @@ export function jsonWithCookies(
  */
 export async function csrfHandshake(origin: string): Promise<{ jar: CookieJar; cookies: string[] }> {
   const response = await fetch(`${LARAVEL_API_BASE}/auth/me`, {
-    headers: { Accept: 'application/json', Origin: origin },
+    headers: { Accept: 'application/json', Origin: origin, Referer: `${origin}/` },
     cache: 'no-store',
     redirect: 'manual',
   });
@@ -118,6 +118,9 @@ export async function statefulPost(
       'Content-Type': 'application/json',
       Accept: 'application/json',
       Origin: origin,
+      // Sanctum checks Referer before Origin; pin both so a proxy-injected
+      // header can never override the stateful-domain match.
+      Referer: `${origin}/`,
       Cookie: jarToHeader(jar),
     };
 
@@ -183,6 +186,7 @@ export async function sessionGet(
     headers: {
       Accept: 'application/json',
       Origin: origin,
+      Referer: `${origin}/`,
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     },
     cache: 'no-store',

@@ -10,6 +10,7 @@
     "prebuild": "npm run validate:env",
     "typecheck": "tsc --noEmit",
     "test:csp": "node --test scripts/csp.test.ts",
+    "test:bff": "node --test scripts/bff-origin.test.ts",
     "test:unit": "node --test scripts/*.test.ts"
   },
   "dependencies": {
