@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454`
+**Final unified SHA (pinned — CI-green):** `77a01d900635686eb4a355a13f64dca72bde94a4`
 **P0 fixes in this revision:**
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
@@ -18,6 +18,13 @@
   tooling/tests, or the detection greps themselves — a pattern that *looks for*
   the old name is not a user-visible string. A genuinely user-visible old name
   still fails, and the live surfaces are verified after deploy.
+- The isolated restore drill accepts a local plain `.dump` only through its
+  explicit `--allow-unencrypted` flag (scoped to `--file`). It is no longer
+  acknowledged via the `BACKUP_ALLOW_UNENCRYPTED` env var, which
+  `production.env` sets to `0` and which `load_env_file` re-sourced **after** the
+  runner exported `1` — that clobbering is what produced `refusing a plain .dump
+  without BACKUP_ALLOW_UNENCRYPTED=1`. The off-site path never passes the flag
+  and unencrypted archives are still never uploaded.
 **Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
 Nothing in §5 or §6 has been executed.
 
@@ -212,7 +219,7 @@ contains it. `release_sha_on_branch()` enforces this and aborts before checkout 
 does not):
 
 ```
-80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454
+77a01d900635686eb4a355a13f64dca72bde94a4
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -220,7 +227,7 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of fix/launch-blockers-rc
-git merge-base --is-ancestor 80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454 \
+git merge-base --is-ancestor 77a01d900635686eb4a355a13f64dca72bde94a4 \
   refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
 ```
 
@@ -233,7 +240,7 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref 80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454 \
+  --git-ref 77a01d900635686eb4a355a13f64dca72bde94a4 \
   --remote fahimni@187.127.87.101 \
   --expect 72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba
 ```
@@ -264,7 +271,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA=80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454 \
+  FAHIMNI_RELEASE_SHA=77a01d900635686eb4a355a13f64dca72bde94a4 \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \

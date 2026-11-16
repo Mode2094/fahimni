@@ -52,7 +52,7 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454}"
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-77a01d900635686eb4a355a13f64dca72bde94a4}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-fix/launch-blockers-rc}"
 APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
