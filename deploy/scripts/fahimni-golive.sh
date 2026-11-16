@@ -320,14 +320,17 @@ check_local_backup(){  # $1 = path ; 0 = plausible
 }
 
 # Restore a specific LOCAL archive into the same isolated PostgreSQL. A plain
-# .dump is unencrypted, which the drill only accepts with an explicit
-# acknowledgement — set for exactly this operator-chosen file.
+# .dump is unencrypted, so the acknowledgement is passed as an explicit CLI flag
+# (--allow-unencrypted) scoped to THIS --file invocation. It is deliberately NOT
+# exported as BACKUP_ALLOW_UNENCRYPTED: restore-drill.sh sources the env file
+# after arg parsing, and production.env carries BACKUP_ALLOW_UNENCRYPTED=0,
+# which would clobber an exported value and make the drill refuse the file.
 run_drill_file(){  # $1 = local backup file
-  local f="$1" out rc=0
-  local env_prefix=()
-  case "$f" in *.dump) env_prefix=(BACKUP_ALLOW_UNENCRYPTED=1) ;; esac
-  if out="$(env "${env_prefix[@]}" "$TOOLS/deploy/scripts/restore-drill.sh" --env production \
-              --file "$f" --max-age-hours "$MAX_AGE_HOURS" --yes 2>&1)"; then rc=0; else rc=$?; fi
+  local f="$1" out rc=0 args=()
+  case "$f" in *.dump) args+=(--allow-unencrypted) ;; esac
+  if out="$("$TOOLS/deploy/scripts/restore-drill.sh" --env production \
+              --file "$f" --max-age-hours "$MAX_AGE_HOURS" \
+              ${args[@]+"${args[@]}"} --yes 2>&1)"; then rc=0; else rc=$?; fi
   printf '%s\n' "$out" | tee -a "$LOG"
   [ "$rc" = 0 ] || return 1
   drill_evidence "$out"

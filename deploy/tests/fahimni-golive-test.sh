@@ -154,8 +154,16 @@ STUB
 
 cat > "$seed/deploy/scripts/restore-drill.sh" <<'STUB'
 #!/usr/bin/env bash
+# Mirrors the REAL drill's contract: a plain .dump is only accepted with the
+# explicit --allow-unencrypted flag, which is NOT read from the env file.
 printf 'restore-drill %s\n' "$*" >> "${STUB_LOG:?}"
-[ -n "${BACKUP_ALLOW_UNENCRYPTED:-}" ] && printf 'drill-env BACKUP_ALLOW_UNENCRYPTED=%s\n' "$BACKUP_ALLOW_UNENCRYPTED" >> "${STUB_LOG:?}"
+case "$*" in
+  *--file*.dump*)
+    case "$*" in
+      *--allow-unencrypted*) printf 'drill-allow-unencrypted yes\n' >> "${STUB_LOG:?}" ;;
+      *) echo "refusing a plain .dump without --allow-unencrypted"; exit 1 ;;
+    esac ;;
+esac
 n=0; [ -f "${STUB_STATE:?}/drill_n" ] && n="$(cat "$STUB_STATE/drill_n")"
 n=$((n + 1)); printf '%s' "$n" > "$STUB_STATE/drill_n"
 if [ "$n" -le "${STUB_DRILL_FAIL_FIRST:-0}" ]; then
@@ -264,6 +272,16 @@ if grep -q -- '--backup-file' "$RUNNER" && grep -q 'run_drill_file' "$RUNNER" \
 else
   fail "the runner lacks the local --backup-file path"
 fi
+if grep -q -- '--allow-unencrypted' "$RUNNER"; then
+  pass "the runner acknowledges the local .dump with the explicit --allow-unencrypted flag"
+else
+  fail "the runner does not use --allow-unencrypted"
+fi
+if grep -vE '^[[:space:]]*#' "$RUNNER" | grep -q 'BACKUP_ALLOW_UNENCRYPTED'; then
+  fail "the runner still relies on BACKUP_ALLOW_UNENCRYPTED (production.env sets it to 0 and clobbers it)"
+else
+  pass "the runner no longer depends on the clobberable BACKUP_ALLOW_UNENCRYPTED env var"
+fi
 if grep -nE 'rm +-rf?' "$RUNNER" | grep -q 'LOCAL_BACKUP'; then
   fail "the runner may delete the operator's local backup"
 else
@@ -284,10 +302,10 @@ if grep -q 'restore-drill --env production --from-remote --max-age-hours 26 --ye
 else
   fail "the drill flags are wrong"
 fi
-if grep -q 'drill-env BACKUP_ALLOW_UNENCRYPTED' "$STUB_LOG"; then
+if grep -q -- '--allow-unencrypted' "$STUB_LOG"; then
   fail "the OFF-SITE path relaxed the unencrypted guard"
 else
-  pass "the off-site path never relaxes the unencrypted guard"
+  pass "the off-site path never passes --allow-unencrypted"
 fi
 if grep -q 'allow_db=1 backup_verified=1 allow_perm=1' "$STUB_LOG"; then
   pass "the deploy ran with all three write gates"
@@ -418,13 +436,13 @@ run_runner --backup-file "$localdb"
 ok_if "exit code" "$RC" "0"
 ok_if "restore-drill invocations" "$(count 'restore-drill')" "1"
 ok_if "backup-offsite invocations" "$(count 'backup-offsite')" "0"
-if grep -q "restore-drill --env production --file $localdb --max-age-hours 26 --yes" "$STUB_LOG"; then
+if grep -q "restore-drill --env production --file $localdb --max-age-hours 26 --allow-unencrypted --yes" "$STUB_LOG"; then
   pass "the drill ran against the LOCAL file (no --from-remote)"
 else
   fail "the drill did not use --file (log: $(grep 'restore-drill' "$STUB_LOG" | tr '\n' '|'))"
 fi
-if grep -q 'drill-env BACKUP_ALLOW_UNENCRYPTED=1' "$STUB_LOG"; then
-  pass "the plain .dump is acknowledged with BACKUP_ALLOW_UNENCRYPTED=1"
+if grep -q 'drill-allow-unencrypted yes' "$STUB_LOG"; then
+  pass "the plain .dump is acknowledged with the explicit --allow-unencrypted flag"
 else
   fail "the local .dump was not acknowledged (the drill would refuse it)"
 fi
@@ -450,6 +468,67 @@ if [ "$RC" != 0 ]; then pass "the runner stops non-zero ($RC)"; else fail "the r
 ok_if "backup-offsite invocations" "$(count 'backup-offsite')" "0"
 ok_if "deploy invocations" "$(count 'brand-rollout')" "0"
 case "$OUT" in *"restore drill FAILED on the local backup"*) pass "the stop message names the failed local drill" ;; *) fail "the stop message does not name the local drill" ;; esac
+
+# ── T14: the REAL restore-drill.sh, given a REAL env file that contains
+#     BACKUP_ALLOW_UNENCRYPTED=0. The acknowledgement must come from the
+#     explicit CLI flag, which load_env_file cannot clobber. Runs the actual
+#     script against a stubbed docker, not a stub of the drill itself.
+printf '\n-- T14 real drill: env-file BACKUP_ALLOW_UNENCRYPTED=0 must not veto --file\n'
+t14="$work/t14"; rm -rf "$t14"; mkdir -p "$t14/bin"
+cat > "$t14/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  run) echo "cid-drill"; exit 0 ;;
+  exec)
+    case "$*" in
+      *pg_isready*) exit 0 ;;
+      *psql*)
+        case "${*: -1}" in
+          *"FROM migrations"*)  echo "120" ;;
+          *"FROM users"*)       echo "7" ;;
+          *"FROM tenants"*)     echo "3" ;;
+          *"pg_database_size"*) echo "42 MB" ;;
+          *)                    echo "" ;;
+        esac
+        exit 0 ;;
+    esac
+    exit 0 ;;
+  rm) exit 0 ;;
+esac
+exit 0
+STUB
+chmod +x "$t14/bin/docker"
+t14_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+t14_dump="$t14/db-$t14_ts.dump"
+printf 'PGDMP-t14-real-custom-archive' > "$t14_dump"
+printf 'APP_ENV=production\nBACKUP_ALLOW_UNENCRYPTED=0\n' > "$t14/production.env"
+DR="$REPO_DIR/deploy/scripts/restore-drill.sh"
+
+t14_out=""; t14_rc=0
+if t14_out="$(PATH="$t14/bin:$PATH" bash "$DR" --env production --env-file "$t14/production.env" \
+                --file "$t14_dump" --allow-unencrypted --max-age-hours 26 --yes 2>&1)"; then t14_rc=0; else t14_rc=$?; fi
+if [ "$t14_rc" = 0 ]; then
+  pass "the real drill accepts a local .dump with --allow-unencrypted (env says 0)"
+else
+  fail "the real drill refused the local .dump (rc=$t14_rc): $(printf '%s' "$t14_out" | tr '\n' '|')"
+fi
+case "$t14_out" in *"restore drill: OK"*) pass "the real drill printed 'restore drill: OK'" ;; *) fail "no 'restore drill: OK' from the real drill" ;; esac
+case "$t14_out" in *"migrations=120"*) pass "the real drill reported table/row results" ;; *) fail "no row counts from the real drill" ;; esac
+case "$t14_out" in *"backup freshness ok"*) pass "the real drill proved freshness" ;; *) fail "no freshness evidence from the real drill" ;; esac
+
+# Same archive + same env file, WITHOUT the flag: must still be refused.
+t14_out2=""; t14_rc2=0
+if t14_out2="$(PATH="$t14/bin:$PATH" bash "$DR" --env production --env-file "$t14/production.env" \
+                 --file "$t14_dump" --max-age-hours 26 --yes 2>&1)"; then t14_rc2=0; else t14_rc2=$?; fi
+if [ "$t14_rc2" != 0 ]; then pass "without the flag the local .dump is still refused"; else fail "the drill accepted a plain .dump without the flag"; fi
+case "$t14_out2" in *"refusing a plain .dump"*) pass "the refusal message is the expected one" ;; *) fail "unexpected refusal message: $(printf '%s' "$t14_out2" | tr '\n' '|')" ;; esac
+
+# The flag is scoped to --file: it is refused on the off-site path.
+t14_out3=""; t14_rc3=0
+if t14_out3="$(PATH="$t14/bin:$PATH" bash "$DR" --env production --env-file "$t14/production.env" \
+                 --from-remote --allow-unencrypted --yes 2>&1)"; then t14_rc3=0; else t14_rc3=$?; fi
+if [ "$t14_rc3" != 0 ]; then pass "--allow-unencrypted is refused without --file"; else fail "--allow-unencrypted was accepted without --file"; fi
+case "$t14_out3" in *"only valid with --file"*) pass "the scoping error is explicit" ;; *) fail "unexpected scoping error: $(printf '%s' "$t14_out3" | tr '\n' '|')" ;; esac
 
 printf '\n'
 if [ "$failures" -eq 0 ]; then

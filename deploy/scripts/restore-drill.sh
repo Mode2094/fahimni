@@ -18,13 +18,18 @@ Usage: restore-drill.sh --env production|staging [options]
   --env-file PATH   secret env file (default: <release>/.env)
   --file PATH       local backup file (.dump, .age, .enc)
   --from-remote     download the newest db-* archive from rclone
+  --allow-unencrypted  accept a plain (unencrypted) .dump for an explicit
+                       --file ONLY. It is a per-invocation acknowledgement and
+                       is never read from --env-file, so a value there cannot
+                       veto it. Refused for --from-remote.
   --max-age-hours N fail if the chosen backup is older than N hours (0 = off)
   --keep            keep the disposable container for inspection
   --yes             skip the confirmation prompt
 
 Decryption uses BACKUP_AGE_IDENTITY (for .age) or
-BACKUP_ENCRYPTION_PASSPHRASE_FILE (for .enc). Plain .dump files require
-BACKUP_ALLOW_UNENCRYPTED=1.
+BACKUP_ENCRYPTION_PASSPHRASE_FILE (for .enc). A plain .dump is only accepted
+with the explicit --allow-unencrypted flag (or BACKUP_ALLOW_UNENCRYPTED=1 in
+the environment).
 EOF
 }
 
@@ -35,6 +40,10 @@ from_remote=0
 max_age_hours=""
 keep=0
 yes=0
+# A per-invocation acknowledgement for a plain .dump. Deliberately its own
+# variable: it is set only by the CLI flag and is NOT re-read from the env
+# file, so `BACKUP_ALLOW_UNENCRYPTED=0` in production.env can never veto it.
+allow_unencrypted=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --env-file)      env_file="${2:-}"; shift 2 ;;
     --file)          file="${2:-}"; shift 2 ;;
     --from-remote)   from_remote=1; shift ;;
+    --allow-unencrypted) allow_unencrypted=1; shift ;;
     --max-age-hours) max_age_hours="${2:-}"; shift 2 ;;
     --keep)          keep=1; shift ;;
     --yes)           yes=1; shift ;;
@@ -52,6 +62,11 @@ done
 
 [[ -n "$env_name" ]] || { usage; exit 1; }
 validate_env_name "$env_name"
+# Scope the acknowledgement to an explicit local file: it must never be used to
+# bless an off-site (remote) archive.
+if [[ "$allow_unencrypted" -eq 1 && -z "$file" ]]; then
+  die "--allow-unencrypted is only valid with --file (never for the off-site remote)"
+fi
 require_cmd docker
 
 env_file="${env_file:-$REPO_DIR/.env}"
@@ -120,8 +135,15 @@ case "$file" in
       || die "OpenSSL decryption failed"
     ;;
   *.dump)
-    [[ "${BACKUP_ALLOW_UNENCRYPTED:-0}" == "1" ]] \
-      || die "refusing a plain .dump without BACKUP_ALLOW_UNENCRYPTED=1"
+    # Accept a plain archive only when THIS invocation explicitly asked for it
+    # (--allow-unencrypted) or the environment was explicitly set to 1. The
+    # CLI flag is checked first and survived load_env_file, so a 0 in the env
+    # file cannot cancel it.
+    if [[ "$allow_unencrypted" -eq 1 || "${BACKUP_ALLOW_UNENCRYPTED:-0}" == "1" ]]; then
+      :
+    else
+      die "refusing a plain .dump without --allow-unencrypted (or BACKUP_ALLOW_UNENCRYPTED=1)"
+    fi
     cp -p "$file" "$dump"
     ;;
   *)

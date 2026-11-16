@@ -487,7 +487,10 @@ Still blocked (requires access or approval this repository cannot provide):
 - Freemius Sandbox credentials/account were not available; the 25-item checklist
   in `FREEMIUS_SETUP.md` remains unchecked.
 - No real off-site upload was performed (no rclone remote/age key); only a local
-  plaintext drill with `BACKUP_ALLOW_UNENCRYPTED=1` on disposable data.
+  plaintext drill with the explicit `--allow-unencrypted` flag on disposable data.
+  (The flag is a per-invocation acknowledgement for an explicit `--file`; it is
+  never read from the env file, so `BACKUP_ALLOW_UNENCRYPTED=0` in
+  `production.env` cannot veto it.)
 
 ## 16. KVM 2 resource budget
 

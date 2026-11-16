@@ -165,12 +165,16 @@ deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 2
 
 # (b) an explicit LOCAL archive — no Google Drive/rclone needed for this temporary path:
 deploy/scripts/restore-drill.sh --env production \
-  --file /opt/fahimni/production/backups/db-<UTC>.dump --max-age-hours 26 --yes
+  --file /opt/fahimni/production/backups/db-<UTC>.dump \
+  --allow-unencrypted --max-age-hours 26 --yes
 ```
 
 > **(b) is a local file on the same server and does NOT protect against losing the
 > server.** It is accepted only for this temporary path, is never deleted, and every gate
-> still requires the real restore below.
+> still requires the real restore below. `--allow-unencrypted` is a per-invocation
+> acknowledgement for an explicit `--file` only; it is never read from the env file, so
+> `BACKUP_ALLOW_UNENCRYPTED=0` in `production.env` cannot veto it, and it is refused for
+> `--from-remote`. Unencrypted archives are still never *uploaded* (see `backup-offsite.sh`).
 
 Required evidence (paste into the release report — do **not** set
 `FAHIMNI_DB_BACKUP_VERIFIED=1` without it): the `backup freshness ok: <N>h old (limit 26h)`
@@ -306,8 +310,11 @@ sudo bash /home/fahimni/fahimni-golive.sh \
 
 - `--backup-file PATH` runs the isolated restore on **that** local archive (integrity
   pre-check → real `restore drill: OK` → row counts) and **never deletes** it; the plain
-  `.dump` is acknowledged with `BACKUP_ALLOW_UNENCRYPTED=1` for exactly this path only.
-  A local file on the same server does **not** protect against losing the server.
+  `.dump` is acknowledged with the drill's explicit `--allow-unencrypted` flag, passed by
+  the runner for exactly this `--file` invocation. That flag is **not** read from
+  `production.env`, so `BACKUP_ALLOW_UNENCRYPTED=0` there cannot veto it, and the off-site
+  path never passes it. A local file on the same server does **not** protect against
+  losing the server.
 
 Every run writes `<stack>/backups/golive-<UTC>.log` and a `<stack>/backups/golive-<UTC>.result`
 summary (status, deployed SHA, backup/drill evidence, smoke result). Exit codes:
@@ -382,7 +389,7 @@ with a real account/provider**.
 the newest **off-site** archive:
 `deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 26 --yes`
 or an explicit **local** archive (no Google Drive required for this temporary path):
-`deploy/scripts/restore-drill.sh --env production --file /opt/fahimni/production/backups/db-<UTC>.dump --max-age-hours 26 --yes`
+`deploy/scripts/restore-drill.sh --env production --file /opt/fahimni/production/backups/db-<UTC>.dump --allow-unencrypted --max-age-hours 26 --yes`
 (see §4A for the exact evidence to record). The drill refuses a stale archive, so a GO
 without its `restore drill: OK` + freshness output is not allowed — `FAHIMNI_DB_BACKUP_VERIFIED=1`
 must never be set on the strength of the variable alone. A locally-stored archive does **not**
