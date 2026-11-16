@@ -155,6 +155,7 @@ STUB
 cat > "$seed/deploy/scripts/restore-drill.sh" <<'STUB'
 #!/usr/bin/env bash
 printf 'restore-drill %s\n' "$*" >> "${STUB_LOG:?}"
+[ -n "${BACKUP_ALLOW_UNENCRYPTED:-}" ] && printf 'drill-env BACKUP_ALLOW_UNENCRYPTED=%s\n' "$BACKUP_ALLOW_UNENCRYPTED" >> "${STUB_LOG:?}"
 n=0; [ -f "${STUB_STATE:?}/drill_n" ] && n="$(cat "$STUB_STATE/drill_n")"
 n=$((n + 1)); printf '%s' "$n" > "$STUB_STATE/drill_n"
 if [ "$n" -le "${STUB_DRILL_FAIL_FIRST:-0}" ]; then
@@ -220,6 +221,7 @@ run_runner(){
 }
 order(){ grep -n "$1" "$STUB_LOG" | head -1 | cut -d: -f1; }
 count(){ grep -c "$1" "$STUB_LOG" 2>/dev/null || true; }
+fhash(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 result_file(){ find "$work/stack/backups" -maxdepth 1 -name 'golive-*.result' -print 2>/dev/null | sort | tail -1; }
 
 printf '\n== fahimni-golive runner tests ==\n'
@@ -233,9 +235,9 @@ if grep -v '^[[:space:]]*#' "$RUNNER" | grep -qE 'migrate:fresh|migrate:rollback
 else
   pass "no migrate:fresh / rollback / db:wipe / down -v in executable lines"
 fi
-if grep -q 'c46198a2daddc2dc1895de80ed4294a508baf69c' "$RUNNER" \
+if grep -q '80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454' "$RUNNER" \
    && grep -q 'fix/launch-blockers-rc' "$RUNNER" \
-   && grep -q 'e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3' "$RUNNER"; then
+   && grep -q '72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba' "$RUNNER"; then
   pass "the pinned SHA, branch and approved script hash are the approved values"
 else
   fail "the runner does not carry the approved pin/branch/script-hash defaults"
@@ -256,6 +258,17 @@ if awk '/^verify_host_script\(\)/,/^}/' "$RUNNER" | grep -q 'must never be bypas
 else
   fail "the host-script SHA256 gate is missing"
 fi
+if grep -q -- '--backup-file' "$RUNNER" && grep -q 'run_drill_file' "$RUNNER" \
+   && grep -q 'check_local_backup' "$RUNNER"; then
+  pass "the runner supports the local --backup-file restore path"
+else
+  fail "the runner lacks the local --backup-file path"
+fi
+if grep -nE 'rm +-rf?' "$RUNNER" | grep -q 'LOCAL_BACKUP'; then
+  fail "the runner may delete the operator's local backup"
+else
+  pass "the runner never deletes the operator's local backup"
+fi
 
 # ── T1: a recent, restorable backup → no needless dump; deploy runs gated ────
 printf '\n-- T1 recent backup: drill first, no new dump, deploy gated on the drill\n'
@@ -270,6 +283,11 @@ if grep -q 'restore-drill --env production --from-remote --max-age-hours 26 --ye
   pass "the drill is run with --from-remote --max-age-hours 26 --yes"
 else
   fail "the drill flags are wrong"
+fi
+if grep -q 'drill-env BACKUP_ALLOW_UNENCRYPTED' "$STUB_LOG"; then
+  fail "the OFF-SITE path relaxed the unencrypted guard"
+else
+  pass "the off-site path never relaxes the unencrypted guard"
 fi
 if grep -q 'allow_db=1 backup_verified=1 allow_perm=1' "$STUB_LOG"; then
   pass "the deploy ran with all three write gates"
@@ -389,6 +407,49 @@ if grep -q 'LooksLoop baseline' "$RUNNER" && grep -q 'll_snapshot' "$RUNNER"; th
 else
   fail "LooksLoop is not protected by a before/after snapshot"
 fi
+
+# ── T11: --backup-file uses a LOCAL archive; no rclone, no fresh dump ────────
+printf '\n-- T11 local --backup-file: isolated restore, no rclone, no new dump\n'
+reset_state
+localdb="$work/stack/backups/db-local.dump"
+printf 'PGDMP-stub-custom-archive-body' > "$localdb"
+before_hash="$(fhash "$localdb")"
+run_runner --backup-file "$localdb"
+ok_if "exit code" "$RC" "0"
+ok_if "restore-drill invocations" "$(count 'restore-drill')" "1"
+ok_if "backup-offsite invocations" "$(count 'backup-offsite')" "0"
+if grep -q "restore-drill --env production --file $localdb --max-age-hours 26 --yes" "$STUB_LOG"; then
+  pass "the drill ran against the LOCAL file (no --from-remote)"
+else
+  fail "the drill did not use --file (log: $(grep 'restore-drill' "$STUB_LOG" | tr '\n' '|'))"
+fi
+if grep -q 'drill-env BACKUP_ALLOW_UNENCRYPTED=1' "$STUB_LOG"; then
+  pass "the plain .dump is acknowledged with BACKUP_ALLOW_UNENCRYPTED=1"
+else
+  fail "the local .dump was not acknowledged (the drill would refuse it)"
+fi
+if [ -f "$localdb" ]; then pass "the local backup file still exists (never deleted)"; else fail "the local backup file was DELETED"; fi
+ok_if "local backup unchanged" "$(fhash "$localdb")" "$before_hash"
+if grep -q 'backup_action=restored a verified LOCAL archive' "$(result_file)"; then pass "the result records the LOCAL archive"; else fail "the result does not record the LOCAL archive"; fi
+if grep -q 'does NOT protect against losing the server' "$(result_file)"; then pass "the result notes the local backup is not off-site"; else fail "the result omits the off-site limitation note"; fi
+ok_if "deploy invocations" "$(count 'brand-rollout')" "1"
+
+# ── T12: a missing local backup file → SAFE STOP, no drill, no deploy ────────
+printf '\n-- T12 local backup missing: SAFE STOP before anything runs\n'
+reset_state
+run_runner --backup-file "$work/stack/backups/does-not-exist.dump"
+if [ "$RC" != 0 ]; then pass "the runner stops non-zero ($RC)"; else fail "the runner did not stop"; fi
+ok_if "restore-drill invocations" "$(count 'restore-drill')" "0"
+ok_if "deploy invocations" "$(count 'brand-rollout')" "0"
+
+# ── T13: a local backup that fails to restore → SAFE STOP, no deploy ─────────
+printf '\n-- T13 local backup drill fails: SAFE STOP, no fresh dump, no deploy\n'
+reset_state; export STUB_DRILL_FAIL_FIRST=99
+run_runner --backup-file "$localdb"
+if [ "$RC" != 0 ]; then pass "the runner stops non-zero ($RC)"; else fail "the runner did not stop"; fi
+ok_if "backup-offsite invocations" "$(count 'backup-offsite')" "0"
+ok_if "deploy invocations" "$(count 'brand-rollout')" "0"
+case "$OUT" in *"restore drill FAILED on the local backup"*) pass "the stop message names the failed local drill" ;; *) fail "the stop message does not name the local drill" ;; esac
 
 printf '\n'
 if [ "$failures" -eq 0 ]; then

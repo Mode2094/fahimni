@@ -10,11 +10,14 @@
 #                   must NOT change (current release, containers, LooksLoop,
 #                   disk, memory, loopback API health). The environment file is
 #                   copied aside for a possible rollback.
-#    2. backup      ensure a RECENT, COMPLETE PostgreSQL backup exists. The
-#                   newest off-site archive is restored first; if it is missing,
-#                   stale or unreadable a fresh one is created with the approved
-#                   tooling (backup-offsite.sh) — pg_dump only, traffic keeps
-#                   running.
+#    2. backup      ensure a RECENT, COMPLETE PostgreSQL backup exists. With
+#                   --backup-file PATH the operator-supplied LOCAL archive is
+#                   used (no off-site/Google-Drive access needed); otherwise the
+#                   newest off-site archive is restored first, and only when that
+#                   is missing/stale/unreadable is a fresh one created with the
+#                   approved tooling (backup-offsite.sh) — pg_dump only, traffic
+#                   keeps running. A local file is only READ/COPIED, never
+#                   deleted, and it does NOT protect against losing the server.
 #    3. restore     restore the backup into an ISOLATED PostgreSQL
 #                   (restore-drill.sh --network none) and require the freshness
 #                   + `restore drill: OK` + row-count evidence BEFORE anything
@@ -40,6 +43,8 @@
 #  Usage:
 #    sudo bash /home/fahimni/fahimni-golive.sh               # full go-live
 #    sudo bash /home/fahimni/fahimni-golive.sh --dry-run     # gates only, no deploy
+#    sudo bash /home/fahimni/fahimni-golive.sh \
+#         --backup-file /opt/fahimni/production/backups/db-<ts>.dump
 #
 #  Everything is logged to <stack>/backups/golive-<UTC>.log and summarised in
 #  the matching .result file.
@@ -47,9 +52,9 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-c46198a2daddc2dc1895de80ed4294a508baf69c}"
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-fix/launch-blockers-rc}"
-APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3}"
+APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
 
 HOST_SCRIPT="${FAHIMNI_HOST_SCRIPT:-/home/fahimni/fahimni-brand-rollout.sh}"
@@ -58,6 +63,10 @@ ENVF="${FAHIMNI_ENV_FILE:-/etc/fahimni/production.env}"
 REPO_URL="${FAHIMNI_REPO_URL:-https://github.com/Mode2094/fahimni.git}"
 NEW_TAG="${FAHIMNI_NEW_TAG:-prod-brand1}"
 MAX_AGE_HOURS="${FAHIMNI_BACKUP_MAX_AGE_HOURS:-26}"
+# Optional LOCAL backup file. When set, the isolated restore drill uses THIS
+# archive instead of the off-site rclone remote, so the temporary path does not
+# require Google Drive. The file is only READ and COPIED — never deleted.
+LOCAL_BACKUP="${FAHIMNI_BACKUP_FILE:-}"
 HOSTHDR="${FAHIMNI_HOST_HEADER:-fahimni.me}"
 HOME_URL="${FAHIMNI_BASE_URL:-https://fahimni.me}"
 HTTP_TIMEOUT="${HTTP_TIMEOUT:-15}"
@@ -73,6 +82,9 @@ Usage: fahimni-golive.sh [options]
 
   --dry-run                 run pre-flight + backup + restore drill, then stop
                             without deploying
+  --backup-file PATH        restore THIS local backup for the drill instead of
+                            the off-site remote (no Google Drive needed; the file
+                            is never deleted)
   --release-sha SHA         override the pinned release SHA
   --branch NAME             override the branch that must carry the SHA
   --max-age-hours N         backup freshness limit for the drill (default 26)
@@ -86,6 +98,7 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)                DRY_RUN=1; shift ;;
+    --backup-file)            LOCAL_BACKUP="${2:?}"; shift 2 ;;
     --release-sha)            RELEASE_SHA="${2:?}"; shift 2 ;;
     --branch)                 RELEASE_BRANCH="${2:?}"; shift 2 ;;
     --max-age-hours)          MAX_AGE_HOURS="${2:?}"; shift 2 ;;
@@ -114,6 +127,7 @@ LL_BEFORE=""
 DRILL_OK=0
 DRILL_EVIDENCE=""
 BACKUP_ACTION="none"
+BACKUP_NOTE=""
 DEPLOYED=0
 SMOKE_RESULT="not-run"
 
@@ -153,6 +167,8 @@ write_result(){
     printf 'previous_release=%s\n' "${CURRENT_REL:-none}"
     printf 'previous_tag=%s\n' "${OLD_TAG:-none}"
     printf 'backup_action=%s\n' "$BACKUP_ACTION"
+    printf 'backup_file=%s\n' "${LOCAL_BACKUP:-<off-site remote>}"
+    printf 'backup_note=%s\n' "${BACKUP_NOTE:-off-site archive}"
     printf 'restore_drill=%s\n' "${DRILL_EVIDENCE:-not-run}"
     printf 'deployed_sha=%s\n' "$([ "$DEPLOYED" = 1 ] && printf '%s' "$RELEASE_SHA" || printf 'none')"
     printf 'smoke=%s\n' "$SMOKE_RESULT"
@@ -169,7 +185,11 @@ preflight_host(){
   docker compose version >/dev/null 2>&1 || die "docker compose plugin not found"
   require_cmd curl
   require_cmd git
-  require_cmd rclone
+  if [ -z "$LOCAL_BACKUP" ]; then
+    require_cmd rclone
+  else
+    log "runner: LOCAL backup mode — off-site rclone is NOT required"
+  fi
   [ -f "$ENVF" ] || die "missing environment file: $ENVF"
   log "runner: pinned SHA=$RELEASE_SHA branch=$RELEASE_BRANCH"
   log "runner: host script=$HOST_SCRIPT"
@@ -263,7 +283,13 @@ run_drill(){
               --max-age-hours "$MAX_AGE_HOURS" --yes 2>&1)"; then rc=0; else rc=$?; fi
   printf '%s\n' "$out" | tee -a "$LOG"
   [ "$rc" = 0 ] || return 1
-  # Evidence gate: a backup is never blessed without a real restore.
+  drill_evidence "$out"
+}
+
+# The evidence gate behind FAHIMNI_DB_BACKUP_VERIFIED=1: a backup is never
+# blessed without a REAL restore. Sets DRILL_EVIDENCE.
+drill_evidence(){  # $1 = restore-drill output ; 0 = proven
+  local out="$1"
   case "$out" in *"backup freshness ok"*) : ;; *) warn "the drill gave no freshness evidence"; return 1 ;; esac
   case "$out" in *"restore drill: OK"*) : ;; *) warn "the drill gave no 'restore drill: OK' evidence"; return 1 ;; esac
   case "$out" in *"migrations="*) : ;; *) warn "the drill gave no row-count evidence"; return 1 ;; esac
@@ -271,11 +297,62 @@ run_drill(){
   return 0
 }
 
+# Integrity pre-check for an operator-supplied LOCAL archive: it must exist, be
+# readable and non-empty, and look like a PostgreSQL custom archive (or a gzip
+# of one). The real proof is still the isolated restore below.
+check_local_backup(){  # $1 = path ; 0 = plausible
+  local f="$1" magic gz=0 size
+  [ -f "$f" ] || { warn "local backup file not found: $f"; return 1; }
+  [ -r "$f" ] || { warn "local backup file is not readable: $f"; return 1; }
+  [ -s "$f" ] || { warn "local backup file is empty: $f"; return 1; }
+  size="$(du -h "$f" 2>/dev/null | cut -f1)"
+  magic="$(head -c 5 "$f" 2>/dev/null || true)"
+  [ "$(head -c 2 "$f" 2>/dev/null || true)" = $'\x1f\x8b' ] && gz=1
+  if [ "$gz" = 1 ]; then
+    log "local backup: $(basename "$f") (${size:-?}, gzip) — the drill decompresses it"
+  elif [ "$magic" = "PGDMP" ]; then
+    log "local backup: $(basename "$f") (${size:-?}, PostgreSQL custom archive)"
+  else
+    warn "local backup is neither a PostgreSQL custom archive (PGDMP) nor gzip: $f"
+    return 1
+  fi
+  return 0
+}
+
+# Restore a specific LOCAL archive into the same isolated PostgreSQL. A plain
+# .dump is unencrypted, which the drill only accepts with an explicit
+# acknowledgement — set for exactly this operator-chosen file.
+run_drill_file(){  # $1 = local backup file
+  local f="$1" out rc=0
+  local env_prefix=()
+  case "$f" in *.dump) env_prefix=(BACKUP_ALLOW_UNENCRYPTED=1) ;; esac
+  if out="$(env "${env_prefix[@]}" "$TOOLS/deploy/scripts/restore-drill.sh" --env production \
+              --file "$f" --max-age-hours "$MAX_AGE_HOURS" --yes 2>&1)"; then rc=0; else rc=$?; fi
+  printf '%s\n' "$out" | tee -a "$LOG"
+  [ "$rc" = 0 ] || return 1
+  drill_evidence "$out"
+}
+
 ensure_backup_and_drill(){
   section "backup + restore drill (MANDATORY before any database write)"
+  if [ -n "$LOCAL_BACKUP" ]; then
+    log "LOCAL backup mode: $LOCAL_BACKUP"
+    log "no off-site (Google Drive) access is required for this temporary path"
+    log "the archive is READ and COPIED into a disposable container — it is NEVER deleted or modified"
+    check_local_backup "$LOCAL_BACKUP" \
+      || die "the local backup failed its integrity pre-check — refusing to continue"
+    run_drill_file "$LOCAL_BACKUP" \
+      || die "the restore drill FAILED on the local backup — refusing to set FAHIMNI_DB_BACKUP_VERIFIED=1 (no bypass exists)"
+    BACKUP_ACTION="restored a verified LOCAL archive: $(basename "$LOCAL_BACKUP")"
+    BACKUP_NOTE="local file on THIS server — it does NOT protect against losing the server; keep an off-site copy too"
+    warn "the local backup lives on the same server; it does NOT protect against losing the server"
+    DRILL_OK=1
+    return 0
+  fi
   log "attempting to restore the newest off-site backup into an ISOLATED PostgreSQL"
   if run_drill; then
     BACKUP_ACTION="reused existing recent archive"
+    BACKUP_NOTE="off-site archive"
     log "an existing recent backup restored cleanly — no new backup needed"
     DRILL_OK=1
     return 0
@@ -283,6 +360,7 @@ ensure_backup_and_drill(){
   warn "no recent/complete off-site backup could be restored — creating a fresh one now"
   make_backup || die "creating a PostgreSQL backup failed — refusing to continue without a backup (this gate cannot be bypassed)"
   BACKUP_ACTION="created a fresh backup"
+  BACKUP_NOTE="off-site archive (freshly created)"
   run_drill || die "the restore drill FAILED on the freshly created backup — refusing to set FAHIMNI_DB_BACKUP_VERIFIED=1"
   DRILL_OK=1
 }

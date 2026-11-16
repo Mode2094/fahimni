@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `c46198a2daddc2dc1895de80ed4294a508baf69c`
+**Final unified SHA (pinned — CI-green):** `80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454`
 **P0 fixes in this revision:**
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
@@ -12,6 +12,12 @@
 - A new `release_sha_on_branch` guard refuses to deploy when
   `FAHIMNI_RELEASE_SHA` is not reachable from `FAHIMNI_RELEASE_BRANCH` (the clone
   is `--single-branch`, so a sibling-branch SHA is not fetchable).
+- The release-source brand audit now scans only **user-visible** trees
+  (`frontend/src`, `frontend/public`, `app`, `resources`, `public`, `routes`,
+  `config`) and no longer aborts on the old name inside `docs/`, the deploy
+  tooling/tests, or the detection greps themselves — a pattern that *looks for*
+  the old name is not a user-visible string. A genuinely user-visible old name
+  still fails, and the live surfaces are verified after deploy.
 **Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
 Nothing in §5 or §6 has been executed.
 
@@ -149,20 +155,27 @@ Expected: `migrations:pending` lists **exactly** the one approved file above (or
 it is already applied). Any other line — or a non-zero exit — is a **NO-GO**. Never the
 generic `migrate` service. Paste the raw output into the release report as evidence.
 
-**Restore-tested backup (the evidence behind `FAHIMNI_DB_BACKUP_VERIFIED=1`).** Restores the
-**newest** off-site archive into a network-isolated throwaway PostgreSQL and **fails if the
-archive is stale**, so it proves a *recent* backup of production exists:
+**Restore-tested backup (the evidence behind `FAHIMNI_DB_BACKUP_VERIFIED=1`).** Restores a
+backup into a network-isolated throwaway PostgreSQL and **fails if the archive is stale**,
+so it proves a *recent* backup of production exists:
 
 ```bash
-# 26h assumes the daily 02:00 UTC off-site backup; widen only with a reason.
-deploy/scripts/restore-drill.sh --env production --from-remote \
-  --max-age-hours 26 --yes
+# (a) newest OFF-SITE archive (needs rclone / the daily 02:00 UTC upload):
+deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 26 --yes
+
+# (b) an explicit LOCAL archive — no Google Drive/rclone needed for this temporary path:
+deploy/scripts/restore-drill.sh --env production \
+  --file /opt/fahimni/production/backups/db-<UTC>.dump --max-age-hours 26 --yes
 ```
+
+> **(b) is a local file on the same server and does NOT protect against losing the
+> server.** It is accepted only for this temporary path, is never deleted, and every gate
+> still requires the real restore below.
 
 Required evidence (paste into the release report — do **not** set
 `FAHIMNI_DB_BACKUP_VERIFIED=1` without it): the `backup freshness ok: <N>h old (limit 26h)`
 line, the `restore drill: OK` line, and the `migrations=… users=… tenants=… size=…` line,
-plus the archive name (it carries the UTC upload stamp). Production is never contacted or
+plus the archive name (it carries the UTC stamp). Production is never contacted or
 modified by the drill.
 
 ### 4B — **Permission data** (needed for card CSV export)
@@ -195,7 +208,7 @@ contains it. `release_sha_on_branch()` enforces this and aborts before checkout 
 does not):
 
 ```
-c46198a2daddc2dc1895de80ed4294a508baf69c
+80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -203,22 +216,22 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of fix/launch-blockers-rc
-git merge-base --is-ancestor c46198a2daddc2dc1895de80ed4294a508baf69c \
+git merge-base --is-ancestor 80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454 \
   refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3`
-- 48 682 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+- `sha256 = 72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba`
+- 50 025 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
 Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref c46198a2daddc2dc1895de80ed4294a508baf69c \
+  --git-ref 80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454 \
   --remote fahimni@187.127.87.101 \
-  --expect e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3
+  --expect 72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
@@ -247,7 +260,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA=c46198a2daddc2dc1895de80ed4294a508baf69c \
+  FAHIMNI_RELEASE_SHA=80dc3b51a4d4b03c1eb074feb5aa3b0afd8c9454 \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
@@ -273,14 +286,28 @@ and only then passes `FAHIMNI_DB_BACKUP_VERIFIED=1` to the rollout above. It nev
 failed deploy, never rolls the schema back, and never touches DNS/Caddy/LooksLoop/Staging.
 
 ```bash
+# LOCAL-backup path (no Google Drive required) — the one command to run:
+sudo bash /home/fahimni/fahimni-golive.sh \
+  --backup-file /opt/fahimni/production/backups/db-20261116T191419Z.dump
+```
+
+Off-site path (when rclone/Google Drive is configured) — the same runner, newest archive:
+
+```bash
 sudo bash /home/fahimni/fahimni-golive.sh
 ```
 
 Dry gate check that stops before the deploy (pre-flight + backup + drill only):
 
 ```bash
-sudo bash /home/fahimni/fahimni-golive.sh --dry-run
+sudo bash /home/fahimni/fahimni-golive.sh \
+  --backup-file /opt/fahimni/production/backups/db-20261116T191419Z.dump --dry-run
 ```
+
+- `--backup-file PATH` runs the isolated restore on **that** local archive (integrity
+  pre-check → real `restore drill: OK` → row counts) and **never deletes** it; the plain
+  `.dump` is acknowledged with `BACKUP_ALLOW_UNENCRYPTED=1` for exactly this path only.
+  A local file on the same server does **not** protect against losing the server.
 
 Every run writes `<stack>/backups/golive-<UTC>.log` and a `<stack>/backups/golive-<UTC>.result`
 summary (status, deployed SHA, backup/drill evidence, smoke result). Exit codes:
@@ -351,12 +378,16 @@ before the release can be declared GO.
 **restore-tested** DB backup exists, and **every BLOCKED item in §6.2 has been driven
 with a real account/provider**.
 
-**Backup check before GO:** confirm the latest backup is fresh and restore-tested:
+**Backup check before GO:** confirm the latest backup is fresh and restore-tested — either
+the newest **off-site** archive:
 `deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 26 --yes`
+or an explicit **local** archive (no Google Drive required for this temporary path):
+`deploy/scripts/restore-drill.sh --env production --file /opt/fahimni/production/backups/db-<UTC>.dump --max-age-hours 26 --yes`
 (see §4A for the exact evidence to record). The drill refuses a stale archive, so a GO
 without its `restore drill: OK` + freshness output is not allowed — `FAHIMNI_DB_BACKUP_VERIFIED=1`
-must never be set on the strength of the variable alone. The deploy script also backs up the
-env file itself.
+must never be set on the strength of the variable alone. A locally-stored archive does **not**
+protect against losing the server; keep an off-site copy too. The deploy script also backs up
+the env file itself.
 
 **NO-GO / stop if:** any §1 gate regresses; the env backup cannot be written; the
 LooksLoop baseline differs; an **unapproved** pending migration is detected; the
