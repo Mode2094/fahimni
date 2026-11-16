@@ -18,6 +18,7 @@ Usage: restore-drill.sh --env production|staging [options]
   --env-file PATH   secret env file (default: <release>/.env)
   --file PATH       local backup file (.dump, .age, .enc)
   --from-remote     download the newest db-* archive from rclone
+  --max-age-hours N fail if the chosen backup is older than N hours (0 = off)
   --keep            keep the disposable container for inspection
   --yes             skip the confirmation prompt
 
@@ -31,18 +32,20 @@ env_name=""
 env_file=""
 file=""
 from_remote=0
+max_age_hours=""
 keep=0
 yes=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --env)         env_name="${2:-}"; shift 2 ;;
-    --env-file)    env_file="${2:-}"; shift 2 ;;
-    --file)        file="${2:-}"; shift 2 ;;
-    --from-remote) from_remote=1; shift ;;
-    --keep)        keep=1; shift ;;
-    --yes)         yes=1; shift ;;
-    -h|--help)     usage; exit 0 ;;
+    --env)           env_name="${2:-}"; shift 2 ;;
+    --env-file)      env_file="${2:-}"; shift 2 ;;
+    --file)          file="${2:-}"; shift 2 ;;
+    --from-remote)   from_remote=1; shift ;;
+    --max-age-hours) max_age_hours="${2:-}"; shift 2 ;;
+    --keep)          keep=1; shift ;;
+    --yes)           yes=1; shift ;;
+    -h|--help)       usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -93,6 +96,12 @@ elif [[ "$from_remote" -eq 1 ]]; then
 else
   die "pass --file PATH or --from-remote"
 fi
+
+# Fail closed before decrypting/restoring when the chosen archive is not recent.
+# This is the evidence gate behind FAHIMNI_DB_BACKUP_VERIFIED=1: a drill that
+# restores a stale archive proves the *procedure*, not that a fresh backup of
+# today's production exists.
+assert_backup_fresh "$file" "${max_age_hours:-}"
 
 dump="$tmp/restore.dump"
 case "$file" in

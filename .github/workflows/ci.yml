@@ -130,6 +130,11 @@ jobs:
         # drift from the reviewed file (SHA256 gate against a git ref).
         run: deploy/tests/verify-deploy-script-test.sh
 
+      - name: A restore drill refuses a stale backup
+        # The isolated restore must prove a RECENT backup exists before it can
+        # justify FAHIMNI_DB_BACKUP_VERIFIED=1; the freshness gate fails closed.
+        run: deploy/tests/backup-freshness-test.sh
+
       - name: Launch smoke test covers the critical journeys
         # Every launch journey is listed; account/provider ones stay explicitly
         # BLOCKED rather than silently skipped or auto-passed.

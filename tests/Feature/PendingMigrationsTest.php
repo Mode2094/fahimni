@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Database\Migrations\Migrator;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -39,7 +40,6 @@ class PendingMigrationsTest extends TestCase
         file_put_contents($this->dir.'/'.$this->ranFile, $stub);
         file_put_contents($this->dir.'/'.$this->pendingFile, $stub);
     }
-
     protected function tearDown(): void
     {
         foreach ([$this->ranFile, $this->pendingFile] as $f) {
@@ -131,5 +131,57 @@ class PendingMigrationsTest extends TestCase
 
         $this->assertSame(0, $code);
         $this->assertSame($before, DB::table('migrations')->orderBy('migration')->pluck('migration')->all(), 'the command must be read-only');
+    }
+
+    /**
+     * The default path set must be Laravel 13's: the migrator's registered paths
+     * MERGED with `database_path('migrations')`. Registering an extra path must
+     * not hide the app's own migrations (the old code used one OR the other).
+     */
+    public function test_default_paths_merge_registered_paths_with_database_migrations(): void
+    {
+        $extraDir = rtrim(sys_get_temp_dir(), '/').'/fahimni-extra-path-'.uniqid();
+        mkdir($extraDir, 0775, true);
+        $extraFile = '2099_01_01_000000_extra_registered_path_example.php';
+        file_put_contents(
+            $extraDir.'/'.$extraFile,
+            "<?php\nreturn new class {\n    public function up(): void {}\n    public function down(): void {}\n};\n"
+        );
+
+        // Register the extra path on the SAME migrator instance the command resolves.
+        app(Migrator::class)->path($extraDir);
+
+        // Guard: `paths()` is now non-empty, so the old
+        // `$migrator->paths() ?: [database_path('migrations')]` fallback would have
+        // inspected ONLY this custom path and lost the app's own migrations.
+        $this->assertNotEmpty(
+            app(Migrator::class)->paths(),
+            'the custom path must be registered for this test to be meaningful'
+        );
+
+        // A real migration that is on disk but not yet recorded as ran.
+        $coreFile = '2026_11_16_000001_add_lesson_id_to_assignments.php';
+        DB::table('migrations')->where('migration', str_replace('.php', '', $coreFile))->delete();
+
+        try {
+            // No --path: the command must fall back to the merged defaults.
+            $code = Artisan::call('migrations:pending');
+            $out = Artisan::output();
+
+            $this->assertSame(0, $code);
+            $this->assertStringContainsString(
+                $extraFile,
+                $out,
+                'a file from a registered custom path must be reported'
+            );
+            $this->assertStringContainsString(
+                $coreFile,
+                $out,
+                'database/migrations must NOT be dropped when custom paths are registered'
+            );
+        } finally {
+            @unlink($extraDir.'/'.$extraFile);
+            @rmdir($extraDir);
+        }
     }
 }

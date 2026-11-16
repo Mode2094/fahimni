@@ -132,6 +132,39 @@ Manual rollback still uses `deploy/scripts/rollback.sh`.
   (set `FAHIMNI_DB_BACKUP_VERIFIED=1` only after restoring it onto an isolated copy).
 - **Rollback:** keeps the column (see §3).
 
+**Read-only production DB check (prepared — run before approving; nothing is written).**
+Requires docker/root on the host (owner-only). Run from the live release dir:
+
+```bash
+cd /opt/fahimni/production/current
+# 1. Our own read-only view: files on disk vs the `migrations` table, names WITH .php.
+docker compose --env-file /etc/fahimni/production.env run --rm --no-deps app \
+  php artisan migrations:pending
+# 2. The framework's own view (informational only — names WITHOUT .php).
+docker compose --env-file /etc/fahimni/production.env run --rm --no-deps app \
+  php artisan migrate:status --pending --no-ansi
+```
+
+Expected: `migrations:pending` lists **exactly** the one approved file above (or nothing if
+it is already applied). Any other line — or a non-zero exit — is a **NO-GO**. Never the
+generic `migrate` service. Paste the raw output into the release report as evidence.
+
+**Restore-tested backup (the evidence behind `FAHIMNI_DB_BACKUP_VERIFIED=1`).** Restores the
+**newest** off-site archive into a network-isolated throwaway PostgreSQL and **fails if the
+archive is stale**, so it proves a *recent* backup of production exists:
+
+```bash
+# 26h assumes the daily 02:00 UTC off-site backup; widen only with a reason.
+deploy/scripts/restore-drill.sh --env production --from-remote \
+  --max-age-hours 26 --yes
+```
+
+Required evidence (paste into the release report — do **not** set
+`FAHIMNI_DB_BACKUP_VERIFIED=1` without it): the `backup freshness ok: <N>h old (limit 26h)`
+line, the `restore drill: OK` line, and the `migrations=… users=… tenants=… size=…` line,
+plus the archive name (it carries the UTC upload stamp). Production is never contacted or
+modified by the drill.
+
 ### 4B — **Permission data** (needed for card CSV export)
 
 `RolePermissionSeeder` uses `syncPermissions()` → **not** additive; it must **not** be
@@ -281,14 +314,17 @@ before the release can be declared GO.
 **restore-tested** DB backup exists, and **every BLOCKED item in §6.2 has been driven
 with a real account/provider**.
 
-**Backup check before GO:** confirm the latest backup is fresh and restore-tested
-(`docs/backup-strategy.md`, `deploy/scripts/restore-drill.sh`); the deploy script also
-backs up the env file itself.
+**Backup check before GO:** confirm the latest backup is fresh and restore-tested:
+`deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 26 --yes`
+(see §4A for the exact evidence to record). The drill refuses a stale archive, so a GO
+without its `restore drill: OK` + freshness output is not allowed — `FAHIMNI_DB_BACKUP_VERIFIED=1`
+must never be set on the strength of the variable alone. The deploy script also backs up the
+env file itself.
 
 **NO-GO / stop if:** any §1 gate regresses; the env backup cannot be written; the
 LooksLoop baseline differs; an **unapproved** pending migration is detected; the
-permission diff is not confined to `cards.export`/Teacher; or approvals are withheld
-(then §5 must not run).
+permission diff is not confined to `cards.export`/Teacher; the restore drill cannot prove a
+recent backup; or approvals are withheld (then §5 must not run).
 
 ---
 

@@ -26,6 +26,11 @@ use Throwable;
  * table directly, so the output is exactly the release's file basenames — the same
  * strings the allowlist carries — regardless of framework version.
  *
+ * Paths follow Laravel 13's own `BaseCommand::getMigrationPaths()`: an explicit
+ * `--path` wins, otherwise the migrator's registered paths are MERGED with
+ * `database_path('migrations')` so a custom path can never hide the app's own
+ * migrations.
+ *
  * It NEVER writes: no migration is run, no row is inserted or updated.
  *
  * Exit codes: 0 = the list was produced (possibly empty);
@@ -35,7 +40,7 @@ class PendingMigrations extends Command
 {
     protected $signature = 'migrations:pending
                             {--database= : the database connection to inspect}
-                            {--path=* : migration paths (defaults to the app\'s registered paths)}';
+                            {--path=* : migration paths used verbatim (defaults to the merged Laravel paths)}';
 
     protected $description = 'List the migration files (.php) that have not been run yet. Read-only; never touches the schema.';
 
@@ -49,10 +54,7 @@ class PendingMigrations extends Command
                     return self::FAILURE;
                 }
 
-                $paths = array_values(array_filter((array) $this->option('path')));
-                if ($paths === []) {
-                    $paths = $migrator->paths() ?: [database_path('migrations')];
-                }
+                $paths = $this->migrationPaths($migrator);
 
                 // [ migration name (no .php) => absolute file path ]
                 $files = $migrator->getMigrationFiles($paths);
@@ -80,5 +82,31 @@ class PendingMigrations extends Command
 
             return self::SUCCESS;
         });
+    }
+
+    /**
+     * The migration paths to inspect.
+     *
+     * Mirrors Laravel 13's `BaseCommand::getMigrationPaths()`: an explicit
+     * `--path` wins (used verbatim, as the caller passed it); otherwise the
+     * defaults are the paths registered on the migrator **merged with** the
+     * app's `database/migrations`. Using only one of the two would hide real
+     * migrations — a custom registered path would mask the app's own ones, or
+     * vice versa — so both are always included and de-duplicated.
+     *
+     * @return string[]
+     */
+    private function migrationPaths(Migrator $migrator): array
+    {
+        $paths = array_values(array_filter((array) $this->option('path')));
+
+        if ($paths !== []) {
+            return $paths;
+        }
+
+        return array_values(array_unique(array_merge(
+            $migrator->paths(),
+            [database_path('migrations')],
+        )));
     }
 }
