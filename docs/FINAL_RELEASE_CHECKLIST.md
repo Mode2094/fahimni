@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA:** the tip of `fix/launch-blockers-rc` — resolve + verify with §4C.
+**Final unified SHA (pinned — CI-green):** `c46198a2daddc2dc1895de80ed4294a508baf69c`
 **P0 fixes in this revision:**
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
@@ -191,11 +191,20 @@ contains it. `release_sha_on_branch()` enforces this and aborts before checkout 
 `FAHIMNI_RELEASE_BRANCH` + `FAHIMNI_RELEASE_SHA` override the clone target; the default
 (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallback.
 
-Resolve the final unified SHA and confirm it is on the branch (this is what §4C's scripted
-check does too, read-only):
+**Final unified SHA — pinned literally. Never deploy a branch tip** (it moves; the SHA
+does not):
+
+```
+c46198a2daddc2dc1895de80ed4294a508baf69c
+```
+
+Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
+enforces before checkout:
 
 ```bash
-git ls-remote https://github.com/Mode2094/fahimni.git refs/heads/fix/launch-blockers-rc
+# from a clean single-branch clone of fix/launch-blockers-rc
+git merge-base --is-ancestor c46198a2daddc2dc1895de80ed4294a508baf69c \
+  refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
@@ -207,7 +216,7 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref fix/launch-blockers-rc \
+  --git-ref c46198a2daddc2dc1895de80ed4294a508baf69c \
   --remote fahimni@187.127.87.101 \
   --expect e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3
 ```
@@ -229,11 +238,9 @@ After §4A + §4B are approved **and** a restore-tested backup exists, this one 
 performs the whole release (approved migration → permission fix → brand rollout):
 
 ```bash
-# Resolve the final unified SHA from the branch that carries it, then deploy.
-RC_SHA="$(git ls-remote https://github.com/Mode2094/fahimni.git refs/heads/fix/launch-blockers-rc | cut -f1)"
 sudo env \
   FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA="$RC_SHA" \
+  FAHIMNI_RELEASE_SHA=c46198a2daddc2dc1895de80ed4294a508baf69c \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
@@ -242,9 +249,10 @@ sudo env \
 
 - It makes **no** production change until an operator runs it. Do not run it before the
   approvals in §4 and the backup check in §7.
-- `FAHIMNI_RELEASE_SHA` must be a commit reachable from `FAHIMNI_RELEASE_BRANCH`; the script
-  now refuses to run otherwise (the clone is `--single-branch`). Pin `RC_SHA` to the literal
-  value recorded in the release report if you do not want it to follow the branch tip.
+- The SHA above is **pinned literally** and must be used as-is — **never** substitute a
+  branch tip or a `git ls-remote` result. It must be a commit reachable from
+  `FAHIMNI_RELEASE_BRANCH`; the script refuses to run otherwise (the clone is
+  `--single-branch`).
 - The migration preflight uses the read-only `migrations:pending` command (files vs the
   `migrations` table) and fails closed — it no longer reads `migrate:status`, whose Laravel-13
   output drops the `.php` extension.
