@@ -2,7 +2,7 @@
 
 **Release branch:** `release/launch-2026-11-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Blockers-only commit (this work):** `__BLOCKERS_SHA__`
+**Blockers-only commit (this work):** `8c4e86c556c3ce1987d5a7a9e359610768cc7b7e`
 **Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
 Nothing in §5 or §6 has been executed.
 
