@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `15582824ded90af6a8b901a9e781464bb15cf51c`
+**Final unified SHA (pinned — CI-green):** `3ed3df6c39b222e94ba381cf92dcf25672e26d5d`
 **P0 fixes in this revision:**
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
@@ -41,6 +41,15 @@
   `.settings.platform_name` with a real parser (`jq` → `python3` → `php`) and
   still refuses the legacy brand, an unparsable/missing/empty name or any other
   wrong value. Regression-tested across all three parser paths and all cases.
+- The **restore drill** no longer trusts `pg_isready` alone. The postgres
+  entrypoint brings up a TEMPORARY server during initdb (which also logs
+  "database system is ready to accept connections"), so `pg_isready` answered
+  before the real server existed and `pg_restore` died with
+  `FATAL: the database system is shutting down`. The drill now waits for
+  evidence that initdb finished (the entrypoint's "PostgreSQL init process
+  complete" marker or a second ready line), then confirms `restore_drill`
+  answers a query before restoring; it also fails fast if the container exits
+  during init. Still fully isolated (`--network none`, trust auth).
 **Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
 Nothing in §5 or §6 has been executed.
 
@@ -235,7 +244,7 @@ contains it. `release_sha_on_branch()` enforces this and aborts before checkout 
 does not):
 
 ```
-15582824ded90af6a8b901a9e781464bb15cf51c
+3ed3df6c39b222e94ba381cf92dcf25672e26d5d
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -243,7 +252,7 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of fix/launch-blockers-rc
-git merge-base --is-ancestor 15582824ded90af6a8b901a9e781464bb15cf51c \
+git merge-base --is-ancestor 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
   refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
 ```
 
@@ -252,11 +261,17 @@ git merge-base --is-ancestor 15582824ded90af6a8b901a9e781464bb15cf51c \
 - `sha256 = 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8`
 - 52 999 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
+The restore drill is not installed on the host: the runner always executes it
+from the pinned tree (`$STACK/.golive-tools/<sha>/deploy/scripts/restore-drill.sh`),
+so the pinned SHA above is its integrity gate. For reference, at `3ed3df6` it is
+`sha256 = 5b9cfb197697d67643720623c3d0ed248e2123596a42e4557774ac0b5c9ceb72`
+(9 067 bytes).
+
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = 449e93fd47d3ca95f3a09eee75bc70c6d15e858c48de89653d930620647c4b37`
-- 31 117 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `1558282…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
+- `sha256 = 9448e27dffcadb8d2e3e19253a42bf9c419c39e51b030fe8eb6aac76b5b5d98a`
+- 31 181 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `3ed3df6…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
   that does not match.
 
@@ -264,7 +279,7 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref 15582824ded90af6a8b901a9e781464bb15cf51c \
+  --git-ref 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
   --remote fahimni@187.127.87.101 \
   --expect 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8
 ```
@@ -295,7 +310,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA=15582824ded90af6a8b901a9e781464bb15cf51c \
+  FAHIMNI_RELEASE_SHA=3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \

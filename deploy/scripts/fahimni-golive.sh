@@ -52,11 +52,12 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-# 1558282 decodes the platform-settings name with a real JSON parser instead of
-# grepping the raw (Unicode-escaped) body, so a correct response no longer trips
-# a bogus rollback. APPROVED_SCRIPT_SHA256 is that commit's
-# deploy/scripts/fahimni-brand-rollout.sh.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-15582824ded90af6a8b901a9e781464bb15cf51c}"
+# 3ed3df6 makes the restore drill wait out the postgres init race
+# (pg_isready was answering during the entrypoint's temporary server, so
+# pg_restore died with "the database system is shutting down"). It carries the
+# same deploy/scripts/fahimni-brand-rollout.sh as the previous pin, so
+# APPROVED_SCRIPT_SHA256 is unchanged.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-3ed3df6c39b222e94ba381cf92dcf25672e26d5d}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-fix/launch-blockers-rc}"
 APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
