@@ -487,6 +487,11 @@ cat > "$t14/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
   run) echo "cid-drill"; exit 0 ;;
+  # The disposable server reports it has finished initdb (the second ready line
+  # + the entrypoint marker) and is running — the drill must observe BOTH before
+  # it restores. pg_isready alone is not enough (that is the boot race).
+  logs) printf 'database system is ready to accept connections\nPostgreSQL init process complete; ready for start up.\ndatabase system is ready to accept connections\n'; exit 0 ;;
+  inspect) echo true; exit 0 ;;
   exec)
     case "$*" in
       *pg_isready*) exit 0 ;;

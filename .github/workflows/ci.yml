@@ -135,6 +135,13 @@ jobs:
         # justify FAHIMNI_DB_BACKUP_VERIFIED=1; the freshness gate fails closed.
         run: deploy/tests/backup-freshness-test.sh
 
+      - name: Restore drill waits out the PostgreSQL init race
+        # The postgres entrypoint's TEMP server makes pg_isready succeed before
+        # the real server exists, so a drill that trusts it alone runs
+        # pg_restore into a shutting-down server. Hermetic boot-race regression
+        # plus (when Docker is available) a real pg_dump -> real restore E2E.
+        run: deploy/tests/restore-drill-boot-race-test.sh
+
       - name: The single go-live runner cannot skip the backup gate
         # End-to-end (hermetic): the deploy runs only AFTER a successful
         # isolated restore; FAHIMNI_DB_BACKUP_VERIFIED=1 is set only there;

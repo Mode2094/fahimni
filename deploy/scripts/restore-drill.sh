@@ -174,15 +174,37 @@ docker run -d --rm --name "$container" --network none \
   -e POSTGRES_DB=restore_drill \
   "$image" >/dev/null
 
+# Wait for the DISPOSABLE server, not the temporary one the entrypoint starts
+# during initdb. The official image brings up a TEMP server (which also logs
+# "database system is ready to accept connections"), runs init, stops it, and
+# only then starts the real server. `pg_isready` can therefore succeed during
+# that temp window, and pg_restore then dies with
+#   FATAL:  the database system is shutting down
+# so `pg_isready` ALONE is not a readiness signal. Gate on evidence that init
+# has finished — the entrypoint's "PostgreSQL init process complete" marker, or
+# a SECOND "ready to accept connections" line — AND require restore_drill to
+# answer a real query before we touch it.
 ready=0
-for _ in $(seq 1 60); do
-  if docker exec "$container" pg_isready -U postgres -d restore_drill >/dev/null 2>&1; then
+for _ in $(seq 1 120); do
+  if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
+    docker logs --tail 50 "$container" >&2 2>/dev/null || true
+    die "the disposable PostgreSQL container exited before it finished initialising"
+  fi
+  logs="$(docker logs "$container" 2>/dev/null || true)"
+  starts="$(printf '%s\n' "$logs" | grep -c 'database system is ready to accept connections' || true)"
+  init_done=0
+  case "$logs" in *'PostgreSQL init process complete'*) init_done=1 ;; esac
+  if [ "${starts:-0}" -ge 2 ]; then init_done=1; fi
+  if [ "$init_done" -eq 1 ] \
+     && docker exec "$container" pg_isready -U postgres -d restore_drill >/dev/null 2>&1 \
+     && docker exec "$container" psql -U postgres -d restore_drill -tAc 'SELECT 1' >/dev/null 2>&1; then
     ready=1
     break
   fi
   sleep 1
 done
-[[ "$ready" -eq 1 ]] || die "disposable PostgreSQL did not become ready"
+[[ "$ready" -eq 1 ]] || die "the disposable PostgreSQL did not finish initialising and become ready"
+log "disposable PostgreSQL initialised; restore_drill is accepting connections"
 
 log "restoring archive"
 docker exec -i "$container" pg_restore \
