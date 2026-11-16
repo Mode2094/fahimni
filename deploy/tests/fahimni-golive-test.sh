@@ -251,9 +251,9 @@ if grep -v '^[[:space:]]*#' "$RUNNER" | grep -qE 'migrate:fresh|migrate:rollback
 else
   pass "no migrate:fresh / rollback / db:wipe / down -v in executable lines"
 fi
-if grep -q 'bba55f46eca588cbf0edc01c8be8d7f06abfdab4' "$RUNNER" \
+if grep -q '15582824ded90af6a8b901a9e781464bb15cf51c' "$RUNNER" \
    && grep -q 'fix/launch-blockers-rc' "$RUNNER" \
-   && grep -q '91ae95e28b092f5ca90e6770bd7c72c1ab7f4294b639ce58eb129818a50bbf4d' "$RUNNER"; then
+   && grep -q '15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8' "$RUNNER"; then
   pass "the pinned SHA, branch and approved script hash are the approved values"
 else
   fail "the runner does not carry the approved pin/branch/script-hash defaults"

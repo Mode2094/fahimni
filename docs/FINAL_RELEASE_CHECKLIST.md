@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `bba55f46eca588cbf0edc01c8be8d7f06abfdab4`
+**Final unified SHA (pinned — CI-green):** `15582824ded90af6a8b901a9e781464bb15cf51c`
 **P0 fixes in this revision:**
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
@@ -32,6 +32,15 @@
   runner exported `1` — that clobbering is what produced `refusing a plain .dump
   without BACKUP_ALLOW_UNENCRYPTED=1`. The off-site path never passes the flag
   and unencrypted archives are still never uploaded.
+- The three live **identity checks** (brand rollout, go-live runner, launch
+  smoke test) no longer grep the raw `platform-settings` body for the literal
+  `منصة فهمني`. The API returns `{"settings":{"platform_name":"…"}}` with the
+  Arabic name **Unicode-escaped**, so the literal match failed on a correct
+  response and the rollout's final live check tripped `brand_fail` — a bogus
+  rollback. A shared `platform_name_status` helper now decodes
+  `.settings.platform_name` with a real parser (`jq` → `python3` → `php`) and
+  still refuses the legacy brand, an unparsable/missing/empty name or any other
+  wrong value. Regression-tested across all three parser paths and all cases.
 **Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
 Nothing in §5 or §6 has been executed.
 
@@ -226,7 +235,7 @@ contains it. `release_sha_on_branch()` enforces this and aborts before checkout 
 does not):
 
 ```
-bba55f46eca588cbf0edc01c8be8d7f06abfdab4
+15582824ded90af6a8b901a9e781464bb15cf51c
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -234,20 +243,20 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of fix/launch-blockers-rc
-git merge-base --is-ancestor bba55f46eca588cbf0edc01c8be8d7f06abfdab4 \
+git merge-base --is-ancestor 15582824ded90af6a8b901a9e781464bb15cf51c \
   refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = 91ae95e28b092f5ca90e6770bd7c72c1ab7f4294b639ce58eb129818a50bbf4d`
-- 50 590 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+- `sha256 = 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8`
+- 52 999 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = b35c11fce1a366acd56d6c330df9b733676e15ae0c3d8419815f75c3c7be9edd`
-- 28 438 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `bba55f4…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
+- `sha256 = 449e93fd47d3ca95f3a09eee75bc70c6d15e858c48de89653d930620647c4b37`
+- 31 117 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `1558282…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
   that does not match.
 
@@ -255,9 +264,9 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref bba55f46eca588cbf0edc01c8be8d7f06abfdab4 \
+  --git-ref 15582824ded90af6a8b901a9e781464bb15cf51c \
   --remote fahimni@187.127.87.101 \
-  --expect 91ae95e28b092f5ca90e6770bd7c72c1ab7f4294b639ce58eb129818a50bbf4d
+  --expect 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
@@ -286,7 +295,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA=bba55f46eca588cbf0edc01c8be8d7f06abfdab4 \
+  FAHIMNI_RELEASE_SHA=15582824ded90af6a8b901a9e781464bb15cf51c \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
