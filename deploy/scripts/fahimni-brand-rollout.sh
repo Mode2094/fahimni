@@ -267,6 +267,32 @@ release_sha_on_branch(){  # $1 = release dir ; $2 = sha ; $3 = branch
   git -C "$dir" cat-file -e "${sha}^{commit}" 2>/dev/null || return 1
   git -C "$dir" merge-base --is-ancestor "$sha" "$tip" 2>/dev/null
 }
+
+# Source-level brand audit. The OLD brand must not survive anywhere that reaches
+# a user (a browser, the API, or a served asset). It legitimately survives in:
+#   • documentation and the launch reports (docs/),
+#   • the deploy tooling and its tests (deploy/),
+#   • the two normalisation helpers below that MAP a legacy value onto the new
+#     name (app/Support/PlatformBrand.php, frontend/src/lib/brand.ts),
+#   • the detection greps themselves — a pattern that LOOKS for the old name is
+#     not a user-visible string.
+# None of those is a leak, so none is an error. Only the user-visible source
+# trees are scanned; the LIVE surfaces are separately verified after deploy.
+#
+# Prints the offending files (one per line); empty output = clean.
+brand_source_audit(){  # $1 = release dir ; prints user-visible offenders
+  local rel="$1" d stale="" dirs=()
+  for d in frontend/src frontend/public app resources public routes config; do
+    [ -e "$rel/$d" ] && dirs+=("$rel/$d")
+  done
+  if [ "${#dirs[@]}" -gt 0 ]; then
+    stale="$(grep -rIl -E 'Tadreesly|tadreesly' "${dirs[@]}" 2>/dev/null || true)"
+  fi
+  # The two intentional legacy-normalisation helpers may mention the old value.
+  printf '%s\n' "$stale" \
+    | grep -v -E '/(app/Support/PlatformBrand\.php|frontend/src/lib/brand\.ts)$' \
+    | sed '/^[[:space:]]*$/d'
+}
 # ── FAHIMNI_LIB_END ──────────────────────────────────────────────────────────
 
 # ── FAHIMNI_DB_BEGIN ────────────────────────────────────────────────────────
@@ -557,16 +583,16 @@ chown -R fahimni:fahimni "$REL"
 chown fahimni:fahimni "$STACK/releases" 2>/dev/null || true
 log "release ownership set to fahimni:fahimni"
 
-step "brand audit of the release source (the old name must be gone)"
-stale="$(grep -rIl -E 'Tadreesly|tadreesly' "$REL" \
-  --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor \
-  --exclude-dir=.next --exclude-dir=storage 2>/dev/null || true)"
-unexpected="$(printf '%s\n' "$stale" | grep -v -E '/(app/Support/PlatformBrand\.php|frontend/src/lib/brand\.ts)$' | sed '/^$/d' || true)"
-if [ -n "$unexpected" ]; then
-  printf '%s\n' "$unexpected" | sed 's/^/    /' >&2
-  die "the old brand still appears in the release sources listed above"
+step "brand audit of user-visible release sources (the old name must be gone)"
+# Scan only the trees that reach a user. The old name legitimately survives in
+# docs/, in the deploy tooling/tests and in the two normalisation helpers — a
+# detection grep is not a user-visible string and is never a failure.
+offenders="$(brand_source_audit "$REL")"
+if [ -n "$offenders" ]; then
+  printf '%s\n' "$offenders" | sed 's/^/    /' >&2
+  die "the old brand still appears in a user-visible release source listed above"
 fi
-log "old brand appears only inside the two intentional remapping helpers"
+log "old brand appears only inside the two intentional remapping helpers (docs/deploy/tests are not user-visible)"
 
 # ── 3. build ────────────────────────────────────────────────────────────────
 step "building images for $NEW_TAG (several minutes; production keeps running)"

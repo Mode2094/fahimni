@@ -525,6 +525,50 @@ else
   fail "the pending decision does not use migrations:pending"
 fi
 
+# ── T24: the source brand audit is scoped to user-visible trees only ─────────
+#     The old name legitimately survives in docs/, in the deploy tooling/tests
+#     and in the two normalisation helpers; a detection grep is not a leak.
+#     A genuinely user-visible old name must still abort the deploy.
+printf '\n-- T24 brand audit ignores docs/deploy/tests and still flags real leaks\n'
+aud="$work/audit-rel"
+rm -rf "$aud"
+mkdir -p "$aud/docs" "$aud/deploy/scripts" "$aud/deploy/tests" "$aud/app/Support" \
+         "$aud/frontend/src/lib" "$aud/frontend/src/components" "$aud/resources/views"
+printf 'launch report: the old name was Tadreesly\n'      > "$aud/docs/report.md"
+printf "grep -E 'Tadreesly|tadreesly' \"\$x\"\n"          > "$aud/deploy/scripts/thing.sh"
+printf 'APP_NAME=Tadreesly\n'                             > "$aud/deploy/tests/thing-test.sh"
+printf 'LEGACY=tadreesly\n'                               > "$aud/app/Support/PlatformBrand.php"
+printf 'export const LEGACY = /tadreesly/i\n'             > "$aud/frontend/src/lib/brand.ts"
+if [ -z "$(brand_source_audit "$aud")" ]; then
+  pass "docs/deploy/tests + the two remapping helpers are NOT treated as a leak"
+else
+  fail "the audit flagged docs/deploy/tests or the helpers: $(brand_source_audit "$aud" | tr '\n' ' ')"
+fi
+printf 'export const x = "Tadreesly"\n'                   > "$aud/frontend/src/components/leak.tsx"
+if [ -n "$(brand_source_audit "$aud")" ]; then
+  pass "a user-visible frontend old name is still flagged"
+else
+  fail "the audit missed a user-visible frontend old name"
+fi
+rm -f "$aud/frontend/src/components/leak.tsx"
+printf 'Tadreesly\n'                                      > "$aud/resources/views/partial.blade.php"
+if [ -n "$(brand_source_audit "$aud")" ]; then
+  pass "a server-rendered old name is still flagged"
+else
+  fail "the audit missed a server-rendered old name"
+fi
+rm -f "$aud/resources/views/partial.blade.php"
+if grep -qF "brand_source_audit \"\$REL\"" "$SCRIPT"; then
+  pass "the rollout audits via the scoped brand_source_audit helper"
+else
+  fail "the rollout does not call brand_source_audit"
+fi
+if grep -E 'grep +-r' "$SCRIPT" | grep -qF "\"\$REL\""; then
+  fail "the rollout still greps the WHOLE release tree for the old brand"
+else
+  pass "no whole-tree release grep for the old brand remains"
+fi
+
 # ── summary ────────────────────────────────────────────────────────────────
 printf '\n'
 if [ "$failures" -eq 0 ]; then
