@@ -169,7 +169,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=release/launch-2026-11-rc \
-  FAHIMNI_RELEASE_SHA=__BLOCKERS_SHA__ \
+  FAHIMNI_RELEASE_SHA=8c4e86c556c3ce1987d5a7a9e359610768cc7b7e \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
