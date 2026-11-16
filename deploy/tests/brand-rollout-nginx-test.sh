@@ -509,8 +509,8 @@ fi
 # ── T23: structural — the guard runs before the checkout, and the pending
 #         decision never goes back to parsing `migrate:status` ───────────────
 printf '\n-- T23 structural: guard precedes checkout; pending uses migrations:pending\n'
-guard="$(script_order 'release_sha_on_branch "$REL" "$SHA" "$BRANCH"')"
-co="$(script_order 'checkout --detach --quiet "$SHA"')"
+guard="$(script_order "release_sha_on_branch \"\$REL\" \"\$SHA\" \"\$BRANCH\"")"
+co="$(script_order "checkout --detach --quiet \"\$SHA\"")"
 assert_lt "$guard" "$co" "the branch/SHA guard runs BEFORE the checkout"
 if [ -n "$guard" ]; then pass "the checkout is gated on the branch/SHA guard"; else fail "the branch/SHA guard is not called before the checkout"; fi
 dbb="$(sed -n '/FAHIMNI_DB_BEGIN/,/FAHIMNI_DB_END/p' "$SCRIPT")"
