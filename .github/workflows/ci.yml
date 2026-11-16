@@ -135,6 +135,13 @@ jobs:
         # justify FAHIMNI_DB_BACKUP_VERIFIED=1; the freshness gate fails closed.
         run: deploy/tests/backup-freshness-test.sh
 
+      - name: The single go-live runner cannot skip the backup gate
+        # End-to-end (hermetic): the deploy runs only AFTER a successful
+        # isolated restore; FAHIMNI_DB_BACKUP_VERIFIED=1 is set only there;
+        # a mismatch on the host-script hash aborts; an unstable service rolls
+        # back with an nginx reload; no destructive command is present.
+        run: deploy/tests/fahimni-golive-test.sh
+
       - name: Launch smoke test covers the critical journeys
         # Every launch journey is listed; account/provider ones stay explicitly
         # BLOCKED rather than silently skipped or auto-passed.
