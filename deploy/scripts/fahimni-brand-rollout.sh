@@ -268,6 +268,50 @@ release_sha_on_branch(){  # $1 = release dir ; $2 = sha ; $3 = branch
   git -C "$dir" merge-base --is-ancestor "$sha" "$tip" 2>/dev/null
 }
 
+# platform-settings returns {"settings":{"platform_name":"…"}} and the value is
+# very often JSON-escaped (\u0645\u0646\u0635\u0629…). Grepping the raw body for
+# the Arabic text therefore reports a FALSE failure and triggers a bogus
+# rollback, so decode with a real JSON parser (jq → python3 → php) and compare
+# the DECODED value. Prints ONE verdict token and returns its status:
+#   ok         (rc 0)  the decoded name is exactly «منصة فهمني»
+#   noparser   (rc 2)  no JSON parser is installed
+#   invalid    (rc 1)  the body is not valid JSON, or has no string field
+#   empty      (rc 1)  the decoded name is empty
+#   legacy     (rc 1)  the decoded name is an old brand value
+#   wrong:<n>  (rc 1)  any other value
+platform_name_status(){  # $1 = JSON body
+  local body="$1" name="" rc=0
+  if command -v jq >/dev/null 2>&1; then
+    name="$(jq -er '.settings.platform_name | strings' <<<"$body" 2>/dev/null)" || rc=1
+  elif command -v python3 >/dev/null 2>&1; then
+    name="$(python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+node = doc.get("settings") if isinstance(doc, dict) else None
+value = node.get("platform_name") if isinstance(node, dict) else None
+if not isinstance(value, str):
+    sys.exit(1)
+sys.stdout.write(value)
+' <<<"$body" 2>/dev/null)" || rc=1
+  elif command -v php >/dev/null 2>&1; then
+    # shellcheck disable=SC2016
+    name="$(php -r '$d=json_decode(stream_get_contents(STDIN),true); $v=(is_array($d)&&isset($d["settings"])&&is_array($d["settings"]))?($d["settings"]["platform_name"]??null):null; if(!is_string($v))exit(1); echo $v;' <<<"$body" 2>/dev/null)" || rc=1
+  else
+    printf 'noparser\n'; return 2
+  fi
+  [ "$rc" = 0 ] || { printf 'invalid\n'; return 1; }
+  [ -n "$name" ] || { printf 'empty\n'; return 1; }
+  if [ "$name" = 'منصة فهمني' ]; then printf 'ok\n'; return 0; fi
+  case "$name" in
+    *Tadreesly*|*tadreesly*|*تدريسلي*|*تدريسلى*) printf 'legacy\n'; return 1 ;;
+  esac
+  printf 'wrong:%s\n' "$name"
+  return 1
+}
+
 # Source-level brand audit. The OLD brand must not survive anywhere that reaches
 # a user (a browser, the API, or a served asset). It legitimately survives in:
 #   • documentation and the launch reports (docs/),
@@ -816,13 +860,15 @@ done
 
 log "-- the DB-driven platform name (the value the live settings row still holds)"
 ps_json="$(curl -sS --max-time 15 -H "Host: $HOSTHDR" "$BASE/api/v1/platform-settings" 2>/dev/null || true)"
-printf '%s' "$ps_json" | grep -oE '"platform_name":"[^"]*"' | head -1 | sed 's/^/    /' || true
-case "$ps_json" in
-  *'منصة فهمني'*) log "platform-settings serves the new name" ;;
-  *) warn "platform-settings does not serve the new name"; brand_fail=1 ;;
-esac
-case "$ps_json" in
-  *Tadreesly*) warn "platform-settings still exposes the old name"; brand_fail=1 ;;
+ps_name="$(platform_name_status "$ps_json")" || true
+case "$ps_name" in
+  ok)       log "platform-settings serves the new name (decoded JSON)" ;;
+  legacy)   warn "platform-settings still exposes the old name"; brand_fail=1 ;;
+  invalid)  warn "platform-settings returned a body that is not valid JSON or has no string name"; brand_fail=1 ;;
+  empty)    warn "platform-settings returned an empty platform name"; brand_fail=1 ;;
+  noparser) warn "no JSON parser (jq/python3/php) is available to verify the platform name"; brand_fail=1 ;;
+  wrong:*)  warn "platform-settings serves a wrong name: ${ps_name#wrong:}"; brand_fail=1 ;;
+  *)        warn "platform-settings verification did not produce a verdict"; brand_fail=1 ;;
 esac
 
 log "-- manifest, social card and the served logo"

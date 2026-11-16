@@ -600,6 +600,71 @@ else
   pass "no whole-tree release grep for the old brand remains"
 fi
 
+# ── T25: the platform-settings identity is decoded with a real JSON parser ───
+#     The API returns {"settings":{"platform_name":"…"}} and the value is very
+#     often JSON-escaped (\u0645\u0646\u0635\u0629…). Grepping the RAW body for
+#     the literal Arabic name therefore reported a false failure and rolled a
+#     healthy deploy back. The shared helper must decode with a real parser
+#     (jq → python3 → php) and compare the DECODED value. It is duplicated
+#     verbatim in the three deploy scripts and asserted byte-identical.
+printf '\n-- T25 platform-settings identity is decoded via a real JSON parser\n'
+SCRIPTS_3=(
+  "$SCRIPT"
+  "$REPO_DIR/deploy/scripts/fahimni-golive.sh"
+  "$REPO_DIR/deploy/scripts/launch-smoke-test.sh"
+)
+extract_pns(){ sed -n '/^platform_name_status(){/,/^}/p' "$1"; }
+h1="$(extract_pns "${SCRIPTS_3[0]}")"
+if [ -n "$h1" ]; then pass "the platform_name_status helper exists in the rollout"; else fail "the helper is missing from the rollout"; fi
+same=1
+for s in "${SCRIPTS_3[@]}"; do
+  [ "$(extract_pns "$s")" = "$h1" ] || { same=0; fail "the helper differs in $s"; }
+done
+[ "$same" = 1 ] && pass "the helper is byte-identical across the three deploy scripts"
+for parser in jq python3 php; do
+  if printf '%s' "$h1" | grep -q "command -v $parser"; then pass "the helper can decode with $parser"; else fail "the helper never falls back to $parser"; fi
+done
+if grep -qF "*'منصة فهمني'*" "${SCRIPTS_3[@]}"; then
+  fail "a caller still greps the raw body for the literal Arabic name (the defect)"
+else
+  pass "no caller compares the raw (possibly escaped) body to the literal name"
+fi
+
+# Functional verdict table, run through the helper the suite already sourced.
+pns_ok=1
+expect(){ # $1 = body ; $2 = expected verdict token
+  local got
+  got="$(platform_name_status "$1")" || true
+  [ "$got" = "$2" ] || { pns_ok=0; fail "platform_name_status: want '$2', got '$got'"; }
+}
+expect '{"settings":{"platform_name":"منصة فهمني"}}' 'ok'
+expect '{"settings":{"platform_name":"\u0645\u0646\u0635\u0629 \u0641\u0647\u0645\u0646\u064a"}}' 'ok'
+expect '{"settings":{"platform_name":"Acme"}}' 'wrong:Acme'
+expect '{"settings":{"platform_name":"Tadreesly"}}' 'legacy'
+expect '{"settings":{"platform_name":"تدريسلي"}}' 'legacy'
+expect '{"settings":' 'invalid'
+expect '{"settings":{"other":1}}' 'invalid'
+expect '{"settings":{"platform_name":123}}' 'invalid'
+expect '[]' 'invalid'
+expect '{"settings":{"platform_name":""}}' 'empty'
+[ "$pns_ok" = 1 ] && pass "the verdict table is correct (literal + escaped + failure cases)"
+
+# Each parser path on its own: a PATH holding exactly ONE parser forces the
+# helper down the jq / python3 / php branch, and the escaped name must decode.
+pns="$work/platform_name_status.sh"
+printf '%s\n' "$h1" > "$pns"
+escaped='{"settings":{"platform_name":"\u0645\u0646\u0635\u0629 \u0641\u0647\u0645\u0646\u064a"}}'
+for parser in jq python3 php; do
+  if command -v "$parser" >/dev/null 2>&1; then
+    pbin="$work/pbin-$parser"; mkdir -p "$pbin"; ln -sf "$(command -v "$parser")" "$pbin/$parser"
+    # shellcheck disable=SC2016  # $1/$2 expand inside the CHILD bash, not here.
+    got="$(env PATH="$pbin" /bin/bash -c '. "$1"; platform_name_status "$2"' _ "$pns" "$escaped" 2>/dev/null || true)"
+    if [ "$got" = 'ok' ]; then pass "the escaped name decodes to ok through the $parser-only path"; else fail "the $parser-only path gave '$got' (want ok)"; fi
+  else
+    printf '  skip  %s is not installed on this host\n' "$parser"
+  fi
+done
+
 # ── summary ────────────────────────────────────────────────────────────────
 printf '\n'
 if [ "$failures" -eq 0 ]; then

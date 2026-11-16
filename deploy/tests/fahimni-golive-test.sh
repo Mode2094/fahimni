@@ -99,7 +99,15 @@ case "$*" in
     exit 0 ;;
 esac
 case "$*" in
-  *platform-settings*) printf '{"platform_name":"منصة فهمني"}' ;;
+  *platform-settings*)
+    if [ -n "${STUB_PS_BODY:-}" ]; then
+      printf '%s' "$STUB_PS_BODY"
+    else
+      # The real API shape, nested, with the Arabic name JSON-escaped — exactly
+      # what production returns today. A raw grep for the literal name misses
+      # this and would roll a healthy deploy back.
+      printf '%s' '{"settings":{"platform_name":"\u0645\u0646\u0635\u0629 \u0641\u0647\u0645\u0646\u064a"}}'
+    fi ;;
 esac
 exit 0
 STUB
@@ -211,7 +219,7 @@ export STUB_NEW_TAG="prod-brand1"
 reset_state(){
   rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"; : > "$STUB_LOG"
   unset STUB_COMPOSE_RC STUB_DEPLOY_RC STUB_BACKUP_RC STUB_DRILL_FAIL_FIRST STUB_SMOKE_RC \
-        STUB_HTTP_MODE 2>/dev/null || true
+        STUB_HTTP_MODE STUB_PS_BODY 2>/dev/null || true
   # a fresh env file + symlink for each scenario
   printf 'IMAGE_TAG=prod-hotfix1\nAPP_ENV=production\n' > "$ENVF"
   ln -sfn "$work/stack/releases/oldrel" "$work/stack/current"
@@ -529,6 +537,35 @@ if t14_out3="$(PATH="$t14/bin:$PATH" bash "$DR" --env production --env-file "$t1
                  --from-remote --allow-unencrypted --yes 2>&1)"; then t14_rc3=0; else t14_rc3=$?; fi
 if [ "$t14_rc3" != 0 ]; then pass "--allow-unencrypted is refused without --file"; else fail "--allow-unencrypted was accepted without --file"; fi
 case "$t14_out3" in *"only valid with --file"*) pass "the scoping error is explicit" ;; *) fail "unexpected scoping error: $(printf '%s' "$t14_out3" | tr '\n' '|')" ;; esac
+
+# ── T15: the escaped-Unicode settings body must read LIVE (the identity fix) ─
+#     The API nests the name and JSON-escapes the Arabic text; the runner must
+#     DECODE it, not grep the raw body for the literal name.
+printf '\n-- T15 escaped-Unicode platform name is decoded and accepted (LIVE)\n'
+reset_state
+export STUB_PS_BODY='{"settings":{"platform_name":"\u0645\u0646\u0635\u0629 \u0641\u0647\u0645\u0646\u064a"}}'
+run_runner
+ok_if "exit code" "$RC" "0"
+if grep -q '^status=LIVE$' "$(result_file)"; then pass "an escaped body records LIVE"; else fail "an escaped body did not record LIVE"; fi
+case "$OUT" in *"decoded JSON"*) pass "the log shows the name was decoded" ;; *) fail "the log does not show the decoded check" ;; esac
+
+# ── T16: the old brand in the settings body is a non-critical anomaly ────────
+printf '\n-- T16 legacy platform name: LIVE-WITH-ANOMALIES (exit 3), no rollback\n'
+reset_state
+export STUB_PS_BODY='{"settings":{"platform_name":"Tadreesly"}}'
+run_runner
+ok_if "exit code" "$RC" "3"
+if grep -q '^status=LIVE-WITH-ANOMALIES$' "$(result_file)"; then pass "a legacy name records LIVE-WITH-ANOMALIES"; else fail "a legacy name did not record an anomaly"; fi
+case "$OUT" in *"old brand"*) pass "the log names the old brand" ;; *) fail "the log does not name the old brand" ;; esac
+
+# ── T17: an invalid settings body is an anomaly, never a crash or rollback ───
+printf '\n-- T17 invalid platform-settings JSON: LIVE-WITH-ANOMALIES (exit 3)\n'
+reset_state
+export STUB_PS_BODY='{"settings":'
+run_runner
+ok_if "exit code" "$RC" "3"
+if grep -q '^status=LIVE-WITH-ANOMALIES$' "$(result_file)"; then pass "an invalid body records LIVE-WITH-ANOMALIES"; else fail "an invalid body did not record an anomaly"; fi
+case "$OUT" in *"not valid JSON"*) pass "the log explains the body was not valid JSON" ;; *) fail "the log does not explain the invalid JSON" ;; esac
 
 printf '\n'
 if [ "$failures" -eq 0 ]; then

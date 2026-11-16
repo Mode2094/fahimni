@@ -96,6 +96,19 @@ else
 fi
 case "$out" in *"RESULT: FAIL"*) pass "the failure is reported in the summary" ;; *) fail "no FAIL summary for a dead target" ;; esac
 
+# ── T7: branding identity is decoded with a real JSON parser, not grepped ───
+printf '\n-- T7 platform-settings identity is decoded, not grepped literally\n'
+has "$SCRIPT" "platform_name_status" "uses the shared platform_name_status helper"
+has "$SCRIPT" "command -v jq"        "can decode the settings body with jq"
+has "$SCRIPT" "command -v python3"   "can decode the settings body with python3"
+has "$SCRIPT" "command -v php"       "can decode the settings body with php"
+has "$SCRIPT" "wrong:"               "separates a wrong name from the old brand"
+if grep -qF "*'منصة فهمني'*" "$SCRIPT"; then
+  fail "the branding check still greps the raw body for the literal Arabic name"
+else
+  pass "no literal-Arabic raw-body match remains in the branding check"
+fi
+
 printf '\n'
 if [ "$failures" -eq 0 ]; then
   echo "✅ all launch-smoke test passed"

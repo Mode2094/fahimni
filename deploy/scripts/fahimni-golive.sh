@@ -149,6 +149,50 @@ sha256_file(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cu
 sha256_stdin(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
 # loopback/public HTTP code; the Host header pins the virtual host.
 code(){ curl -sS -o /dev/null -w '%{http_code}' --max-time "$HTTP_TIMEOUT" -H "Host: $HOSTHDR" "$@" 2>/dev/null || printf '000'; }
+# platform-settings returns {"settings":{"platform_name":"…"}} and the value is
+# very often JSON-escaped (\u0645\u0646\u0635\u0629…). Grepping the raw body for
+# the Arabic text therefore reports a FALSE failure and triggers a bogus
+# rollback, so decode with a real JSON parser (jq → python3 → php) and compare
+# the DECODED value. Prints ONE verdict token and returns its status:
+#   ok         (rc 0)  the decoded name is exactly «منصة فهمني»
+#   noparser   (rc 2)  no JSON parser is installed
+#   invalid    (rc 1)  the body is not valid JSON, or has no string field
+#   empty      (rc 1)  the decoded name is empty
+#   legacy     (rc 1)  the decoded name is an old brand value
+#   wrong:<n>  (rc 1)  any other value
+platform_name_status(){  # $1 = JSON body
+  local body="$1" name="" rc=0
+  if command -v jq >/dev/null 2>&1; then
+    name="$(jq -er '.settings.platform_name | strings' <<<"$body" 2>/dev/null)" || rc=1
+  elif command -v python3 >/dev/null 2>&1; then
+    name="$(python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+node = doc.get("settings") if isinstance(doc, dict) else None
+value = node.get("platform_name") if isinstance(node, dict) else None
+if not isinstance(value, str):
+    sys.exit(1)
+sys.stdout.write(value)
+' <<<"$body" 2>/dev/null)" || rc=1
+  elif command -v php >/dev/null 2>&1; then
+    # shellcheck disable=SC2016
+    name="$(php -r '$d=json_decode(stream_get_contents(STDIN),true); $v=(is_array($d)&&isset($d["settings"])&&is_array($d["settings"]))?($d["settings"]["platform_name"]??null):null; if(!is_string($v))exit(1); echo $v;' <<<"$body" 2>/dev/null)" || rc=1
+  else
+    printf 'noparser\n'; return 2
+  fi
+  [ "$rc" = 0 ] || { printf 'invalid\n'; return 1; }
+  [ -n "$name" ] || { printf 'empty\n'; return 1; }
+  if [ "$name" = 'منصة فهمني' ]; then printf 'ok\n'; return 0; fi
+  case "$name" in
+    *Tadreesly*|*tadreesly*|*تدريسلي*|*تدريسلى*) printf 'legacy\n'; return 1 ;;
+  esac
+  printf 'wrong:%s\n' "$name"
+  return 1
+}
+
 # The LooksLoop signature the production tooling uses: only fields that move on
 # a REAL event (no volatile uptime text).
 ll_snapshot(){
@@ -474,14 +518,17 @@ verify_live(){
     UNSTABLE=1
   fi
 
-  local ps
+  local ps ps_name
   ps="$(curl -sS --max-time "$HTTP_TIMEOUT" -H "Host: $HOSTHDR" "$BASE_LOOP/api/v1/platform-settings" 2>/dev/null || true)"
-  case "$ps" in
-    *"منصة فهمني"*) log "identity: platform-settings serves «منصة فهمني»" ;;
-    *) warn "identity: platform-settings does NOT serve the new name"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
-  esac
-  case "$ps" in
-    *Tadreesly*|*tadreesly*) warn "identity: platform-settings still exposes the old brand"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
+  ps_name="$(platform_name_status "$ps")" || true
+  case "$ps_name" in
+    ok)       log "identity: platform-settings serves «منصة فهمني» (decoded JSON)" ;;
+    legacy)   warn "identity: platform-settings still exposes the old brand"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
+    invalid)  warn "identity: platform-settings body is not valid JSON or has no string name"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
+    empty)    warn "identity: platform-settings serves an empty name"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
+    noparser) warn "identity: no JSON parser (jq/python3/php) is available to verify the platform name"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
+    wrong:*)  warn "identity: platform-settings serves a wrong name: ${ps_name#wrong:}"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
+    *)        warn "identity: platform-settings verification did not produce a verdict"; NONCRIT_FAIL=$((NONCRIT_FAIL + 1)) ;;
   esac
 
   if [ -f "$REL/frontend/public/logo.png" ]; then
