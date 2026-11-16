@@ -230,6 +230,13 @@ scp deploy/scripts/fahimni-brand-rollout.sh \
   fahimni@187.127.87.101:/home/fahimni/fahimni-brand-rollout.sh
 ```
 
+Install the single go-live runner alongside it (mode 700, `fahimni`-owned):
+
+```bash
+scp deploy/scripts/fahimni-golive.sh fahimni@187.127.87.101:/home/fahimni/fahimni-golive.sh
+ssh fahimni@187.127.87.101 'chmod 700 ~/fahimni-golive.sh'
+```
+
 ---
 
 ## 5. THE SINGLE ROOT COMMAND (ready — **not executed**)
@@ -256,6 +263,28 @@ sudo env \
 - The migration preflight uses the read-only `migrations:pending` command (files vs the
   `migrations` table) and fails closed — it no longer reads `migrate:status`, whose Laravel-13
   output drops the `.php` extension.
+
+### 5.1 The single go-live runner (recommended — one command does everything)
+
+`deploy/scripts/fahimni-golive.sh` chains **pre-flight → backup → isolated restore drill →
+deploy → verify** with a safe stop at every gate. It is the one command to run; it verifies
+the host script's SHA256, pins the approved SHA/branch, ensures a recent restorable backup,
+and only then passes `FAHIMNI_DB_BACKUP_VERIFIED=1` to the rollout above. It never retries a
+failed deploy, never rolls the schema back, and never touches DNS/Caddy/LooksLoop/Staging.
+
+```bash
+sudo bash /home/fahimni/fahimni-golive.sh
+```
+
+Dry gate check that stops before the deploy (pre-flight + backup + drill only):
+
+```bash
+sudo bash /home/fahimni/fahimni-golive.sh --dry-run
+```
+
+Every run writes `<stack>/backups/golive-<UTC>.log` and a `<stack>/backups/golive-<UTC>.result`
+summary (status, deployed SHA, backup/drill evidence, smoke result). Exit codes:
+`0` LIVE · `1` SAFE STOPPED · `2` ROLLED BACK · `3` LIVE with anomalies.
 
 **Read-only rehearsal** (safe; no DB or permission write, still builds and deploys the
 brand — use it only if a real cutover rehearsal is intended). For an even safer dry
