@@ -22,9 +22,9 @@ not executed says so.
 | Feature-catalog keys | **50** | `app/Support/FeatureCatalog.php` |
 | Permissions | **54** | `database/seeders/RolePermissionSeeder.php` |
 | Roles | 3 Spatie roles: `Super Admin`, `Teacher`, `Student` (+ tenant pivot roles `owner/teacher/admin/student`) | same |
-| PHPUnit test files | **36** (35 Feature, 2 Unit incl. a shared base) | `find tests -name '*Test.php'` |
-| PHPUnit tests executed | **389 passing / 389** | full suite |
-| Frontend node tests | **26 passing** (`bff-origin`, `csp`, `manifest`) | `npm run test:scripts` |
+| PHPUnit test files | **37** (36 Feature, 2 Unit incl. a shared base) | `find tests -name '*Test.php'` |
+| PHPUnit tests executed | **394 passing / 394** | full suite |
+| Frontend node tests | **26 passing** (`bff-origin`, `csp`, `manifest`) | `npm run test:unit` |
 | Frontend vitest tests | **20 passing / 4 files** | `npx vitest run` |
 
 Route modules under `api/v1` (top of the tree):
@@ -282,13 +282,16 @@ student schedule payload; teacher onboarding.
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| PHPUnit (full) | `php vendor/bin/phpunit --no-coverage` | **389 / 389 pass** (1463 assertions) |
-| Frontend node | `npm run test:scripts` | **26 / 26 pass** |
+| PHPUnit (full) | `php vendor/bin/phpunit --no-coverage` | **394 / 394 pass** (1481 assertions) |
+| Frontend node | `npm run test:unit` | **26 / 26 + 20 / 20 pass** |
 | Frontend vitest | `npx vitest run` | **20 / 20 pass** (4 files) |
 | TypeScript | `npx tsc --noEmit` | clean |
 | Next build | `NEXT_PUBLIC_API_URL=/api/v1 NEXT_PUBLIC_PLATFORM_DOMAIN=fahimni.me npm run build` | success |
-| Deploy scripts | `bash -n deploy/scripts/*.sh` | all clean |
-| Brand-rollout tests | `bash deploy/tests/brand-rollout-nginx-test.sh` | all pass (incl. new T6b) |
+| Deploy scripts | `bash -n deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh` | all clean |
+| ShellCheck | `shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh` | clean |
+| Brand-rollout tests | `bash deploy/tests/brand-rollout-nginx-test.sh` | all pass (T0–T21: nginx reload, gated DB preflight/migration/permission, rollback keeps the schema) |
+| Deploy-script integrity | `bash deploy/tests/verify-deploy-script-test.sh` | all pass (host vs Git SHA256 gate) |
+| Launch smoke coverage | `bash deploy/tests/launch-smoke-list-test.sh` | all pass (8 critical journeys; account/provider halves BLOCKED) |
 
 ---
 

@@ -120,9 +120,20 @@ jobs:
 
       - name: Brand rollout reloads nginx (no 502 after redeploy)
         # Recreating app/frontend leaves nginx on the old container IPs -> 502.
-        # Pins the reload, the readiness gate, the failure diagnostics and the
-        # rollback behaviour with a stubbed Docker.
+        # Pins the reload, the readiness gate, the failure diagnostics, the
+        # rollback behaviour AND the gated DB steps (preflight/approved
+        # migration/cards.export permission) with a stubbed Docker.
         run: deploy/tests/brand-rollout-nginx-test.sh
+
+      - name: Host deploy script matches the approved Git version
+        # The rollout runs as root on the host; prove the staged copy cannot
+        # drift from the reviewed file (SHA256 gate against a git ref).
+        run: deploy/tests/verify-deploy-script-test.sh
+
+      - name: Launch smoke test covers the critical journeys
+        # Every launch journey is listed; account/provider ones stay explicitly
+        # BLOCKED rather than silently skipped or auto-passed.
+        run: deploy/tests/launch-smoke-list-test.sh
 
       - name: Redis maxmemory stays below the container cap
         # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).

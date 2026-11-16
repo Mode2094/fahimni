@@ -13,13 +13,16 @@ Statuses: `PASS` · `FIXED+PASS` · `FAILED` · `BLOCKED (external)` · `NOT TES
 
 | Suite | Executed | Pass | Fail | Notes |
 | --- | --- | --- | --- | --- |
-| PHPUnit (full) | 389 | **389** | 0 | 1463 assertions, ~68 s |
+| PHPUnit (full) | 394 | **394** | 0 | 1481 assertions |
 | Frontend node tests | 26 | **26** | 0 | `bff-origin`, `csp`, `manifest` |
 | Frontend vitest | 20 | **20** | 0 | 4 files: home, page, dashboard, my-learning |
 | TypeScript | 1 | **1** | 0 | `tsc --noEmit` clean |
-| Next production build | 1 | **1** | 0 | 89 pages + 8 handlers compiled |
-| Deploy script syntax | 12 | **12** | 0 | `bash -n` |
-| Brand-rollout behaviour tests | 1 file | **all** | 0 | includes T6b |
+| Next production build | 1 | **1** | 0 | pages + handlers compiled |
+| ShellCheck (`deploy/scripts`, `deploy/tests`, `docker/migrate.sh`) | 1 run | **1** | 0 | clean (was failing on RC — SC2015 info fixed) |
+| Deploy script syntax | all | **all** | 0 | `bash -n` |
+| Brand-rollout behaviour tests | 1 file | **all** | 0 | T0–T21 (incl. gated DB preflight/migration/permission) |
+| Deploy-script integrity tests | 1 file | **all** | 0 | `verify-deploy-script-test.sh` |
+| Launch smoke list tests | 1 file | **all** | 0 | `launch-smoke-list-test.sh` |
 | Manual browser (landing hero) | 1 | **1** | 0 | desktop/tablet/mobile captured |
 | Google OAuth live journey | 1 | **0** | 0 | 1 **BLOCKED** (human) |
 
@@ -58,6 +61,7 @@ Statuses: `PASS` · `FIXED+PASS` · `FAILED` · `BLOCKED (external)` · `NOT TES
 | `RoleAuthorizationTest.php` | 7 | Role/permission 401/403 | PASS |
 | `CostEngineTest.php` | 7 | Cost calc | PASS |
 | `CostRulesSeederTest.php` | 3 | **new** — seeder wired + idempotent | FIXED+PASS |
+| `EnsureCardsExportPermissionTest.php` | 5 | **new** — additive-only `cards.export` fix | FIXED+PASS |
 | `TenantIsolationTest.php` | 6 | Cross-tenant blocked | PASS |
 | `SettingsSecretEncryptionTest.php` | 6 | Secrets at rest | PASS |
 | `BackupPipelineTest.php` | 6 | Job pipeline | PASS |
@@ -72,7 +76,7 @@ Statuses: `PASS` · `FIXED+PASS` · `FAILED` · `BLOCKED (external)` · `NOT TES
 | `ExamIntegrityTest.php` | 2 | Attempt/grading integrity | PASS |
 | `SaasCostCurrencyTest.php` | 2 | USD conversion | FIXED+PASS |
 | others (Sso/Site/etc.) | — | misc | PASS |
-| **Total** | **389** | | **389 pass** |
+| **Total** | **394** | | **394 pass** |
 
 ---
 
@@ -149,6 +153,13 @@ Original page restored from `dd13c63`; **only** the Hero changed. Evidence in
 
 - **FAILED:** none on this tree.
 - **BLOCKED (external):** S3 live, S22 real host, S23 DNS, S24 Bunny, S25 Freemius.
+- **Launch smoke gate (`deploy/scripts/launch-smoke-test.sh`):** the six
+  authenticated journeys are reported **BLOCKED** in the script output — they are the
+  exact human click-through required before GO:
+  Google register → teacher dashboard → refresh; email/password login; admin + student
+  login; create course + lesson + worksheet; generate/export/redeem a card; video and
+  live access per permission. The public halves (Google redirect returns `client_id`,
+  role-gated endpoints answer 401/403 without a session) are scripted and green.
 - **NOT TESTED:** S26–S28 and the untested admin/teacher/student/public surfaces
   listed in `FINAL_PLATFORM_AUDIT.md §5.4`.
 
@@ -157,21 +168,23 @@ Original page restored from `dd13c63`; **only** the Hero changed. Evidence in
 ## Appendix A — commands
 
 ```bash
-# Backend
-APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
-APP_ENV=testing DB_CONNECTION=sqlite DB_DATABASE=:memory: \
-SESSION_DRIVER=array CACHE_STORE=array QUEUE_CONNECTION=sync \
-MAIL_MAILER=array BCRYPT_ROUNDS=4 \
+# Backend — use phpunit.xml's env (do NOT export DB_DATABASE=:memory:; the suite's
+# TestCase provisions its own SQLite file, and an exported :memory: breaks it)
 php -d memory_limit=1G vendor/bin/phpunit --no-coverage
 
-# Frontend
+# Frontend + build
 cd frontend
 npx tsc --noEmit
-npm run test:scripts          # node --test scripts/*.test.ts   (26)
-npx vitest run                # (20)
+npm run test:unit                                 # node --test (26) + vitest (20)
 NEXT_PUBLIC_API_URL=/api/v1 NEXT_PUBLIC_PLATFORM_DOMAIN=fahimni.me npm run build
 
-# Deploy scripts
-for f in deploy/scripts/*.sh; do bash -n "$f"; done
-bash deploy/tests/brand-rollout-nginx-test.sh
+# Deploy assets
+for f in deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh; do bash -n "$f"; done
+shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
+bash deploy/tests/brand-rollout-nginx-test.sh        # nginx reload + gated DB steps
+bash deploy/tests/verify-deploy-script-test.sh       # host vs Git SHA256 gate
+bash deploy/tests/launch-smoke-list-test.sh          # critical-journey coverage
+
+# Post-deploy smoke (read-only; BLOCKED items are printed, never skipped)
+bash deploy/scripts/launch-smoke-test.sh --base https://fahimni.me
 ```
