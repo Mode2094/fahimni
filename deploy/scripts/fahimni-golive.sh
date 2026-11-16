@@ -52,9 +52,12 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-77a01d900635686eb4a355a13f64dca72bde94a4}"
+# bba55f4 carries the brand-audit fix (clean source audit now exits 0 instead of
+# silently aborting the rollout); APPROVED_SCRIPT_SHA256 is that commit's
+# deploy/scripts/fahimni-brand-rollout.sh.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-bba55f46eca588cbf0edc01c8be8d7f06abfdab4}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-fix/launch-blockers-rc}"
-APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba}"
+APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-91ae95e28b092f5ca90e6770bd7c72c1ab7f4294b639ce58eb129818a50bbf4d}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
 
 HOST_SCRIPT="${FAHIMNI_HOST_SCRIPT:-/home/fahimni/fahimni-brand-rollout.sh}"

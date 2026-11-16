@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `77a01d900635686eb4a355a13f64dca72bde94a4`
+**Final unified SHA (pinned — CI-green):** `bba55f46eca588cbf0edc01c8be8d7f06abfdab4`
 **P0 fixes in this revision:**
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
@@ -18,6 +18,13 @@
   tooling/tests, or the detection greps themselves — a pattern that *looks for*
   the old name is not a user-visible string. A genuinely user-visible old name
   still fails, and the live surfaces are verified after deploy.
+- That same audit no longer **silently aborts the rollout on a clean tree**.
+  `grep -v` exits 1 whenever it filters out every line, and in a good release the
+  only old-name matches are the two remapping helpers — so `pipefail` made
+  `brand_source_audit()` return 1 and `set -e` aborted at
+  `offenders="$(brand_source_audit "$REL")"` with nothing printed. It now returns
+  0 on a clean tree and still rejects every real offender (regression-tested in
+  both directions).
 - The isolated restore drill accepts a local plain `.dump` only through its
   explicit `--allow-unencrypted` flag (scoped to `--file`). It is no longer
   acknowledged via the `BACKUP_ALLOW_UNENCRYPTED` env var, which
@@ -219,7 +226,7 @@ contains it. `release_sha_on_branch()` enforces this and aborts before checkout 
 does not):
 
 ```
-77a01d900635686eb4a355a13f64dca72bde94a4
+bba55f46eca588cbf0edc01c8be8d7f06abfdab4
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -227,22 +234,30 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of fix/launch-blockers-rc
-git merge-base --is-ancestor 77a01d900635686eb4a355a13f64dca72bde94a4 \
+git merge-base --is-ancestor bba55f46eca588cbf0edc01c8be8d7f06abfdab4 \
   refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = 72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba`
-- 50 025 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+- `sha256 = 91ae95e28b092f5ca90e6770bd7c72c1ab7f4294b639ce58eb129818a50bbf4d`
+- 50 590 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+
+**Runner fingerprint.** The single go-live runner on the host is:
+
+- `sha256 = b35c11fce1a366acd56d6c330df9b733676e15ae0c3d8419815f75c3c7be9edd`
+- 28 438 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `bba55f4…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
+  re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
+  that does not match.
 
 Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref 77a01d900635686eb4a355a13f64dca72bde94a4 \
+  --git-ref bba55f46eca588cbf0edc01c8be8d7f06abfdab4 \
   --remote fahimni@187.127.87.101 \
-  --expect 72ece1cb2fe9a021f120fc0e10a0f296452aad92ea3b5bc586b13404913fd6ba
+  --expect 91ae95e28b092f5ca90e6770bd7c72c1ab7f4294b639ce58eb129818a50bbf4d
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
@@ -271,7 +286,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA=77a01d900635686eb4a355a13f64dca72bde94a4 \
+  FAHIMNI_RELEASE_SHA=bba55f46eca588cbf0edc01c8be8d7f06abfdab4 \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
