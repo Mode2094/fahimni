@@ -1,8 +1,17 @@
 # FINAL RELEASE CHECKLIST — منصة فهمني
 
-**Release branch:** `release/launch-2026-11-rc`
+**Release branch (carries the final SHA):** `fix/launch-blockers-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Blockers-only commit (this work):** `8c4e86c556c3ce1987d5a7a9e359610768cc7b7e`
+**Final unified SHA:** the tip of `fix/launch-blockers-rc` — resolve + verify with §4C.
+**P0 fixes in this revision:**
+- Migration preflight no longer parses `migrate:status`. Laravel 13's
+  `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
+  **every** pending migration and let an unapproved one through; it now diffs the
+  migration **files** against the `migrations` table via a new read-only
+  `migrations:pending` command and **fails closed** on anything unparsable.
+- A new `release_sha_on_branch` guard refuses to deploy when
+  `FAHIMNI_RELEASE_SHA` is not reachable from `FAHIMNI_RELEASE_BRANCH` (the clone
+  is `--single-branch`, so a sibling-branch SHA is not fetchable).
 **Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
 Nothing in §5 or §6 has been executed.
 
@@ -140,24 +149,44 @@ php artisan permissions:ensure-cards-export --apply  # creates cards.export + gr
 
 ### 4C — **Deploying the RC branch** (not the default brand commit)
 
+The blockers work lives on `fix/launch-blockers-rc`, which is **one commit ahead of**
+`release/launch-2026-11-rc`. The deploy must therefore name **that** branch, because the
+clone is `--single-branch`: the target SHA is only fetchable from the branch that actually
+contains it. `release_sha_on_branch()` enforces this and aborts before checkout when
+`FAHIMNI_RELEASE_SHA` is not reachable from `FAHIMNI_RELEASE_BRANCH`.
+
 `FAHIMNI_RELEASE_BRANCH` + `FAHIMNI_RELEASE_SHA` override the clone target; the default
 (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallback.
 
+Resolve the final unified SHA and confirm it is on the branch (this is what §4C's scripted
+check does too, read-only):
+
+```bash
+git ls-remote https://github.com/Mode2094/fahimni.git refs/heads/fix/launch-blockers-rc
+```
+
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = 0c2295953e03257c59aa0029f7e952819691c334e591591b6df28ec0593f5b45`
-- 45 120 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+- `sha256 = e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3`
+- 48 682 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
 Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref <sha-on-the-branch> \
+  --git-ref fix/launch-blockers-rc \
   --remote fahimni@187.127.87.101 \
-  --expect 0c2295953e03257c59aa0029f7e952819691c334e591591b6df28ec0593f5b45
+  --expect e88583b80041841aa8b4d7a7de99a6a78430393c834e6ae7f7b0a1cbf518aab3
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
+If the host copy is still the previous revision, install the reviewed one first (as
+`fahimni`, no root and no service restart):
+
+```bash
+scp deploy/scripts/fahimni-brand-rollout.sh \
+  fahimni@187.127.87.101:/home/fahimni/fahimni-brand-rollout.sh
+```
 
 ---
 
@@ -167,9 +196,11 @@ After §4A + §4B are approved **and** a restore-tested backup exists, this one 
 performs the whole release (approved migration → permission fix → brand rollout):
 
 ```bash
+# Resolve the final unified SHA from the branch that carries it, then deploy.
+RC_SHA="$(git ls-remote https://github.com/Mode2094/fahimni.git refs/heads/fix/launch-blockers-rc | cut -f1)"
 sudo env \
-  FAHIMNI_RELEASE_BRANCH=release/launch-2026-11-rc \
-  FAHIMNI_RELEASE_SHA=8c4e86c556c3ce1987d5a7a9e359610768cc7b7e \
+  FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
+  FAHIMNI_RELEASE_SHA="$RC_SHA" \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
@@ -178,8 +209,12 @@ sudo env \
 
 - It makes **no** production change until an operator runs it. Do not run it before the
   approvals in §4 and the backup check in §7.
-- Set `FAHIMNI_RELEASE_SHA` to the final SHA on the branch that carries this work
-  (the merge commit on `release/launch-2026-11-rc`, or the blockers commit above).
+- `FAHIMNI_RELEASE_SHA` must be a commit reachable from `FAHIMNI_RELEASE_BRANCH`; the script
+  now refuses to run otherwise (the clone is `--single-branch`). Pin `RC_SHA` to the literal
+  value recorded in the release report if you do not want it to follow the branch tip.
+- The migration preflight uses the read-only `migrations:pending` command (files vs the
+  `migrations` table) and fails closed — it no longer reads `migrate:status`, whose Laravel-13
+  output drops the `.php` extension.
 
 **Read-only rehearsal** (safe; no DB or permission write, still builds and deploys the
 brand — use it only if a real cutover rehearsal is intended). For an even safer dry
@@ -234,7 +269,7 @@ before the release can be declared GO.
 | CSP | nonce present; no `unsafe-inline` regression |
 | Logo/PWA | served icon + manifest show the new identity |
 | Containers | `app frontend scheduler horizon` on `prod-brand1`, healthy |
-| Migration | `assignments.lesson_id` exists; `migrate:status` shows nothing unapproved pending |
+| Migration | `assignments.lesson_id` exists; `php artisan migrations:pending` lists nothing unapproved |
 | Permission | `cards.export` granted to Teacher; other roles/permissions untouched |
 | LooksLoop / Staging | unchanged from baseline |
 

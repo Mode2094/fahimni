@@ -72,6 +72,8 @@ ENVF=/etc/fahimni/production.env
 REPO_URL=https://github.com/Mode2094/fahimni.git
 # The unified Release Candidate lives on its own branch; the clone/fetch is
 # single-branch, so the branch that carries $SHA must be named here too.
+# release_sha_on_branch() then refuses to deploy when $SHA is not reachable
+# from this branch (see the FAHIMNI_LIB block).
 BRANCH="${FAHIMNI_RELEASE_BRANCH:-integration/launch-2026-11}"
 NEW_TAG=prod-brand1
 PORT="${APP_PORT:-8080}"
@@ -241,6 +243,30 @@ verify_readiness(){
 
   return "$rc"
 }
+
+# Fail closed when $2 (a commit) is not reachable from branch $3 in the checkout
+# at $1. The release clone is `--single-branch`, so a SHA that only lives on a
+# DIFFERENT branch is simply not fetchable: `git checkout --detach $SHA` then
+# dies with a confusing "reference is not a tree" / "unknown revision" error, or
+# — worse — a stale object from an earlier run is silently reused. This checks
+# reachability up front and lets the caller abort with an explicit message.
+#
+# Returns 0 only when the commit exists AND descends from the branch tip.
+release_sha_on_branch(){  # $1 = release dir ; $2 = sha ; $3 = branch
+  local dir="$1" sha="$2" branch="$3" tip
+  [ -n "$dir" ] && [ -n "$sha" ] && [ -n "$branch" ] || return 1
+  [ -d "$dir/.git" ] || return 1
+  # Fetch exactly the requested branch into its remote-tracking ref. This does
+  # not depend on the clone's configured (single-branch) refspec, and it fails
+  # when the branch does not exist on the remote — both are fail-closed.
+  git -C "$dir" fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null || true
+  # Resolve the branch tip explicitly; NO FETCH_HEAD fallback, which can be a
+  # leftover from an unrelated fetch and would accept a bogus branch name.
+  tip="$(git -C "$dir" rev-parse --verify --quiet "refs/remotes/origin/$branch")" || return 1
+  [ -n "$tip" ] || return 1
+  git -C "$dir" cat-file -e "${sha}^{commit}" 2>/dev/null || return 1
+  git -C "$dir" merge-base --is-ancestor "$sha" "$tip" 2>/dev/null
+}
 # ── FAHIMNI_LIB_END ──────────────────────────────────────────────────────────
 
 # ── FAHIMNI_DB_BEGIN ────────────────────────────────────────────────────────
@@ -262,15 +288,38 @@ app_artisan(){  # $1 = release dir ; rest = artisan arguments
       run --rm --no-deps app php artisan "$@" )
 }
 
-# Pending migrations per Laravel itself (read-only). Returns 2 when the status
-# could not be read at all — never treated as "nothing pending".
+# Pending migrations, diffed from the migration FILES by our own read-only
+# `migrations:pending` command — NOT parsed out of `migrate:status`.
+#
+# Why not `migrate:status --pending` (the old approach):
+#   • Laravel's `Migrator::getMigrationName()` STRIPS `.php`, so the CLI prints
+#     migration names WITHOUT the extension. A parser keyed on `…<name>.php`
+#     therefore matched nothing and reported "no pending migrations" — silently
+#     letting UNapproved migrations through.
+#   • Its exit code is not an error signal: `handle()` returns the option value,
+#     so `--pending` alone can exit 0 while pending migrations exist,
+#     `--pending=1` exits 1, and a missing table also exits 1.
+#
+# `migrations:pending` instead compares the files on disk against the
+# `migrations` table and prints the file basenames WITH `.php` — exactly the
+# strings the allowlist carries, independent of the framework's CLI formatting.
+#
+# Prints one filename per line. Returns:
+#   0  the list was produced (possibly empty — safe to compare)
+#   2  the state could not be read, or a line was not a migration filename.
+#      This is FAIL CLOSED: it is NEVER treated as "nothing pending".
 db_pending_migrations(){  # $1 = release dir ; prints pending filenames, one per line
   local dir="$1" out rc
-  out="$(app_artisan "$dir" migrate:status --pending --no-ansi 2>/dev/null)"; rc=$?
+  out="$(app_artisan "$dir" migrations:pending --no-ansi 2>/dev/null)"; rc=$?
   [ "$rc" = "0" ] || return 2
-  printf '%s\n' "$out" \
-    | grep -oE '[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{6}_[A-Za-z0-9_]+\.php' \
-    | sort -u || true
+  # Fail closed unless EVERY non-empty line is exactly a migration filename with
+  # `.php`. Anything else (framework banners, a name without the extension, a
+  # stray log line) means the output shape is not what we validated.
+  if printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' \
+       | grep -qvE '^[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{6}_[A-Za-z0-9_]+\.php$'; then
+    return 2
+  fi
+  printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | sort -u
 }
 
 # Compare what is pending against the approved allowlist. Any pending migration
@@ -280,7 +329,7 @@ db_preflight(){  # $1 = release dir ; 0 = safe, 1 = unexpected, 2 = unreadable
   local dir="$1" pending approved extra m rc
   pending="$(db_pending_migrations "$dir")"; rc=$?
   if [ "$rc" = "2" ]; then
-    warn "could not read migrate:status from the new image — aborting rather than guessing"
+    warn "could not read migrations:pending from the new image — aborting rather than guessing"
     return 2
   fi
   approved="$(approved_migrations)"
@@ -465,6 +514,12 @@ else
     || die "git clone failed — production is untouched"
 fi
 git -C "$REL" config core.fileMode false
+# P0 guard: the clone/fetch is single-branch, so $SHA must be reachable from
+# $BRANCH. A mismatch (e.g. $SHA lives on a sibling branch) must abort here with
+# a clear message instead of a confusing checkout failure — or a silently stale
+# object from a previous run.
+release_sha_on_branch "$REL" "$SHA" "$BRANCH" \
+  || die "$SHA is not reachable from branch '$BRANCH' — refusing to deploy. Set FAHIMNI_RELEASE_BRANCH to the branch that actually contains $SHA (and remove $REL so it re-clones if the current clone is pinned to another branch)."
 git -C "$REL" checkout --detach --quiet "$SHA" || die "could not check out $SHA"
 [ "$(git -C "$REL" rev-parse HEAD)" = "$SHA" ] || die "release HEAD is not $SHA"
 git -C "$REL" merge-base --is-ancestor a85544e6d097572e23e7f42123746eb848431df2 HEAD \

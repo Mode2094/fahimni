@@ -60,9 +60,9 @@ case "$args" in
     # The DB steps (steps 4b/4c/4d) call:
     #   docker compose … run --rm --no-deps app php artisan <cmd>
     case "$args" in
-      *"migrate:status --pending"*)
-        printf '%s' "${STUB_MIGRATE_STATUS_OUT:-}"
-        exit "${STUB_MIGRATE_STATUS_RC:-0}" ;;
+      *"migrations:pending"*)
+        printf '%s' "${STUB_PENDING_OUT:-}"
+        exit "${STUB_PENDING_RC:-0}" ;;
       *"permissions:ensure-cards-export"*)
         case "$args" in
           *"--apply"*) touch "$state/perm_applied" ;;
@@ -194,7 +194,7 @@ reset_state(){ rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"; : > "$STUB_LOG"
   unset STUB_NGINX_RUNNING STUB_T_RC STUB_RELOAD_RC STUB_HTTP_MODE STUB_IMG_app \
         STUB_IMG_frontend STUB_IMG_scheduler STUB_IMG_horizon STUB_MISSING_ALL \
         STUB_MISSING_app STUB_MISSING_frontend STUB_MISSING_scheduler STUB_MISSING_horizon \
-        STUB_MIGRATE_STATUS_OUT STUB_MIGRATE_STATUS_RC STUB_MIGRATE_RC STUB_PERM_RC \
+        STUB_PENDING_OUT STUB_PENDING_RC STUB_MIGRATE_RC STUB_PERM_RC \
         FAHIMNI_APPROVED_MIGRATIONS FAHIMNI_ALLOW_DB_WRITE FAHIMNI_DB_BACKUP_VERIFIED \
         FAHIMNI_ALLOW_PERMISSION_WRITE 2>/dev/null || true; }
 log_order(){ grep -n "$1" "$STUB_LOG" | head -1 | cut -d: -f1; }
@@ -328,21 +328,38 @@ if cmp -s "$ENV_BAK" "$ENVF"; then pass "the previous env file was restored"; el
 
 # ── T12: db_preflight accepts an approved (or empty) pending set ────────────
 printf '\n-- T12 DB preflight: the approved pending migration is allowed\n'
-reset_state; export STUB_MIGRATE_STATUS_OUT=$'INFO  Migration name ... Pending\n  2026_11_16_000001_add_lesson_id_to_assignments.php .... Pending\n'
+reset_state; export STUB_PENDING_OUT='2026_11_16_000001_add_lesson_id_to_assignments.php'
 if db_preflight "$REL" >/dev/null 2>&1; then pass "db_preflight returns 0 for the approved migration"; else fail "db_preflight rejected the approved migration"; fi
 reset_state
 if db_preflight "$REL" >/dev/null 2>&1; then pass "db_preflight returns 0 when nothing is pending"; else fail "db_preflight rejected an empty pending set"; fi
 
 # ── T13: db_preflight aborts on an UNAPPROVED pending migration ─────────────
 printf '\n-- T13 DB preflight: an unapproved pending migration aborts the deploy\n'
-reset_state; export STUB_MIGRATE_STATUS_OUT=$'  2026_12_31_999999_something_unapproved.php .... Pending\n'
+reset_state; export STUB_PENDING_OUT='2026_12_31_999999_something_unapproved.php'
 if out="$(db_preflight "$REL" 2>&1)"; then fail "db_preflight accepted an unapproved migration"; else pass "db_preflight returns non-zero"; fi
 assert_contains "$out" "not approved" "the refusal names the unapproved migration"
 
-# ── T14: an unreadable migrate:status is NEVER treated as "nothing pending" ──
-printf '\n-- T14 DB preflight: an unreadable status is a hard failure\n'
-reset_state; export STUB_MIGRATE_STATUS_OUT='boom' STUB_MIGRATE_STATUS_RC=1
-if db_preflight "$REL" >/dev/null 2>&1; then fail "db_preflight trusted an unreadable status"; else pass "db_preflight returns non-zero (never guesses)"; fi
+# ── T14: an unreadable state is NEVER treated as "nothing pending" ──────────
+printf '\n-- T14 DB preflight: an unreadable state is a hard failure\n'
+reset_state; export STUB_PENDING_OUT='boom' STUB_PENDING_RC=1
+if db_preflight "$REL" >/dev/null 2>&1; then fail "db_preflight trusted an unreadable state"; else pass "db_preflight returns non-zero (never guesses)"; fi
+
+# ── T14b: the REAL Laravel-13 shape — names WITHOUT `.php` — must fail closed ─
+#     `migrate:status` prints migration names with `.php` stripped by
+#     Migrator::getMigrationName(); a parser that only matched `.php` matched
+#     nothing and reported "no pending". The preflight must never do that.
+printf '\n-- T14b DB preflight: extension-less names (the Laravel 13 shape) fail closed\n'
+reset_state; export STUB_PENDING_OUT=$'2026_12_31_999999_something_unapproved\n2026_11_16_000001_add_lesson_id_to_assignments'
+if db_preflight "$REL" >/dev/null 2>&1; then
+  fail "db_preflight accepted extension-less names (the original silent-pass defect)"
+else
+  pass "db_preflight FAILS CLOSED on extension-less names"
+fi
+
+# ── T14c: exit 0 but unparsable output is still a hard failure ──────────────
+printf '\n-- T14c DB preflight: exit 0 with unparsable output still fails closed\n'
+reset_state; export STUB_PENDING_OUT=$'INFO nothing to see here\n2026_12_31_999999_bad name.php'
+if db_preflight "$REL" >/dev/null 2>&1; then fail "db_preflight trusted unparsable output"; else pass "db_preflight fails closed on unparsable output"; fi
 
 # ── T15: an approved file missing from the release tree aborts (no-op guard) ─
 printf '\n-- T15 DB preflight: a missing approved file aborts the deploy\n'
@@ -449,6 +466,64 @@ else
   fail "the DB work does not use the isolated one-off container"
 fi
 
+# ── T22: P0 branch/SHA guard — a SHA missing from the cloned branch is blocked ─
+#     Uses a REAL temporary git repo mirroring the production `--single-branch`
+#     clone, so it exercises the actual reachability check, not a stub.
+printf '\n-- T22 branch/SHA guard: a SHA on another branch is refused (fail closed)\n'
+if command -v git >/dev/null 2>&1; then
+  og="$work/origin.git"; seed="$work/seed"; cl="${work}/clone-a"
+  git init -q --bare "$og"
+  git init -q "$seed"
+  git -C "$seed" config user.email t@example.test
+  git -C "$seed" config user.name test
+  git -C "$seed" checkout -q -b branchA
+  : > "$seed/a.txt"; git -C "$seed" add a.txt; git -C "$seed" commit -qm "A1"
+  shaA="$(git -C "$seed" rev-parse HEAD)"
+  git -C "$seed" checkout -q -b branchB
+  : > "$seed/b.txt"; git -C "$seed" add b.txt; git -C "$seed" commit -qm "B1"
+  shaB="$(git -C "$seed" rev-parse HEAD)"
+  git -C "$seed" remote add origin "$og"
+  git -C "$seed" push -q origin branchA branchB
+  # The exact clone the rollout uses: single-branch, so branchB is NOT fetched.
+  git clone -q --branch branchA --single-branch "$og" "$cl"
+
+  if release_sha_on_branch "$cl" "$shaA" branchA >/dev/null 2>&1; then
+    pass "a SHA reachable from the branch is accepted"
+  else
+    fail "the guard refused a SHA that IS on the branch"
+  fi
+  if release_sha_on_branch "$cl" "$shaB" branchA >/dev/null 2>&1; then
+    fail "the guard ACCEPTED a SHA that is absent from the single-branch clone"
+  else
+    pass "a SHA absent from the branch is refused (fail closed — the P0 defect)"
+  fi
+  if release_sha_on_branch "$cl" "$shaA" "$(git -C "$seed" rev-parse --short HEAD)" >/dev/null 2>&1; then
+    fail "the guard accepted a bogus branch name"
+  else
+    pass "a SHA with a non-existent branch is refused"
+  fi
+else
+  fail "git is required for the branch/SHA guard test"
+fi
+
+# ── T23: structural — the guard runs before the checkout, and the pending
+#         decision never goes back to parsing `migrate:status` ───────────────
+printf '\n-- T23 structural: guard precedes checkout; pending uses migrations:pending\n'
+guard="$(script_order 'release_sha_on_branch "$REL" "$SHA" "$BRANCH"')"
+co="$(script_order 'checkout --detach --quiet "$SHA"')"
+assert_lt "$guard" "$co" "the branch/SHA guard runs BEFORE the checkout"
+if [ -n "$guard" ]; then pass "the checkout is gated on the branch/SHA guard"; else fail "the branch/SHA guard is not called before the checkout"; fi
+dbb="$(sed -n '/FAHIMNI_DB_BEGIN/,/FAHIMNI_DB_END/p' "$SCRIPT")"
+if printf '%s' "$dbb" | grep -v '^[[:space:]]*#' | grep -q 'migrate:status'; then
+  fail "db_pending_migrations still parses migrate:status (the P0-A defect)"
+else
+  pass "the pending decision no longer parses migrate:status output"
+fi
+if printf '%s' "$dbb" | grep -q 'migrations:pending'; then
+  pass "the pending decision uses the read-only migrations:pending command"
+else
+  fail "the pending decision does not use migrations:pending"
+fi
 
 # ── summary ────────────────────────────────────────────────────────────────
 printf '\n'
