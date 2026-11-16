@@ -544,11 +544,42 @@ if [ -z "$(brand_source_audit "$aud")" ]; then
 else
   fail "the audit flagged docs/deploy/tests or the helpers: $(brand_source_audit "$aud" | tr '\n' ' ')"
 fi
+# The CLEAN result must also be EXIT 0 — not just empty output. `grep -v` exits 1
+# whenever it removes EVERY line (the two helpers are the only old-name matches
+# a good release has); under `pipefail` that failed the whole function, and
+# `set -e` then aborted the deploy at `offenders="$(brand_source_audit "$REL")"`
+# with nothing printed — a silent SAFE STOP on a clean tree. The assignment is
+# reproduced verbatim in a fresh `set -Eeuo pipefail` subshell so the defect
+# cannot hide behind a mere output check again.
+#
+# NOTE: the subshell must NOT be an `if`/`||` condition — errexit is suppressed
+# for the whole subshell in a condition context, which would mask the very
+# failure under test. Run it as a standalone command with the parent's errexit
+# temporarily off, then assert on its captured status.
+set +e
+( set -Eeuo pipefail; offenders="$(brand_source_audit "$aud")"; [ -z "$offenders" ] )
+aud_rc=$?
+set -e
+if [ "$aud_rc" -eq 0 ]; then
+  pass "a clean audit exits 0 (the offenders=… assignment no longer aborts the deploy)"
+else
+  fail "a clean audit fails the offenders=… assignment under set -Eeuo pipefail — silent-abort defect (rc=$aud_rc)"
+fi
 printf 'export const x = "Tadreesly"\n'                   > "$aud/frontend/src/components/leak.tsx"
 if [ -n "$(brand_source_audit "$aud")" ]; then
   pass "a user-visible frontend old name is still flagged"
 else
   fail "the audit missed a user-visible frontend old name"
+fi
+# …and a real offender must still STOP the deploy through the same assignment.
+set +e
+( set -Eeuo pipefail; offenders="$(brand_source_audit "$aud")"; [ -n "$offenders" ] )
+aud_rc=$?
+set -e
+if [ "$aud_rc" -eq 0 ]; then
+  pass "a real offender is still reported through the offenders=… assignment (the deploy still aborts)"
+else
+  fail "the offenders=… assignment did not report a real offender (rc=$aud_rc)"
 fi
 rm -f "$aud/frontend/src/components/leak.tsx"
 printf 'Tadreesly\n'                                      > "$aud/resources/views/partial.blade.php"

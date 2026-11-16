@@ -289,9 +289,16 @@ brand_source_audit(){  # $1 = release dir ; prints user-visible offenders
     stale="$(grep -rIl -E 'Tadreesly|tadreesly' "${dirs[@]}" 2>/dev/null || true)"
   fi
   # The two intentional legacy-normalisation helpers may mention the old value.
+  # `grep -v` exits 1 whenever it removes EVERY line — which is exactly the CLEAN
+  # case, because those two helpers are the only old-name matches a good release
+  # has. Under `pipefail` that made the whole function exit 1, and `set -e` then
+  # aborted the deploy at `offenders="$(brand_source_audit "$REL")"` with nothing
+  # printed (a silent SAFE STOP on a perfectly clean tree). `|| true` keeps a
+  # clean audit at exit 0 while every real offender is still printed on stdout —
+  # and the caller still aborts via its `[ -n "$offenders" ]` gate.
   printf '%s\n' "$stale" \
     | grep -v -E '/(app/Support/PlatformBrand\.php|frontend/src/lib/brand\.ts)$' \
-    | sed '/^[[:space:]]*$/d'
+    | sed '/^[[:space:]]*$/d' || true
 }
 # ── FAHIMNI_LIB_END ──────────────────────────────────────────────────────────
 
