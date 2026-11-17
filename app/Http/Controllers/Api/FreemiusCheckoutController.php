@@ -9,6 +9,7 @@ use App\Models\Tenant;
 use App\Models\TenantSubscription;
 use App\Services\FreemiusGateway;
 use App\Services\FreemiusPlanMapper;
+use App\Services\FreemiusPriceSyncService;
 use App\Services\FsEntitlementSyncService;
 use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -110,6 +111,23 @@ class FreemiusCheckoutController extends Controller
             return response()->json([
                 'message' => 'You already have an active subscription. Manage or cancel it before starting a new one.',
             ], 422);
+        }
+
+        // Price integrity: a buyer must never pay an amount different from the
+        // displayed price. Verify the plan's price against Freemius and fail
+        // closed when it cannot be proven. No checkout URL is issued otherwise.
+        $guard = app(FreemiusPriceSyncService::class)->guardCheckout($plan, $cycle);
+
+        if (! $guard['ok']) {
+            AuditLogger::log($request, 'subscription.freemius_price_guard_blocked', 'plan', $plan->id, [
+                'cycle' => $cycle,
+                'status' => $guard['status'],
+            ]);
+
+            return response()->json([
+                'message' => $guard['message'],
+                'reason' => $guard['status'],
+            ], 409);
         }
 
         if ($existing) {

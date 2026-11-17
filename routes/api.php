@@ -375,6 +375,11 @@ Route::prefix('v1')->group(function () {
                 Route::post('admin/plans/{plan}/features', [PlanFeatureController::class, 'store']);
                 Route::put('admin/plans/{plan}/features/{feature}', [PlanFeatureController::class, 'update']);
                 Route::delete('admin/plans/{plan}/features/{feature}', [PlanFeatureController::class, 'destroy']);
+
+                // ─── Subscription prices — Super Admin only ──────────
+                // Prices are verified against Freemius before being adopted.
+                Route::get('admin/plans/{plan}/freemius-sync', [SubscriptionPlanController::class, 'freemiusSync']);
+                Route::post('admin/plans/{plan}/publish-price', [SubscriptionPlanController::class, 'publishPrice']);
             });
 
             // ─── Media Infrastructure (Super Admin) ────────

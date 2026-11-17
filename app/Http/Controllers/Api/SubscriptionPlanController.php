@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Plan\PublishPlanPriceRequest;
 use App\Http\Requests\Plan\StorePlanRequest;
 use App\Http\Requests\Plan\UpdatePlanRequest;
 use App\Http\Resources\SubscriptionPlanResource;
 use App\Models\SubscriptionPlan;
+use App\Services\FreemiusPriceSyncService;
 use App\Services\SaasCostService;
 use App\Support\FeatureCatalog;
 use Illuminate\Http\JsonResponse;
@@ -88,8 +90,12 @@ class SubscriptionPlanController extends Controller
 
         $this->authorize('update', $plan);
 
+        // Prices are NEVER changed through the generic update: the displayed
+        // price must be verified against Freemius first (see publishPrice()).
         $plan->update(array_merge(
-            collect($this->withoutFreemiusKeys($request->validated()))->except('currency')->all(),
+            collect($this->withoutFreemiusKeys($request->validated()))
+                ->except(['currency', 'monthly_price', 'yearly_price'])
+                ->all(),
             ['metadata' => $this->freemiusMetadata($request, $plan->metadata ?? [])]
         ));
 
@@ -121,6 +127,60 @@ class SubscriptionPlanController extends Controller
         $plan->delete();
 
         return response()->json(['message' => 'Plan deleted.']);
+    }
+
+    /**
+     * Live Freemius sync state for a plan (read-only; safe to poll).
+     */
+    public function freemiusSync(string $id): JsonResponse
+    {
+        $plan = SubscriptionPlan::findOrFail($id);
+
+        $this->authorize('view', $plan);
+
+        return response()->json([
+            'sync' => app(FreemiusPriceSyncService::class)->status($plan),
+        ]);
+    }
+
+    /**
+     * Save & publish a plan's subscription price(s) to Freemius.
+     *
+     * Super-admin only (enforced by the `admin` route group + policy). Sends the
+     * new price to Freemius through the documented developer-scope integration,
+     * re-reads the ACTUAL price, and adopts it locally ONLY on a confirmed
+     * match. On any failure the displayed price is left untouched and an honest
+     * failure status is returned — never a fake success.
+     */
+    public function publishPrice(PublishPlanPriceRequest $request, string $id): JsonResponse
+    {
+        $plan = SubscriptionPlan::findOrFail($id);
+
+        $this->authorize('publishPrice', $plan);
+
+        $data = $request->validated();
+        $prices = [];
+
+        if (array_key_exists('monthly_price', $data) && $data['monthly_price'] !== null) {
+            $prices['monthly'] = (float) $data['monthly_price'];
+        }
+
+        if (array_key_exists('yearly_price', $data) && $data['yearly_price'] !== null) {
+            $prices['yearly'] = (float) $data['yearly_price'];
+        }
+
+        if ($prices === []) {
+            return response()->json(['message' => 'Provide a monthly and/or a yearly price.'], 422);
+        }
+
+        $result = app(FreemiusPriceSyncService::class)->publish($plan, $prices, $request);
+
+        return response()->json([
+            'ok' => $result['ok'],
+            'locked' => $result['locked'],
+            'results' => $result['results'],
+            'plan' => new SubscriptionPlanResource($result['plan']->load('features')),
+        ], $result['locked'] ? 409 : 200);
     }
 
     /**
