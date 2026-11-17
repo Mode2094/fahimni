@@ -125,6 +125,13 @@ class FreemiusGateway
     /**
      * Build a Hosted Checkout link (direct checkout link).
      *
+     * Official URL schema:
+     *   {checkout}/product/{product_id}/plan/{plan_id}/?<Buy Button options>
+     *
+     * `$extra` carries documented Buy Button options as query params. To charge
+     * the verified pricing we pass `pricing_id` and `billing_cycle`
+     * (monthly|annual) plus `currency=usd` — see the caller.
+     *
      * The email is prefilled and marked read-only so the purchase is made
      * with the same customer email as in our system.
      *
@@ -314,7 +321,12 @@ class FreemiusGateway
     /**
      * Generate an upgrade / plan-change / payment-method checkout link.
      *
-     * @param  array{plan_id?: string, billing_cycle?: string, quota?: int, currency?: string, is_payment_method_update?: bool}  $params
+     * Official body (POST .../licenses/{id}/checkout/link.json):
+     *   plan_id, billing_cycle (monthly|annual|lifetime), quota,
+     *   is_payment_method_update. There is no pricing_id/currency here — the
+     *   caller must have verified the target plan price first.
+     *
+     * @param  array{plan_id?: string, billing_cycle?: string, quota?: int|string, is_payment_method_update?: bool}  $params
      * @return array{url: string, settings: array, expires: string}|null
      */
     public static function upgradeCheckoutLink(string $licenseId, array $params): ?array

@@ -155,9 +155,11 @@ export default function AdminPlansPage() {
         const first: any = failed[0]?.[1];
         const msg = first?.status === 'not_configured'
           ? t('فشل التزامن: مفاتيح نطاق المطوّر غير مضبوطة على الخادم — لم يُغيَّر السعر.', 'Sync failed: developer-scope keys are not configured on the server — price unchanged.')
-          : first?.status === 'mismatch'
-            ? t('فشل التزامن: سعر Freemius لا يطابق السعر المطلوب — لم يُغيَّر السعر.', 'Sync failed: the Freemius price does not match — price unchanged.')
-            : t('فشل التزامن — لم يُغيَّر السعر. أعد المحاولة.', 'Sync failed — price unchanged. Retry.');
+          : first?.status === 'ambiguous'
+            ? t('فشل التزامن: الخطة لها أكثر من تسعير في Freemius — اربط Pricing ID المحدد أولًا. لم يُغيَّر السعر.', 'Sync failed: the plan has more than one price in Freemius — link the exact Pricing ID first. Price unchanged.')
+            : first?.status === 'mismatch'
+              ? t('فشل التزامن: سعر Freemius لا يطابق السعر المطلوب — لم يُغيَّر السعر.', 'Sync failed: the Freemius price does not match — price unchanged.')
+              : t('فشل التزامن — لم يُغيَّر السعر. أعد المحاولة.', 'Sync failed — price unchanged. Retry.');
         toast.error(msg);
       }
 
@@ -183,6 +185,7 @@ export default function AdminPlansPage() {
       synced: { label: t('مُزامن ومؤكد', 'Synced'), cls: 'bg-emerald-100 text-emerald-700 border-0' },
       mismatch: { label: t('غير متطابق', 'Mismatch'), cls: 'bg-red-100 text-red-700 border-0' },
       not_linked: { label: t('غير مرتبط', 'Not linked'), cls: 'bg-amber-100 text-amber-700 border-0' },
+      ambiguous: { label: t('تسعيرات متعددة', 'Multiple prices'), cls: 'bg-amber-100 text-amber-700 border-0' },
       unavailable: { label: t('تعذّر التحقق', 'Unverified'), cls: 'bg-amber-100 text-amber-700 border-0' },
       not_configured: { label: t('غير مضبوط', 'Not configured'), cls: 'bg-amber-100 text-amber-700 border-0' },
     };

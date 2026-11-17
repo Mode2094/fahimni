@@ -74,6 +74,23 @@ class FreemiusPriceSyncTest extends TenantTestCase
         return Http::response(['timestamp' => now()->toRfc2822String()], 200);
     }
 
+    /** A raw pricing-list response (may contain several pricings). */
+    private function pricingRows(array $rows)
+    {
+        return Http::response(['pricing' => $rows], 200);
+    }
+
+    private function usdRow(string $id, float $monthly, ?float $annual = null): array
+    {
+        return [
+            'id' => $id,
+            'plan_id' => '1010',
+            'currency' => 'usd',
+            'monthly_price' => $monthly,
+            'annual_price' => $annual,
+        ];
+    }
+
     // ── Signature (official developer-scope algorithm) ───────────────
 
     public function test_developer_signature_matches_official_algorithm(): void
@@ -350,5 +367,236 @@ class FreemiusPriceSyncTest extends TenantTestCase
         ], $this->authHeaders($admin, $tenant))
             ->assertOk()
             ->assertJsonPath('mode', 'checkout');
+    }
+
+    // ── P0: currency, cycle, exact Pricing ID, ambiguity ─────────────
+
+    public function test_currency_mismatch_is_never_synced_and_blocks_checkout(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(); // displayed 49.00 USD
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // Same amount but a NON-USD currency must never count as synced.
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => $this->pricingRows([
+                ['id' => '5005', 'plan_id' => '1010', 'currency' => 'eur', 'monthly_price' => 49.0, 'annual_price' => 490.0],
+            ]),
+        ]);
+
+        $this->getJson("/api/v1/admin/plans/{$plan->id}/freemius-sync", $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('sync.monthly.status', 'mismatch')
+            ->assertJsonPath('sync.monthly.currency', 'EUR');
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($admin, $tenant))
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'mismatch');
+    }
+
+    public function test_ambiguous_multiple_pricings_block_checkout_and_publish(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(); // displayed 49.00
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // Two pricings, no explicit Pricing ID → ambiguous, never a guess.
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => $this->pricingRows([
+                $this->usdRow('5005', 49.0, 490.0),
+                $this->usdRow('5006', 99.0, 990.0),
+            ]),
+        ]);
+
+        $this->getJson("/api/v1/admin/plans/{$plan->id}/freemius-sync", $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('sync.monthly.status', 'ambiguous');
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($admin, $tenant))
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'ambiguous');
+
+        $res = $this->postJson("/api/v1/admin/plans/{$plan->id}/publish-price", [
+            'monthly_price' => 59,
+        ], $this->authHeaders($admin, $tenant));
+
+        $res->assertOk()
+            ->assertJsonPath('ok', false)
+            ->assertJsonPath('results.monthly.status', 'ambiguous');
+
+        $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
+    }
+
+    public function test_explicit_pricing_id_is_never_substituted_when_unreadable(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(['metadata' => [
+            'freemius_monthly_plan_id' => '1010',
+            'freemius_yearly_plan_id' => '2020',
+            'freemius_monthly_pricing_id' => '9999',
+        ]]);
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // The linked pricing is gone, but the plan still has another (valid) one.
+        // We must NOT silently fall back to it.
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/1010/pricing/9999.json' => Http::response(['error' => ['message' => 'not found']], 404),
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => $this->pricingRows([$this->usdRow('5005', 49.0, 490.0)]),
+        ]);
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($admin, $tenant))
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'unavailable');
+
+        $res = $this->postJson("/api/v1/admin/plans/{$plan->id}/publish-price", [
+            'monthly_price' => 59,
+        ], $this->authHeaders($admin, $tenant));
+
+        $res->assertOk()
+            ->assertJsonPath('ok', false)
+            ->assertJsonPath('results.monthly.status', 'unavailable');
+
+        $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
+
+        // The valid sibling pricing must never have been written to.
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'pricing/5005'));
+    }
+
+    public function test_gateway_returning_a_different_pricing_id_is_rejected(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(['metadata' => [
+            'freemius_monthly_plan_id' => '1010',
+            'freemius_yearly_plan_id' => '2020',
+            'freemius_monthly_pricing_id' => '5005',
+        ]]);
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // Asked for 5005 but the API answers with a different pricing id.
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/1010/pricing/5005.json' => Http::response([
+                'pricing' => ['id' => '9999', 'currency' => 'usd', 'monthly_price' => 49.0],
+            ], 200),
+        ]);
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($admin, $tenant))
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'unavailable');
+    }
+
+    public function test_cycle_without_a_price_for_that_cycle_blocks_checkout(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(); // displayed yearly 490.00
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // Monthly price exists but there is NO annual price → yearly blocked.
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/2020/pricing.json' => $this->pricingRows([
+                ['id' => '5005', 'plan_id' => '2020', 'currency' => 'usd', 'monthly_price' => 49.0],
+            ]),
+        ]);
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'yearly',
+        ], $this->authHeaders($admin, $tenant))
+            ->assertStatus(409)
+            ->assertJsonPath('reason', 'unavailable');
+    }
+
+    public function test_hosted_checkout_url_carries_verified_pricing_id_and_freemius_cycle(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(); // monthly 49.00 / yearly 490.00
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => $this->pricingList(49.0, 490.0),
+            'api.freemius.test/v1/products/777/plans/2020/pricing.json' => $this->pricingList(49.0, 490.0),
+        ]);
+
+        $monthly = $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($admin, $tenant))->assertOk()->json('checkout_url');
+
+        $this->assertStringContainsString('pricing_id=5005', $monthly);
+        $this->assertStringContainsString('billing_cycle=monthly', $monthly);
+        $this->assertStringContainsString('currency=usd', $monthly);
+
+        $yearly = $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'yearly',
+        ], $this->authHeaders($admin, $tenant))->assertOk()->json('checkout_url');
+
+        $this->assertStringContainsString('pricing_id=5005', $yearly);
+        $this->assertStringContainsString('billing_cycle=annual', $yearly);
+        $this->assertStringNotContainsString('billing_cycle=yearly', $yearly);
+    }
+
+    public function test_upgrade_link_uses_the_official_annual_cycle_and_no_currency(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan(); // yearly 490.00
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        \App\Models\FsEntitlement::create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'fs_license_id' => 'LIC-UP',
+            'plan_id' => $plan->id,
+            'type' => 'subscription',
+            'status' => 'active',
+            'expiration' => now()->addDays(20),
+            'is_canceled' => false,
+        ]);
+
+        Http::fake([
+            'api.freemius.test/v1/products/777/plans/2020/pricing.json' => $this->pricingList(49.0, 490.0),
+            'api.freemius.test/v1/products/777/licenses/LIC-UP/checkout/link.json' => Http::response([
+                'url' => 'https://checkout.freemius.test/upgrade/xyz',
+                'settings' => [],
+                'expires' => now()->addHour()->toIso8601String(),
+            ], 200),
+        ]);
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'yearly',
+        ], $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('mode', 'upgrade');
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/products/777/licenses/LIC-UP/checkout/link.json')) {
+                return false;
+            }
+
+            $data = $request->data();
+
+            return ($data['billing_cycle'] ?? null) === 'annual'
+                && ($data['plan_id'] ?? null) === '2020'
+                && ! array_key_exists('currency', $data);
+        });
     }
 }

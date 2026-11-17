@@ -114,11 +114,12 @@ class FreemiusCheckoutController extends Controller
         }
 
         // Price integrity: a buyer must never pay an amount different from the
-        // displayed price. Verify the plan's price against Freemius and fail
-        // closed when it cannot be proven. No checkout URL is issued otherwise.
+        // displayed price. Verify the plan's price against Freemius (amount +
+        // USD + the EXACT Pricing ID) and fail closed when it cannot be proven.
+        // No checkout URL is issued otherwise.
         $guard = app(FreemiusPriceSyncService::class)->guardCheckout($plan, $cycle);
 
-        if (! $guard['ok']) {
+        if (! $guard['ok'] || empty($guard['pricing_id'])) {
             AuditLogger::log($request, 'subscription.freemius_price_guard_blocked', 'plan', $plan->id, [
                 'cycle' => $cycle,
                 'status' => $guard['status'],
@@ -130,12 +131,18 @@ class FreemiusCheckoutController extends Controller
             ], 409);
         }
 
+        // The verified pricing id + official Freemius billing cycle
+        // (monthly|annual) drive BOTH the hosted checkout and the upgrade link,
+        // so the buyer is charged on exactly the pricing we verified.
+        $fsPlanId = $guard['plan_id'] ?? $fsPlanId;
+        $pricingId = (string) $guard['pricing_id'];
+        $fsCycle = (string) $guard['billing_cycle'];
+
         if ($existing) {
             $upgrade = FreemiusGateway::upgradeCheckoutLink($existing->fs_license_id, [
                 'plan_id' => $fsPlanId,
-                'billing_cycle' => $cycle,
+                'billing_cycle' => $fsCycle,
                 'quota' => 1,
-                'currency' => 'usd',
             ]);
 
             if ($upgrade && ! empty($upgrade['url'])) {
@@ -149,15 +156,19 @@ class FreemiusCheckoutController extends Controller
             }
         }
 
-        // Fresh hosted checkout. The URL carries product + plan; we only add
-        // the prefilled/read-only email. No price is ever passed (Freemius uses
-        // the plan's configured price). The post-purchase redirect URL (with a
-        // Freemius-signed `signature`) is configured in the Freemius Dashboard
-        // (Plans → Customization → Redirect Checkout to a custom URL) and points
-        // to our /checkout/success page.
+        // Fresh hosted checkout. The URL carries product + plan AND the exact
+        // verified pricing id + billing cycle (official Freemius checkout URL
+        // parameters), so the charge matches the displayed price. The
+        // post-purchase redirect URL (with a Freemius-signed `signature`) is
+        // configured in the Freemius Dashboard (Plans → Customization →
+        // Redirect Checkout to a custom URL) and points to /checkout/success.
         $reference = $this->recordIntent($tenant, $plan, $cycle, (string) $email, $request->user()?->id);
 
-        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email);
+        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email, [
+            'pricing_id' => $pricingId,
+            'billing_cycle' => $fsCycle,
+            'currency' => 'usd',
+        ]);
 
         AuditLogger::log($request, 'subscription.freemius_checkout', 'plan', $plan->id, ['cycle' => $cycle]);
 

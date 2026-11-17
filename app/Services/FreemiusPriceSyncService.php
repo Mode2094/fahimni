@@ -37,6 +37,13 @@ class FreemiusPriceSyncService
 
     public const STATUS_NOT_LINKED = 'not_linked';
 
+    /**
+     * The Freemius plan has MORE THAN ONE pricing and no explicit Pricing ID is
+     * linked locally. We never guess which price the buyer must pay — purchase
+     * is blocked until a Super Admin links the exact Pricing ID.
+     */
+    public const STATUS_AMBIGUOUS = 'ambiguous';
+
     public const STATUS_UNAVAILABLE = 'unavailable';
 
     public const STATUS_NOT_CONFIGURED = 'not_configured';
@@ -69,26 +76,40 @@ class FreemiusPriceSyncService
     }
 
     /**
+     * Live status of one billing cycle.
+     *
+     * A cycle is `synced` ONLY when ALL of the following hold against Freemius:
+     *   1. the pricing is resolved to ONE authoritative Pricing ID (explicitly
+     *      linked, or the plan's single pricing — never a random pick),
+     *   2. the remote pricing's currency is USD, and
+     *   3. the remote amount for THIS cycle equals the displayed amount.
+     *
      * @return array<string, mixed>
      */
     public function cycleStatus(SubscriptionPlan $plan, string $cycle): array
     {
         $local = $this->localPrice($plan, $cycle);
-        $planId = FreemiusPlanMapper::planId($plan, $cycle);
-
-        if (! $planId) {
-            return $this->cycleResult($cycle, self::STATUS_NOT_LINKED, $local, null, null, null, null);
-        }
-
         $remote = $this->remotePrice($plan, $cycle);
 
-        if ($remote['error'] !== null || $remote['amount'] === null) {
-            return $this->cycleResult($cycle, self::STATUS_UNAVAILABLE, $local, null, $remote['currency'], $planId, $remote['pricing_id'], $remote['error']);
+        // Not resolvable to a single, authoritative pricing → never "synced".
+        if ($remote['status'] !== 'ok' || $remote['amount'] === null || $remote['pricing_id'] === null) {
+            $status = match ($remote['status']) {
+                self::STATUS_NOT_LINKED, self::STATUS_AMBIGUOUS => $remote['status'],
+                default => self::STATUS_UNAVAILABLE,
+            };
+
+            return $this->cycleResult($cycle, $status, $local, null, $remote['currency'], $remote['plan_id'], $remote['pricing_id'], $remote['error'] ?? $remote['status']);
+        }
+
+        // Currency must be USD — a matching amount in another currency is a
+        // mismatch, not a sync.
+        if (! $this->currencyMatches($remote['currency'])) {
+            return $this->cycleResult($cycle, self::STATUS_MISMATCH, $local, $remote['amount'], $remote['currency'], $remote['plan_id'], $remote['pricing_id'], 'currency_mismatch');
         }
 
         $status = $this->amountsMatch($local, $remote['amount']) ? self::STATUS_SYNCED : self::STATUS_MISMATCH;
 
-        return $this->cycleResult($cycle, $status, $local, $remote['amount'], $remote['currency'], $planId, $remote['pricing_id']);
+        return $this->cycleResult($cycle, $status, $local, $remote['amount'], $remote['currency'], $remote['plan_id'], $remote['pricing_id']);
     }
 
     /**
@@ -131,26 +152,37 @@ class FreemiusPriceSyncService
     }
 
     /**
-     * Guard a checkout: the displayed price MUST equal the Freemius charge, and
-     * it must be provable. Fails closed when the price cannot be verified.
+     * Guard a checkout: the displayed price MUST equal the Freemius charge in
+     * USD, for the EXACT Pricing ID the buyer will be charged on, and it must be
+     * provable. Fails closed (never a random pricing, never a foreign currency).
      *
-     * @return array{ok: bool, status: string, message: string}
+     * On success the returned `pricing_id` + `billing_cycle` (Freemius values:
+     * monthly|annual) are the ones the checkout URL MUST carry.
+     *
+     * @return array{ok: bool, status: string, message: string, plan_id: ?string, pricing_id: ?string, billing_cycle: string}
      */
     public function guardCheckout(SubscriptionPlan $plan, string $cycle): array
     {
         $status = $this->cycleStatus($plan, $cycle);
 
+        $base = [
+            'plan_id' => $status['plan_id'] ?? null,
+            'pricing_id' => $status['pricing_id'] ?? null,
+            'billing_cycle' => self::freemiusCycle($cycle),
+        ];
+
         if (($status['status'] ?? null) === self::STATUS_SYNCED) {
-            return ['ok' => true, 'status' => self::STATUS_SYNCED, 'message' => 'Price verified against the payment gateway.'];
+            return $base + ['ok' => true, 'status' => self::STATUS_SYNCED, 'message' => 'Price verified against the payment gateway.'];
         }
 
         $reason = (string) ($status['status'] ?? self::STATUS_UNAVAILABLE);
 
-        return [
+        return $base + [
             'ok' => false,
             'status' => $reason,
             'message' => match ($reason) {
-                self::STATUS_MISMATCH => 'The displayed price does not match the payment gateway price — purchase is blocked until an administrator republishes the price.',
+                self::STATUS_MISMATCH => 'The displayed price or currency does not match the payment gateway — purchase is blocked until an administrator republishes the price.',
+                self::STATUS_AMBIGUOUS => 'This plan has more than one price in the payment gateway. An administrator must link the exact Pricing ID before it can be purchased.',
                 self::STATUS_NOT_LINKED => 'This plan is not linked to a payment-gateway price yet.',
                 default => 'We could not verify the price with the payment gateway right now. Please try again in a moment.',
             },
@@ -196,11 +228,22 @@ class FreemiusPriceSyncService
             );
         }
 
-        $pricingId = $this->resolvePricingId($plan, $cycle, $planId);
+        $resolved = $this->resolvePricing($plan, $cycle);
 
-        if (! $pricingId) {
-            return $this->publishResult($cycle, self::STATUS_NOT_LINKED, false, $oldPrice, $newPrice, null, $currency, $planId, null, 'No Freemius pricing id could be resolved for this billing cycle. Set the Freemius Pricing ID for the plan (or ensure the plan has a single pricing in Freemius).');
+        if ($resolved['status'] !== 'ok' || $resolved['pricing_id'] === null) {
+            if ($resolved['status'] === self::STATUS_AMBIGUOUS) {
+                return $this->publishResult($cycle, self::STATUS_AMBIGUOUS, false, $oldPrice, $newPrice, null, $currency, $planId, null, 'This Freemius plan has more than one pricing. Link the exact Freemius Pricing ID for this cycle in the admin panel before publishing — the price was NOT changed.');
+            }
+
+            if ($resolved['status'] === self::STATUS_NOT_LINKED) {
+                return $this->publishResult($cycle, self::STATUS_NOT_LINKED, false, $oldPrice, $newPrice, null, $currency, $planId, null, 'No Freemius pricing id could be resolved for this billing cycle. Set the Freemius Pricing ID for the plan (or ensure the plan has a single pricing in Freemius).');
+            }
+
+            return $this->publishResult($cycle, self::STATUS_UNAVAILABLE, false, $oldPrice, $newPrice, null, $currency, $planId, $resolved['pricing_id'], 'The linked Freemius pricing could not be read, so the price was NOT changed. No other pricing was substituted.');
         }
+
+        $planId = $resolved['plan_id'] ?? $planId;
+        $pricingId = $resolved['pricing_id'];
 
         $field = $cycle === 'yearly' ? 'annual_price' : 'monthly_price';
         $payload = [$field => $newPrice, 'currency' => strtolower($currency)];
@@ -221,14 +264,19 @@ class FreemiusPriceSyncService
         // Re-read the ACTUAL price — never trust the write response alone.
         $remote = $this->remotePrice($plan, $cycle);
 
-        if ($remote['amount'] === null || $remote['error'] !== null) {
+        if ($remote['amount'] === null || $remote['status'] !== 'ok') {
             AuditLogger::log($request, 'subscription.plan_price_publish_unverified', 'plan', $plan->id, [
                 'cycle' => $cycle,
                 'requested_price' => $newPrice,
-                'error' => $remote['error'],
+                'error' => $remote['error'] ?? $remote['status'],
             ]);
 
             return $this->publishResult($cycle, self::STATUS_UNAVAILABLE, false, $oldPrice, $newPrice, null, $currency, $planId, $pricingId, 'The price was sent but could not be re-read from Freemius, so it was NOT adopted. Please retry.');
+        }
+
+        // The re-read must be the SAME pricing we wrote to (never another one).
+        if ($remote['pricing_id'] !== $pricingId) {
+            return $this->publishResult($cycle, self::STATUS_MISMATCH, false, $oldPrice, $newPrice, $remote['amount'], $remote['currency'], $planId, $pricingId, 'Freemius returned a different pricing than the one written. The site price was NOT changed.');
         }
 
         if (! $this->amountsMatch($newPrice, $remote['amount'])) {
@@ -311,96 +359,114 @@ class FreemiusPriceSyncService
     }
 
     /**
-     * Resolve the Freemius pricing id for a cycle: explicit mapping first, then
-     * (when the plan has exactly one unambiguous pricing) that pricing.
+     * Resolve EXACTLY ONE authoritative Freemius pricing for a local plan +
+     * cycle. This never guesses:
+     *
+     *  - An explicitly linked Pricing ID (metadata/env) is used and MUST exist in
+     *    Freemius; if it cannot be read we DO NOT substitute another pricing.
+     *  - With no explicit link, the plan must have EXACTLY ONE pricing.
+     *  - Multiple pricings without a link → `ambiguous` (purchase is blocked);
+     *    we never pick the "first"/"cheapest" one.
+     *
+     * @return array{status: string, pricing: ?array<string, mixed>, plan_id: ?string, pricing_id: ?string}
+     *         status ∈ ok|not_linked|ambiguous|unavailable
      */
-    private function resolvePricingId(SubscriptionPlan $plan, string $cycle, string $planId): ?string
+    private function resolvePricing(SubscriptionPlan $plan, string $cycle): array
     {
+        $planId = FreemiusPlanMapper::planId($plan, $cycle);
+
+        if (! $planId) {
+            return ['status' => self::STATUS_NOT_LINKED, 'pricing' => null, 'plan_id' => null, 'pricing_id' => null];
+        }
+
         $explicit = FreemiusPlanMapper::pricingId($plan, $cycle);
 
         if ($explicit) {
-            return $explicit;
+            $pricing = FreemiusGateway::getPricing($planId, $explicit);
+
+            // The specific pricing could not be read → unavailable. Never fall
+            // back to a different pricing of the same plan.
+            if ($pricing === null) {
+                return ['status' => self::STATUS_UNAVAILABLE, 'pricing' => null, 'plan_id' => $planId, 'pricing_id' => $explicit];
+            }
+
+            // Defensive: the API must return the pricing we asked for.
+            $returnedId = isset($pricing['id']) ? (string) $pricing['id'] : $explicit;
+
+            if ($returnedId !== $explicit) {
+                return ['status' => self::STATUS_UNAVAILABLE, 'pricing' => null, 'plan_id' => $planId, 'pricing_id' => $explicit];
+            }
+
+            return ['status' => 'ok', 'pricing' => $pricing, 'plan_id' => $planId, 'pricing_id' => $explicit];
         }
 
         $list = FreemiusGateway::getPlanPricing($planId);
 
         if ($list === null) {
-            return null;
+            return ['status' => self::STATUS_UNAVAILABLE, 'pricing' => null, 'plan_id' => $planId, 'pricing_id' => null];
         }
 
-        $picked = $this->pickPricing($list);
+        if (count($list) > 1) {
+            // Ambiguous: several prices exist and none is linked. Block.
+            return ['status' => self::STATUS_AMBIGUOUS, 'pricing' => null, 'plan_id' => $planId, 'pricing_id' => null];
+        }
 
-        return $picked !== null ? (string) ($picked['id'] ?? '') ?: null : null;
+        if ($list === []) {
+            return ['status' => self::STATUS_NOT_LINKED, 'pricing' => null, 'plan_id' => $planId, 'pricing_id' => null];
+        }
+
+        $pricing = $list[0];
+        $id = isset($pricing['id']) && $pricing['id'] !== '' ? (string) $pricing['id'] : null;
+
+        if ($id === null) {
+            return ['status' => self::STATUS_UNAVAILABLE, 'pricing' => null, 'plan_id' => $planId, 'pricing_id' => null];
+        }
+
+        return ['status' => 'ok', 'pricing' => $pricing, 'plan_id' => $planId, 'pricing_id' => $id];
     }
 
     /**
-     * Read the authoritative remote price for a cycle.
+     * Read the authoritative remote price for a cycle via the strict single
+     * pricing resolution (no random pick, no substitution).
      *
-     * @return array{amount: ?float, currency: string, pricing_id: ?string, error: ?string}
+     * @return array{amount: ?float, currency: string, pricing_id: ?string, plan_id: ?string, status: string, error: ?string}
      */
     private function remotePrice(SubscriptionPlan $plan, string $cycle): array
     {
-        $planId = FreemiusPlanMapper::planId($plan, $cycle);
+        $resolved = $this->resolvePricing($plan, $cycle);
 
-        if (! $planId) {
-            return ['amount' => null, 'currency' => self::CURRENCY, 'pricing_id' => null, 'error' => 'not_linked'];
+        if ($resolved['status'] !== 'ok' || ! is_array($resolved['pricing'])) {
+            return [
+                'amount' => null,
+                'currency' => self::CURRENCY,
+                'pricing_id' => $resolved['pricing_id'],
+                'plan_id' => $resolved['plan_id'],
+                'status' => $resolved['status'],
+                'error' => $resolved['status'],
+            ];
         }
 
-        $pricingId = FreemiusPlanMapper::pricingId($plan, $cycle);
-        $pricing = null;
-
-        if ($pricingId) {
-            $pricing = FreemiusGateway::getPricing($planId, $pricingId);
-        }
-
-        if ($pricing === null) {
-            $list = FreemiusGateway::getPlanPricing($planId);
-
-            if ($list === null) {
-                return ['amount' => null, 'currency' => self::CURRENCY, 'pricing_id' => $pricingId, 'error' => 'unavailable'];
-            }
-
-            $candidate = $this->pickPricing($list);
-
-            if ($candidate === null) {
-                return ['amount' => null, 'currency' => self::CURRENCY, 'pricing_id' => $pricingId, 'error' => 'no_pricing'];
-            }
-
-            $pricing = $candidate;
-        }
-
+        $pricing = $resolved['pricing'];
         $amount = $this->extractAmount($pricing, $cycle);
         $currency = strtoupper((string) ($pricing['currency'] ?? self::CURRENCY));
 
         return [
             'amount' => $amount,
             'currency' => $currency,
-            'pricing_id' => isset($pricing['id']) ? (string) $pricing['id'] : $pricingId,
-            'error' => $amount === null ? 'no_amount' : null,
+            'pricing_id' => $resolved['pricing_id'],
+            'plan_id' => $resolved['plan_id'],
+            'status' => $amount === null ? self::STATUS_UNAVAILABLE : 'ok',
+            'error' => $amount === null ? 'no_amount_for_cycle' : null,
         ];
     }
 
     /**
-     * Pick the best pricing row: prefer a non-hidden USD pricing, else the first.
-     *
-     * @param  array<int, array<string, mixed>>  $list
-     * @return array<string, mixed>|null
+     * Map a local billing cycle to the official Freemius value.
+     * Freemius accepts `monthly` | `annual` | `lifetime` (never `yearly`).
      */
-    private function pickPricing(array $list): ?array
+    public static function freemiusCycle(string $cycle): string
     {
-        if ($list === []) {
-            return null;
-        }
-
-        $usd = array_values(array_filter($list, fn ($p) => $this->currencyMatches(strtoupper((string) ($p['currency'] ?? '')))));
-
-        if ($usd !== []) {
-            $visible = array_values(array_filter($usd, fn ($p) => empty($p['is_hidden'])));
-
-            return $visible[0] ?? $usd[0];
-        }
-
-        return $list[0];
+        return $cycle === 'yearly' ? 'annual' : 'monthly';
     }
 
     /**
