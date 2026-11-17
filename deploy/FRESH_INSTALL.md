@@ -54,17 +54,17 @@ The installer is **pinned to one commit** so a later push cannot change what the
 VPS runs. Run **once** as root on the new VPS (replace the email):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/b1f2dee3e240705e828d7cfe1288a5f9428ccd1b/deploy/scripts/fresh-install.sh | sudo -E bash -s -- --release-sha b1f2dee3e240705e828d7cfe1288a5f9428ccd1b --acme-email admin@fahimni.me
+curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/88fa84c728e6c2913919825717b3e09cf7ff32e4/deploy/scripts/fresh-install.sh | sudo -E bash -s -- --release-sha 88fa84c728e6c2913919825717b3e09cf7ff32e4 --acme-email admin@fahimni.me
 ```
 
 That is the whole install: it bootstraps Docker, hardens the firewall, clones
-**exactly** commit `b1f2dee3e240705e828d7cfe1288a5f9428ccd1b`, generates every secret, builds and starts the stack,
+**exactly** commit `88fa84c728e6c2913919825717b3e09cf7ff32e4`, generates every secret, builds and starts the stack,
 runs migrations + seeders, creates the admin, starts the standalone Caddy edge
 with automatic HTTPS, and then **verifies the live site** (DNS, TLS, branding,
 migrations, pages).
 
 > Running as `root` already? Drop `sudo -E`:
-> `curl -fsSL <same-url> | bash -s -- --release-sha b1f2dee3e240705e828d7cfe1288a5f9428ccd1b --acme-email admin@fahimni.me`
+> `curl -fsSL <same-url> | bash -s -- --release-sha 88fa84c728e6c2913919825717b3e09cf7ff32e4 --acme-email admin@fahimni.me`
 
 > `--release-sha` pins the deployed release to that commit. Omit it only if you
 > deliberately want the tip of `--branch` (default `fix/launch-blockers-rc`).
@@ -148,9 +148,9 @@ new commit. It reuses the release-layout, the existing
 database and **every** Docker volume:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/b1f2dee3e240705e828d7cfe1288a5f9428ccd1b/deploy/scripts/fresh-install.sh \
+curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/88fa84c728e6c2913919825717b3e09cf7ff32e4/deploy/scripts/fresh-install.sh \
   | sudo -E bash -s -- \
-      --release-sha b1f2dee3e240705e828d7cfe1288a5f9428ccd1b \
+      --release-sha 88fa84c728e6c2913919825717b3e09cf7ff32e4 \
       --skip-host-bootstrap \
       --acme-email admin@fahimni.me
 ```
