@@ -39,8 +39,8 @@ Laravel (PHP-FPM)  +  Next.js  +  PostgreSQL 16  +  Redis 7  +  nginx  (Docker)
 | 3 | **Ports** | Allow inbound **22, 80, 443** (the script enables UFW; also check the Hostinger VPS firewall). Port 80 must be reachable directly — do **not** proxy the domain through Cloudflare yet (HTTP‑01 challenge). |
 | 4 | **Domain** | Use a domain you control; defaults are `fahimni.me` / `api.fahimni.me` (override with `--domain` / `--api-domain`). |
 | 5 | **ACME email** | An email for Let's Encrypt expiry notices (`--acme-email`). Optional but recommended. |
-| 6 | **Admin** | Optional: `--admin-email` (default `admin@fahimni.me`) and `--admin-password` (default: strong random). |
-| 7 | **SMTP** (optional) | Transactional mail needs real `MAIL_*` values; add them to `/etc/fahimni/production.env` after the first run. The site works without it. |
+| 6 | **Admin** | Optional: `--admin-email` (default `admin@fahimni.me`) and `--admin-password` (default: strong random). If the first admin keeps a placeholder address, change it later with `fahimni:set-super-admin-email` (§6) — never by reseeding. |
+| 7 | **SMTP** (optional) | Transactional mail (verification, invitations, password reset) needs real `MAIL_*` values; add them to `/etc/fahimni/production.env` after the first run. The site works without it, but the "forgot password" page then honestly says no email could be delivered instead of promising one. Prove delivery with `fahimni:mail-test` (§6). |
 
 > This does **not** touch any other project's DNS records or servers. Re-pointing
 > `fahimni.me` to the new VPS is the intended cutover; leave every unrelated
@@ -54,17 +54,17 @@ The installer is **pinned to one commit** so a later push cannot change what the
 VPS runs. Run **once** as root on the new VPS (replace the email):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/6062ed65ce79ccec3730279dddd6b3f9ce89f8c5/deploy/scripts/fresh-install.sh | sudo -E bash -s -- --release-sha 6062ed65ce79ccec3730279dddd6b3f9ce89f8c5 --acme-email admin@fahimni.me
+curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/b1f2dee3e240705e828d7cfe1288a5f9428ccd1b/deploy/scripts/fresh-install.sh | sudo -E bash -s -- --release-sha b1f2dee3e240705e828d7cfe1288a5f9428ccd1b --acme-email admin@fahimni.me
 ```
 
 That is the whole install: it bootstraps Docker, hardens the firewall, clones
-**exactly** commit `6062ed65ce79ccec3730279dddd6b3f9ce89f8c5`, generates every secret, builds and starts the stack,
+**exactly** commit `b1f2dee3e240705e828d7cfe1288a5f9428ccd1b`, generates every secret, builds and starts the stack,
 runs migrations + seeders, creates the admin, starts the standalone Caddy edge
 with automatic HTTPS, and then **verifies the live site** (DNS, TLS, branding,
 migrations, pages).
 
 > Running as `root` already? Drop `sudo -E`:
-> `curl -fsSL <same-url> | bash -s -- --release-sha 6062ed65ce79ccec3730279dddd6b3f9ce89f8c5 --acme-email admin@fahimni.me`
+> `curl -fsSL <same-url> | bash -s -- --release-sha b1f2dee3e240705e828d7cfe1288a5f9428ccd1b --acme-email admin@fahimni.me`
 
 > `--release-sha` pins the deployed release to that commit. Omit it only if you
 > deliberately want the tip of `--branch` (default `fix/launch-blockers-rc`).
@@ -140,7 +140,81 @@ before announcing the launch.
 
 ---
 
-## 6. Troubleshooting
+## 6. Updating an existing install (safe — one command)
+
+The installer is idempotent, so an update is the **same** pinned command with the
+new commit. It reuses the release-layout, the existing
+`/etc/fahimni/production.env` (secrets are **never** rotated once they exist), the
+database and **every** Docker volume:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/b1f2dee3e240705e828d7cfe1288a5f9428ccd1b/deploy/scripts/fresh-install.sh \
+  | sudo -E bash -s -- \
+      --release-sha b1f2dee3e240705e828d7cfe1288a5f9428ccd1b \
+      --skip-host-bootstrap \
+      --acme-email admin@fahimni.me
+```
+
+`--release-sha` is the approved release; replace it (and the URL's SHA) when a
+newer commit is approved. `--skip-host-bootstrap` is safe on a host that already
+has Docker — drop it if you are unsure.
+
+What it does, in order:
+
+1. clones the pinned commit into `/opt/fahimni/production/releases/<sha>` — a
+   **new** directory, so the previous release is left in place for rollback;
+2. reuses the existing env file (only missing values are generated);
+3. builds images tagged with the commit;
+4. runs the one-shot `migrate` service (additive migrations only) and
+   `plans:sync`;
+5. `docker compose up -d --remove-orphans` (this stack only);
+6. waits for `migrate` to exit `0` and for loopback health;
+7. only then switches `/opt/fahimni/production/current` to the new release.
+
+**Nothing destructive happens:** no `migrate:fresh`, no `migrate:rollback`, no
+`docker compose down -v`, no volume removal, no secret rotation. If step 4–6
+fails, the script exits non-zero **before** switching `current`, so the old
+release stays current — investigate with `docker compose logs` and re-run.
+
+### Verify right after every update (the launch gate)
+
+```bash
+sudo bash /opt/fahimni/production/current/deploy/scripts/fresh-install.sh --verify-only
+```
+
+This re-runs the whole suite from §5 (containers, loopback health, migrations,
+DNS, HTTPS, branding, login surfaces, exposure) and exits non-zero on any
+failure. A green run — not the update command's exit code alone — is the gate for
+announcing the release.
+
+### Prove real email delivery and fix the admin address
+
+```bash
+cd /opt/fahimni/production/current
+
+# (a) send a REAL message and confirm it arrives in an external inbox:
+docker compose exec -T app php artisan fahimni:mail-test you@your-inbox.example
+
+# (b) if the first super-admin still uses a placeholder address, change ONLY the
+#     email — the password, roles, 2FA and all data are preserved:
+docker compose exec -T app php artisan fahimni:set-super-admin-email \
+  you@your-domain.example --from=<current-placeholder-address> \
+  --env-file=/etc/fahimni/production.env --force
+```
+
+- `fahimni:mail-test` prints `NOT delivered` and exits **non-zero** when the
+  configured mailer is `log`/`array`, a placeholder address, or a
+  localhost/loopback host — it never claims a delivery that did not happen. The
+  same configuration check drives the honest "forgot password" page: it promises
+  an email only when the mailer can actually deliver, and never reveals whether
+  an address is registered.
+- `fahimni:set-super-admin-email` refuses an address already in use and asks for
+  confirmation unless `--force` is passed. `--env-file` keeps
+  `SUPER_ADMIN_EMAIL` (read by the Google sign-in admin check) in sync.
+
+---
+
+## 7. Troubleshooting
 
 ```bash
 cd /opt/fahimni/production/current
@@ -161,11 +235,13 @@ docker compose -f deploy/caddy/docker-compose.caddy.yml -p fahimni-edge logs --t
 
 ---
 
-## 7. Files
+## 8. Files
 
 | Path | Purpose |
 |------|---------|
-| `deploy/scripts/fresh-install.sh` | the installer (this document) |
+| `deploy/scripts/fresh-install.sh` | the installer + updater + verifier (this document) |
+| `app/Console/Commands/MailTestCommand.php` | `fahimni:mail-test` — honest real-delivery check |
+| `app/Console/Commands/SetSuperAdminEmailCommand.php` | `fahimni:set-super-admin-email` — safe admin email change |
 | `deploy/caddy/fahimni-standalone.caddy` | standalone Caddyfile (automatic HTTPS) |
 | `deploy/caddy/docker-compose.caddy.yml` | standalone Caddy container (project `fahimni-edge`) |
 | `deploy/caddy/caddy.env.example` | template for `/etc/fahimni/caddy.env` |

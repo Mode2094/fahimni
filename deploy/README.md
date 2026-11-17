@@ -276,6 +276,20 @@ First deployment has no automatic rollback target; if it fails, inspect with
 `docker compose ps` and `docker compose logs --tail=100 app` (logs may contain
 sensitive request data — do not paste them publicly).
 
+**Updating the standalone production host** (installed via
+`deploy/FRESH_INSTALL.md`) uses the same pinned command re-run, which never
+rotates secrets or removes volumes and switches `current` only after health
+passes:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/<RELEASE_SHA>/deploy/scripts/fresh-install.sh \
+  | sudo -E bash -s -- --release-sha <RELEASE_SHA> --skip-host-bootstrap --acme-email <ACME_EMAIL>
+```
+
+Then gate the launch on `sudo bash /opt/fahimni/production/current/deploy/scripts/fresh-install.sh --verify-only`.
+See `deploy/FRESH_INSTALL.md` §6 for the exact steps, plus `fahimni:mail-test`
+(real delivery) and `fahimni:set-super-admin-email` (safe admin email change).
+
 ## 9. Rollback
 
 ```bash
