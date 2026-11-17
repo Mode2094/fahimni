@@ -380,6 +380,7 @@ Route::prefix('v1')->group(function () {
                 // Prices are verified against Freemius before being adopted.
                 Route::get('admin/plans/{plan}/freemius-sync', [SubscriptionPlanController::class, 'freemiusSync']);
                 Route::post('admin/plans/{plan}/publish-price', [SubscriptionPlanController::class, 'publishPrice']);
+                Route::post('admin/plans/{plan}/apply-pending-price', [SubscriptionPlanController::class, 'applyPendingPrice']);
             });
 
             // ─── Media Infrastructure (Super Admin) ────────

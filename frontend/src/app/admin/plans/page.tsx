@@ -16,7 +16,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Layers, Plus, Trash2, Loader2, Check, Crown, Pencil, RefreshCw,
   TrendingDown,
-  X, HelpCircle, ShieldCheck, AlertTriangle, UploadCloud, BadgeCheck,
+  X, HelpCircle, ShieldCheck, AlertTriangle, UploadCloud, BadgeCheck, Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -114,6 +114,42 @@ export default function AdminPlansPage() {
     setSyncing(true);
     await loadSync(editing.id);
     setSyncing(false);
+  };
+
+  // أزواج فيها سعر مطلوب لم يُطبَّق/يُتحقق منه بعد على البوابة (Pending).
+  const pendingCycles = (['monthly', 'yearly'] as const).filter((c) => sync?.[c]?.pending);
+
+  const applyPendingPrice = async () => {
+    if (!editing?.id) return;
+    const ok = window.confirm(t(
+      'تطبيق السعر المعلّق الآن؟ سيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا عند التأكد من تطابقه مع سعر الدفع الحقيقي.',
+      'Apply the pending price now? It will be sent to Freemius and re-read; it is adopted on the site only once it matches the real charge.',
+    ));
+    if (!ok) return;
+
+    setPublishing(true);
+    try {
+      const res = await fetch(`${API}/admin/plans/${editing.id}/apply-pending-price`, { method: 'POST', headers: headers() });
+      const d = await res.json().catch(() => ({}));
+
+      if (d?.ok && Object.values(d?.results || {}).some((r: any) => r?.ok)) {
+        toast.success(t('تم تطبيق السعر المعلّق والتحقق منه في Freemius', 'Pending price applied and verified on Freemius'));
+      } else {
+        toast.error(t('لم يُطبَّق السعر المعلّق بعد — لم يُغيَّر السعر المعروض. أصلح السبب ثم أعد المحاولة.', 'Pending price still not applied — displayed price unchanged. Fix the cause and retry.'));
+      }
+
+      if (d?.plan) {
+        setForm((f: any) => ({ ...f, monthly_price: d.plan.monthly_price, yearly_price: d.plan.yearly_price }));
+        setPriceForm({ monthly_price: String(d.plan.monthly_price ?? ''), yearly_price: String(d.plan.yearly_price ?? '') });
+      }
+
+      await loadSync(editing.id);
+      load();
+    } catch {
+      toast.error(t('تعذّر تطبيق السعر المعلّق.', 'Could not apply the pending price.'));
+    } finally {
+      setPublishing(false);
+    }
   };
 
   const publishPrice = async () => {
@@ -484,13 +520,37 @@ export default function AdminPlansPage() {
                     <div className="flex items-center justify-between gap-2"><Label>{t('السعر الشهري', 'Monthly price')} (USD)</Label>{syncBadge('monthly')}</div>
                     <Input type="number" value={priceForm.monthly_price} onChange={(e) => setPriceForm({ ...priceForm, monthly_price: e.target.value })} className="h-11" />
                     {sync?.monthly?.remote_price != null && <p className="text-[11px] text-gray-400">{t('سعر Freemius الفعلي', 'Freemius actual')}: {sync.monthly.remote_price} {sync.monthly.currency}</p>}
+                    {sync?.monthly?.pending?.amount != null && (
+                      <p className="text-[11px] text-amber-600">
+                        {t('سعر مطلوب لم يُطبَّق بعد', 'Requested — not applied yet')}: {sync.monthly.pending.amount} USD
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2"><Label>{t('السعر السنوي', 'Yearly price')} (USD)</Label>{syncBadge('yearly')}</div>
                     <Input type="number" value={priceForm.yearly_price} onChange={(e) => setPriceForm({ ...priceForm, yearly_price: e.target.value })} className="h-11" />
                     {sync?.yearly?.remote_price != null && <p className="text-[11px] text-gray-400">{t('سعر Freemius الفعلي', 'Freemius actual')}: {sync.yearly.remote_price} {sync.yearly.currency}</p>}
+                    {sync?.yearly?.pending?.amount != null && (
+                      <p className="text-[11px] text-amber-600">
+                        {t('سعر مطلوب لم يُطبَّق بعد', 'Requested — not applied yet')}: {sync.yearly.pending.amount} USD
+                      </p>
+                    )}
                   </div>
                 </div>
+                {pendingCycles.length > 0 && (
+                  <div className="flex items-start justify-between gap-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-700">
+                    <span className="flex items-start gap-2">
+                      <Clock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      {t(
+                        'يوجد سعر مطلوب لم يُطبَّق على البوابة بعد (لا يُعرض للطالب، والدفع محجوب إن اختلف عن سعر الشحن). أصلح السبب ثم طبّقه.',
+                        'A requested price has not been applied to the gateway yet (never shown to buyers; checkout stays blocked while it differs from the charge). Fix the cause, then apply it.',
+                      )}
+                    </span>
+                    <Button size="sm" variant="outline" className="rounded-full shrink-0 gap-1" onClick={applyPendingPrice} disabled={publishing}>
+                      {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />} {t('تطبيق المعلّق', 'Apply pending')}
+                    </Button>
+                  </div>
+                )}
                 {sync && !sync.developer_configured && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-700">
                     <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />

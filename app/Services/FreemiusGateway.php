@@ -458,8 +458,11 @@ class FreemiusGateway
      * Update a plan's pricing in Freemius using DEVELOPER-scope authentication.
      *
      * This is the ONLY officially documented way to change a plan price via the
-     * API: `PUT /v1/developers/{dev}/products/{prod}/plans/{plan}/pricing/{id}.json`.
+     * API: `PUT /v1/developers/{dev}/plugins/{prod}/plans/{plan}/pricing/{id}.json`.
      * The product Bearer token does NOT authorize this operation.
+     *
+     * (The developer scope aliases the product as `plugins/`; `products/` is
+     * only valid in the product scope and returns `not_implemented` here.)
      *
      * Authentication mirrors the official legacy SDK (freemius-php-sdk): a
      * signed `Authorization: FS {dev_id}:{public_key}:{signature}` header where
@@ -485,7 +488,13 @@ class FreemiusGateway
             return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'missing_ids'];
         }
 
-        $resourcePath = "/v1/developers/{$c['developer_id']}/products/{$productId}/plans/{$planId}/pricing/{$pricingId}.json";
+        // NOTE: the developer scope is registered under `plugins/`, NOT
+        // `products/`. Using `products/` here makes Freemius answer
+        // `400 not_implemented` ("Invalid request path") and the write can
+        // never succeed. Verified against the live API: the same signed
+        // request returns `404 plan_not_found` (route reached) only with
+        // `plugins/`.
+        $resourcePath = "/v1/developers/{$c['developer_id']}/plugins/{$productId}/plans/{$planId}/pricing/{$pricingId}.json";
         $json = json_encode($payload, JSON_UNESCAPED_SLASHES);
 
         if ($json === false) {

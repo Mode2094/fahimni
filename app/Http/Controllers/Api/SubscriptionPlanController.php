@@ -184,6 +184,31 @@ class SubscriptionPlanController extends Controller
     }
 
     /**
+     * Re-apply the PENDING requested price(s) for a plan.
+     *
+     * Used when a previous "Save & publish" could not be applied/verified yet:
+     * the requested amount is retried through the exact same verified path
+     * (send → re-read → adopt ONLY on a confirmed match). Nothing is adopted
+     * without proof, and the displayed price is never changed by the request
+     * alone. Super-admin only.
+     */
+    public function applyPendingPrice(string $id): JsonResponse
+    {
+        $plan = SubscriptionPlan::findOrFail($id);
+
+        $this->authorize('publishPrice', $plan);
+
+        $result = app(FreemiusPriceSyncService::class)->applyPending($plan, request());
+
+        return response()->json([
+            'ok' => $result['ok'],
+            'locked' => $result['locked'],
+            'results' => $result['results'],
+            'plan' => new SubscriptionPlanResource($result['plan']->load('features')),
+        ], $result['locked'] ? 409 : 200);
+    }
+
+    /**
      * Strip Freemius mapping keys from the validated payload — they live in
      * the `metadata` JSONB column, not as top-level table columns.
      */

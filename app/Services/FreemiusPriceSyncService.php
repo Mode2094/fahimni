@@ -50,6 +50,14 @@ class FreemiusPriceSyncService
 
     public const STATUS_INVALID = 'invalid';
 
+    /**
+     * A price change was requested from the admin panel but could NOT be
+     * applied + verified on Freemius yet. The requested amount is stored as
+     * PENDING (never displayed to buyers); the site keeps showing the
+     * Freemius-confirmed price and checkout stays blocked while they differ.
+     */
+    public const STATUS_PENDING = 'pending';
+
     /** Platform-subscription currency — Freemius supports USD only. */
     public const CURRENCY = 'USD';
 
@@ -98,18 +106,61 @@ class FreemiusPriceSyncService
                 default => self::STATUS_UNAVAILABLE,
             };
 
-            return $this->cycleResult($cycle, $status, $local, null, $remote['currency'], $remote['plan_id'], $remote['pricing_id'], $remote['error'] ?? $remote['status']);
+            return $this->withPending($plan, $cycle, $this->cycleResult($cycle, $status, $local, null, $remote['currency'], $remote['plan_id'], $remote['pricing_id'], $remote['error'] ?? $remote['status']));
         }
 
         // Currency must be USD — a matching amount in another currency is a
         // mismatch, not a sync.
         if (! $this->currencyMatches($remote['currency'])) {
-            return $this->cycleResult($cycle, self::STATUS_MISMATCH, $local, $remote['amount'], $remote['currency'], $remote['plan_id'], $remote['pricing_id'], 'currency_mismatch');
+            return $this->withPending($plan, $cycle, $this->cycleResult($cycle, self::STATUS_MISMATCH, $local, $remote['amount'], $remote['currency'], $remote['plan_id'], $remote['pricing_id'], 'currency_mismatch'));
         }
 
         $status = $this->amountsMatch($local, $remote['amount']) ? self::STATUS_SYNCED : self::STATUS_MISMATCH;
 
-        return $this->cycleResult($cycle, $status, $local, $remote['amount'], $remote['currency'], $remote['plan_id'], $remote['pricing_id']);
+        return $this->withPending($plan, $cycle, $this->cycleResult($cycle, $status, $local, $remote['amount'], $remote['currency'], $remote['plan_id'], $remote['pricing_id']));
+    }
+
+    /**
+     * Re-apply every PENDING requested price for a plan (Super Admin action).
+     *
+     * This is the "apply when it can be applied officially" path: it re-runs the
+     * exact same verified publish (send → re-read → adopt only on match) for the
+     * amounts previously requested, and clears each pending entry that gets
+     * confirmed. Nothing is adopted without a confirmed match.
+     *
+     * @return array{ok: bool, locked: bool, results: array<string, array<string, mixed>>, plan: SubscriptionPlan}
+     */
+    public function applyPending(SubscriptionPlan $plan, Request $request): array
+    {
+        $prices = [];
+
+        foreach (self::CYCLES as $cycle) {
+            $pending = $this->pendingFor($plan, $cycle);
+
+            if ($pending !== null && isset($pending['amount']) && (float) $pending['amount'] > 0) {
+                $prices[$cycle] = (float) $pending['amount'];
+            }
+        }
+
+        if ($prices === []) {
+            return ['ok' => true, 'locked' => false, 'results' => [], 'plan' => $plan->fresh()];
+        }
+
+        return $this->publish($plan, $prices, $request);
+    }
+
+    /**
+     * The PENDING (requested, not yet confirmed) price for a cycle, if any.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function pendingFor(SubscriptionPlan $plan, string $cycle): ?array
+    {
+        $meta = $plan->metadata ?? [];
+        $entry = $meta['freemius_prices'][$cycle] ?? null;
+        $pending = is_array($entry) ? ($entry['pending'] ?? null) : null;
+
+        return is_array($pending) ? $pending : null;
     }
 
     /**
@@ -203,7 +254,7 @@ class FreemiusPriceSyncService
         }
 
         if (! $planId) {
-            return $this->publishResult($cycle, self::STATUS_NOT_LINKED, false, $oldPrice, $newPrice, null, $currency, null, null, 'This plan is not linked to a Freemius plan for this billing cycle yet.');
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_NOT_LINKED, 'This plan is not linked to a Freemius plan for this billing cycle yet.', $request, $oldPrice, null, null, null);
         }
 
         if (! FreemiusGateway::developerConfigured()) {
@@ -213,17 +264,17 @@ class FreemiusPriceSyncService
                 'requested_price' => $newPrice,
             ]);
 
-            return $this->publishResult(
+            return $this->failPending(
+                $plan,
                 $cycle,
-                self::STATUS_NOT_CONFIGURED,
-                false,
-                $oldPrice,
                 $newPrice,
+                self::STATUS_NOT_CONFIGURED,
+                'Developer-scope Freemius credentials are not configured on the server, so the price cannot be published automatically. Add FREEMIUS_DEVELOPER_ID, FREEMIUS_DEVELOPER_PUBLIC_KEY and FREEMIUS_DEVELOPER_SECRET_KEY (Dashboard → My Profile → Keys), then retry.',
+                $request,
+                $oldPrice,
                 null,
-                $currency,
                 $planId,
                 null,
-                'Developer-scope Freemius credentials are not configured on the server, so the price cannot be published automatically. Add FREEMIUS_DEVELOPER_ID, FREEMIUS_DEVELOPER_PUBLIC_KEY and FREEMIUS_DEVELOPER_SECRET_KEY (Dashboard → My Profile → Keys), then retry.',
                 'add_developer_credentials',
             );
         }
@@ -232,14 +283,14 @@ class FreemiusPriceSyncService
 
         if ($resolved['status'] !== 'ok' || $resolved['pricing_id'] === null) {
             if ($resolved['status'] === self::STATUS_AMBIGUOUS) {
-                return $this->publishResult($cycle, self::STATUS_AMBIGUOUS, false, $oldPrice, $newPrice, null, $currency, $planId, null, 'This Freemius plan has more than one pricing. Link the exact Freemius Pricing ID for this cycle in the admin panel before publishing — the price was NOT changed.');
+                return $this->failPending($plan, $cycle, $newPrice, self::STATUS_AMBIGUOUS, 'This Freemius plan has more than one pricing. Link the exact Freemius Pricing ID for this cycle in the admin panel before publishing — the price was NOT changed.', $request, $oldPrice, null, $planId, null);
             }
 
             if ($resolved['status'] === self::STATUS_NOT_LINKED) {
-                return $this->publishResult($cycle, self::STATUS_NOT_LINKED, false, $oldPrice, $newPrice, null, $currency, $planId, null, 'No Freemius pricing id could be resolved for this billing cycle. Set the Freemius Pricing ID for the plan (or ensure the plan has a single pricing in Freemius).');
+                return $this->failPending($plan, $cycle, $newPrice, self::STATUS_NOT_LINKED, 'No Freemius pricing id could be resolved for this billing cycle. Set the Freemius Pricing ID for the plan (or ensure the plan has a single pricing in Freemius).', $request, $oldPrice, null, $planId, null);
             }
 
-            return $this->publishResult($cycle, self::STATUS_UNAVAILABLE, false, $oldPrice, $newPrice, null, $currency, $planId, $resolved['pricing_id'], 'The linked Freemius pricing could not be read, so the price was NOT changed. No other pricing was substituted.');
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_UNAVAILABLE, 'The linked Freemius pricing could not be read, so the price was NOT changed. No other pricing was substituted.', $request, $oldPrice, null, $planId, $resolved['pricing_id']);
         }
 
         $planId = $resolved['plan_id'] ?? $planId;
@@ -258,7 +309,7 @@ class FreemiusPriceSyncService
                 'http_status' => $write['status'],
             ]);
 
-            return $this->publishResult($cycle, self::STATUS_UNAVAILABLE, false, $oldPrice, $newPrice, null, $currency, $planId, $pricingId, 'Freemius rejected the price update (HTTP '.$write['status'].'). The site price was NOT changed.', null, $write['status']);
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_UNAVAILABLE, 'Freemius rejected the price update (HTTP '.$write['status'].'). The site price was NOT changed.', $request, $oldPrice, null, $planId, $pricingId, null, $write['status']);
         }
 
         // Re-read the ACTUAL price — never trust the write response alone.
@@ -271,12 +322,12 @@ class FreemiusPriceSyncService
                 'error' => $remote['error'] ?? $remote['status'],
             ]);
 
-            return $this->publishResult($cycle, self::STATUS_UNAVAILABLE, false, $oldPrice, $newPrice, null, $currency, $planId, $pricingId, 'The price was sent but could not be re-read from Freemius, so it was NOT adopted. Please retry.');
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_UNAVAILABLE, 'The price was sent but could not be re-read from Freemius, so it was NOT adopted. Please retry.', $request, $oldPrice, null, $planId, $pricingId);
         }
 
         // The re-read must be the SAME pricing we wrote to (never another one).
         if ($remote['pricing_id'] !== $pricingId) {
-            return $this->publishResult($cycle, self::STATUS_MISMATCH, false, $oldPrice, $newPrice, $remote['amount'], $remote['currency'], $planId, $pricingId, 'Freemius returned a different pricing than the one written. The site price was NOT changed.');
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_MISMATCH, 'Freemius returned a different pricing than the one written. The site price was NOT changed.', $request, $oldPrice, $remote['amount'], $planId, $pricingId);
         }
 
         if (! $this->amountsMatch($newPrice, $remote['amount'])) {
@@ -286,7 +337,7 @@ class FreemiusPriceSyncService
                 'remote_price' => $remote['amount'],
             ]);
 
-            return $this->publishResult($cycle, self::STATUS_MISMATCH, false, $oldPrice, $newPrice, $remote['amount'], $remote['currency'], $planId, $pricingId, 'Freemius reports a different price ('.$remote['amount'].' '.$remote['currency'].') than the requested one. The site price was NOT changed — review the plan pricing in Freemius.');
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_MISMATCH, 'Freemius reports a different price ('.$remote['amount'].' '.$remote['currency'].') than the requested one. The site price was NOT changed — review the plan pricing in Freemius.', $request, $oldPrice, $remote['amount'], $planId, $pricingId);
         }
 
         if (! $this->currencyMatches($remote['currency'])) {
@@ -296,7 +347,7 @@ class FreemiusPriceSyncService
                 'remote_currency' => $remote['currency'],
             ]);
 
-            return $this->publishResult($cycle, self::STATUS_MISMATCH, false, $oldPrice, $newPrice, $remote['amount'], $remote['currency'], $planId, $pricingId, 'The Freemius price currency ('.$remote['currency'].') is not '.$currency.'. The site price was NOT changed.');
+            return $this->failPending($plan, $cycle, $newPrice, self::STATUS_MISMATCH, 'The Freemius price currency ('.$remote['currency'].') is not '.$currency.'. The site price was NOT changed.', $request, $oldPrice, $remote['amount'], $planId, $pricingId);
         }
 
         // Verified: the Freemius charge equals the requested price → adopt it.
@@ -516,6 +567,84 @@ class FreemiusPriceSyncService
             'pricing_id' => $pricingId,
             'error' => $error,
         ];
+    }
+
+    /**
+     * Record + return a NOT-APPLIED publish outcome.
+     *
+     * The requested price is stored as PENDING (admin-visible) so a Super Admin
+     * can see and re-apply the intended change; the DISPLAYED price is left
+     * untouched and checkout stays blocked while the two differ. Never a fake
+     * success, never a silently-dropped request.
+     *
+     * @return array<string, mixed>
+     */
+    private function failPending(
+        SubscriptionPlan $plan,
+        string $cycle,
+        float $newPrice,
+        string $status,
+        string $message,
+        Request $request,
+        ?float $oldPrice,
+        ?float $remotePrice,
+        ?string $planId,
+        ?string $pricingId,
+        ?string $actionRequired = null,
+        ?int $httpStatus = null,
+    ): array {
+        $this->recordPending($plan, $cycle, $newPrice, $status, $message, $request);
+
+        return $this->publishResult($cycle, $status, false, $oldPrice, $newPrice, $remotePrice, self::CURRENCY, $planId, $pricingId, $message, $actionRequired, $httpStatus);
+    }
+
+    /**
+     * Persist a requested-but-unconfirmed price under
+     * metadata.freemius_prices.{cycle}.pending (no migration needed).
+     */
+    private function recordPending(SubscriptionPlan $plan, string $cycle, float $newPrice, string $status, string $message, Request $request): void
+    {
+        $actorId = $request->user()?->id;
+
+        DB::transaction(function () use ($plan, $cycle, $newPrice, $status, $message, $actorId) {
+            $fresh = SubscriptionPlan::whereKey($plan->id)->lockForUpdate()->firstOrFail();
+            $meta = $fresh->metadata ?? [];
+            $prices = is_array($meta['freemius_prices'] ?? null) ? $meta['freemius_prices'] : [];
+            $entry = is_array($prices[$cycle] ?? null) ? $prices[$cycle] : [];
+            $entry['pending'] = [
+                'amount' => round($newPrice, 2),
+                'currency' => self::CURRENCY,
+                'status' => $status,
+                'message' => $message,
+                'requested_at' => now()->toIso8601String(),
+                'requested_by' => $actorId,
+            ];
+            $prices[$cycle] = $entry;
+            $meta['freemius_prices'] = $prices;
+
+            $fresh->update(['metadata' => $meta]);
+        });
+
+        AuditLogger::log($request, 'subscription.plan_price_pending', 'plan', $plan->id, [
+            'cycle' => $cycle,
+            'requested_price' => round($newPrice, 2),
+            'reason' => $status,
+        ]);
+    }
+
+    /**
+     * Attach the pending request (if any) to a cycle status payload so the admin
+     * UI can show "requested, not yet applied" without ever displaying it as the
+     * live price.
+     *
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    private function withPending(SubscriptionPlan $plan, string $cycle, array $result): array
+    {
+        $result['pending'] = $this->pendingFor($plan, $cycle);
+
+        return $result;
     }
 
     /**

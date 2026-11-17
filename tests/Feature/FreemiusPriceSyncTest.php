@@ -97,14 +97,14 @@ class FreemiusPriceSyncTest extends TenantTestCase
     {
         // Independently computed (Python) from the official SDK formula:
         // base64url( hmac_sha256_hex( "METHOD\nContent-MD5\nContent-Type\nDate\nresourcePath" ) )
-        $expected = 'NmU1NjM1NTNhNjc2YjI1NmVmM2MxOGRkZDcwMzE1YWQ4OGIzMGM3NWQ5ZDNjZDQ3YTBkODg1YjdmN2VjNjA1Mg';
+        $expected = 'ZGMzZTU4MWY5ODBmMGE0NDRiZDM1MjlkMGFhN2U1YmJkNjg3OWE3ZDZkMjE2MDY4OWY3YzAyNDA2OTE2Yjc4MQ';
 
         $this->assertSame($expected, FreemiusGateway::freemiusSignature(
             'PUT',
             'bc3b35e2daca5384bdb50c21e24e0107',
             'application/json',
             'Mon, 17 Nov 2026 12:00:00 +0000',
-            '/v1/developers/123/products/777/plans/1010/pricing/5005.json',
+            '/v1/developers/123/plugins/777/plans/1010/pricing/5005.json',
             'pk_test',
             'sk_test',
         ));
@@ -127,7 +127,7 @@ class FreemiusPriceSyncTest extends TenantTestCase
         $body = '{"monthly_price":59,"currency":"usd"}';
 
         Http::assertSent(fn ($request) => $request->method() === 'PUT'
-            && str_contains($request->url(), '/v1/developers/123/products/777/plans/1010/pricing/5005.json')
+            && str_contains($request->url(), '/v1/developers/123/plugins/777/plans/1010/pricing/5005.json')
             && str_starts_with((string) $request->header('Authorization')[0], 'FS 123:pk_test:')
             && (string) $request->header('Content-MD5')[0] === md5($body)
             && $request->body() === $body);
@@ -182,7 +182,9 @@ class FreemiusPriceSyncTest extends TenantTestCase
             ->assertJsonPath('results.monthly.action_required', 'add_developer_credentials');
 
         $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
-        $this->assertNull($plan->fresh()->metadata['freemius_prices'] ?? null);
+        // The request is retained as PENDING (admin-visible); the displayed
+        // price is never changed without a confirmed match.
+        $this->assertSame(59.0, (float) ($plan->fresh()->metadata['freemius_prices']['monthly']['pending']['amount'] ?? 0));
     }
 
     // ── Success: write + re-read + adopt ─────────────────────────────
@@ -256,7 +258,7 @@ class FreemiusPriceSyncTest extends TenantTestCase
             ->assertJsonPath('results.monthly.status', 'mismatch');
 
         $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
-        $this->assertNull($plan->fresh()->metadata['freemius_prices'] ?? null);
+        $this->assertSame(59.0, (float) ($plan->fresh()->metadata['freemius_prices']['monthly']['pending']['amount'] ?? 0));
     }
 
     public function test_publish_rejected_by_freemius_keeps_the_old_price(): void
@@ -598,5 +600,113 @@ class FreemiusPriceSyncTest extends TenantTestCase
                 && ($data['plan_id'] ?? null) === '2020'
                 && ! array_key_exists('currency', $data);
         });
+    }
+
+    // ── Pending request: never displayed, never adopted without proof ─
+
+    public function test_a_failed_publish_keeps_the_request_as_pending_without_changing_the_displayed_price(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // Freemius rejects the write → nothing may be applied.
+        Http::fake([
+            'api.freemius.test/v1/ping.json' => $this->ping(),
+            'api.freemius.test/v1/developers/*' => Http::response(['error' => ['message' => 'nope']], 402),
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => $this->pricingList(49.0),
+        ]);
+
+        $this->postJson("/api/v1/admin/plans/{$plan->id}/publish-price", [
+            'monthly_price' => 59,
+        ], $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('ok', false)
+            ->assertJsonPath('results.monthly.status', 'unavailable');
+
+        $fresh = $plan->fresh();
+
+        // Displayed price untouched; the request is retained as PENDING.
+        $this->assertSame(49.0, (float) $fresh->monthly_price);
+        $this->assertSame(59.0, (float) ($fresh->metadata['freemius_prices']['monthly']['pending']['amount'] ?? 0));
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'subscription.plan_price_pending',
+            'entity_type' => 'plan',
+            'entity_id' => $plan->id,
+        ]);
+
+        // The pending request is exposed to the admin — but as `pending`, while
+        // the charge that buyers would actually pay (49) is what stays live.
+        $this->getJson("/api/v1/admin/plans/{$plan->id}/freemius-sync", $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('sync.monthly.status', 'synced')
+            ->assertJsonPath('sync.monthly.local_price', 49)
+            ->assertJsonPath('sync.monthly.remote_price', 49)
+            ->assertJsonPath('sync.monthly.pending.amount', 59);
+    }
+
+    public function test_apply_pending_price_retries_and_adopts_only_on_a_confirmed_match(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        // Attempt 1 is rejected (→ PENDING); attempt 2 succeeds (→ adopt).
+        $attempt = 0;
+
+        Http::fake([
+            'api.freemius.test/v1/ping.json' => $this->ping(),
+            'api.freemius.test/v1/developers/*' => function () use (&$attempt) {
+                $attempt++;
+
+                return $attempt === 1
+                    ? Http::response(['error' => ['message' => 'nope']], 402)
+                    : Http::response(['pricing' => ['id' => '5005', 'monthly_price' => 59]], 200);
+            },
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => function () use (&$attempt) {
+                return $this->pricingList($attempt >= 2 ? 59.0 : 49.0);
+            },
+        ]);
+
+        // 1) First attempt is rejected → the request lands as PENDING.
+        $this->postJson("/api/v1/admin/plans/{$plan->id}/publish-price", [
+            'monthly_price' => 59,
+        ], $this->authHeaders($admin, $tenant))->assertOk();
+
+        $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
+        $this->assertSame(59.0, (float) ($plan->fresh()->metadata['freemius_prices']['monthly']['pending']['amount'] ?? 0));
+
+        // 2) Freemius recovers → applying the pending request adopts the price.
+        $this->postJson("/api/v1/admin/plans/{$plan->id}/apply-pending-price", [], $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('results.monthly.status', 'synced');
+
+        $fresh = $plan->fresh();
+
+        $this->assertSame(59.0, (float) $fresh->monthly_price);
+        // Confirmed → the pending request is cleared.
+        $this->assertArrayNotHasKey('pending', $fresh->metadata['freemius_prices']['monthly'] ?? []);
+    }
+
+    public function test_apply_pending_price_does_nothing_when_there_is_no_pending_request(): void
+    {
+        $this->configureFreemius();
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin($tenant);
+
+        Http::fake();
+
+        $this->postJson("/api/v1/admin/plans/{$plan->id}/apply-pending-price", [], $this->authHeaders($admin, $tenant))
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('results', []);
+
+        $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
+        Http::assertNothingSent();
     }
 }
