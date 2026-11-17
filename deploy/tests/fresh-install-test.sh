@@ -22,11 +22,30 @@ CADDY_COMPOSE="$REPO_DIR/deploy/caddy/docker-compose.caddy.yml"
 CADDY_ENV_EXAMPLE="$REPO_DIR/deploy/caddy/caddy.env.example"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/fahimni-fresh-test.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap
+cleanup() {
+  # The hermetic run below runs the installer through sudo, so $work can contain
+  # root-owned files that a plain rm (as the CI user) cannot delete. Fall back to
+  # a root rm and never let the trap change the test's exit status.
+  rm -rf "$work" 2>/dev/null || true
+  if [ -d "$work" ]; then
+    if [ "${EUID:-$(id -u)}" -eq 0 ]; then rm -rf "$work" 2>/dev/null || true
+    else sudo rm -rf "$work" 2>/dev/null || true; fi
+  fi
+  return 0
+}
+trap cleanup EXIT
 
 failures=0
 pass() { printf '  ok    %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+# Read a file that the sudo-run installer may have created as root (mode 600 in
+# a 0700 directory), which the current (non-root) user cannot open directly.
+read_root() {
+  if [ "${EUID:-$(id -u)}" -eq 0 ] || [ -r "$1" ]; then cat "$1"
+  else sudo cat "$1" 2>/dev/null; fi
+}
 
 printf '\n== fresh-install tests ==\n'
 
@@ -350,7 +369,7 @@ SSLSTUB
       sed 's/^/    | /' "$work/run1.log" | tail -40 >&2
     fi
 
-    db1="$(sed -n 's/^DB_PASSWORD=//p' "$work/t9/production.env" 2>/dev/null | head -1)"
+    db1="$(read_root "$work/t9/production.env" | sed -n 's/^DB_PASSWORD=//p' | head -1 || true)"
     if [ -n "$db1" ]; then pass "generated a DB password"; else fail "no DB password generated"; fi
 
     if run_installer "$work/run2.log" --admin-email admin@fahimni.test; then
@@ -361,7 +380,7 @@ SSLSTUB
     fi
     if grep -q 'reusing existing env file' "$work/run2.log"; then pass "env file reused (secrets not rotated)"; else fail "env file was regenerated"; fi
     if grep -q 'already present — reusing' "$work/run2.log"; then pass "release reused"; else fail "release was re-cloned"; fi
-    db2="$(sed -n 's/^DB_PASSWORD=//p' "$work/t9/production.env" 2>/dev/null | head -1)"
+    db2="$(read_root "$work/t9/production.env" | sed -n 's/^DB_PASSWORD=//p' | head -1 || true)"
     if [ -n "$db1" ] && [ "$db1" = "$db2" ]; then pass "DB password unchanged across runs"; else fail "DB password changed on re-run"; fi
     if [ -f "$work/creds.txt" ]; then pass "admin credentials file written"; else fail "admin credentials file missing"; fi
 
@@ -373,7 +392,7 @@ SSLSTUB
       sed 's/^/    | /' "$work/run3.log" | tail -40 >&2
     fi
     if grep -q 'keeping the existing admin email' "$work/run3.log"; then pass "existing admin email is kept on re-run"; else fail "admin email was not preserved"; fi
-    admin_email_now="$(sed -n 's/^SUPER_ADMIN_EMAIL=//p' "$work/t9/production.env" 2>/dev/null | head -1)"
+    admin_email_now="$(read_root "$work/t9/production.env" | sed -n 's/^SUPER_ADMIN_EMAIL=//p' | head -1 || true)"
     if [ "$admin_email_now" = "admin@fahimni.test" ]; then pass "admin email unchanged without an explicit request"; else fail "admin email changed to '$admin_email_now'"; fi
   else
     printf '  skip  cannot obtain root for the hermetic run\n'

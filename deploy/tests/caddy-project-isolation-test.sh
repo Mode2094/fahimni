@@ -50,7 +50,12 @@ cleanup() {
         -f "$work/orphanA.yml" down -v --remove-orphans ) >/dev/null 2>&1 || true
     if [ "$created_net" = 1 ]; then docker network rm "$NET" >/dev/null 2>&1 || true; fi
   fi
-  rm -rf "$work"
+  rm -rf "$work" 2>/dev/null || true
+  if [ -d "$work" ]; then
+    if [ "${EUID:-$(id -u)}" -eq 0 ]; then rm -rf "$work" 2>/dev/null || true
+    else sudo rm -rf "$work" 2>/dev/null || true; fi
+  fi
+  return 0
 }
 trap cleanup EXIT
 
