@@ -163,9 +163,13 @@ jobs:
 
       - name: Standalone Caddy edge validates and joins only the proxy network
         # Proves the fresh-install TLS edge is well-formed and independent: the
-        # configures only Caddy's own compose file, publishes 80/443 and joins
-        # the external proxy network (never a database/Redis network).
+        # configures only Caddy's own compose file, publishes 80/443, joins the
+        # external proxy network (never a database/Redis network) and runs in its
+        # OWN compose project (fahimni-edge), distinct from the app stack.
         run: |
+          edge_name="$(docker compose -f deploy/caddy/docker-compose.caddy.yml \
+            --env-file deploy/caddy/caddy.env.example config --format json | jq -r .name)"
+          test "$edge_name" = "fahimni-edge" || { echo "edge project is '$edge_name', want fahimni-edge"; exit 1; }
           docker compose -f deploy/caddy/docker-compose.caddy.yml \
             --env-file deploy/caddy/caddy.env.example config --quiet
           docker run --rm \
@@ -201,3 +205,19 @@ jobs:
         # and container-id paths) and reloads its own Caddyfile (live-config path),
         # proving --reconcile re-applies even when the Caddyfile bytes are unchanged.
         run: deploy/tests/caddy-reconcile-recreate.sh
+
+  compose-isolation:
+    name: Caddy edge is a separate compose project (real Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prove the app and the edge can never remove each other
+        # P0 regression: the app stack (project `fahimni`) and the standalone
+        # Caddy edge (project `fahimni-edge`) both run `up --remove-orphans`.
+        # Resolves both shipped composes and, with REAL Docker, starts the app
+        # data tier, writes data, brings the edge up, then re-runs each
+        # `--remove-orphans` and restarts — asserting no container is removed or
+        # recreated and the data survives. Includes a negative control proving a
+        # SHARED project would indeed remove the other file's container.
+        run: deploy/tests/caddy-project-isolation-test.sh

@@ -119,6 +119,32 @@ if grep -Eq 'image: caddy@sha256:[0-9a-f]{64}' "$CADDY_COMPOSE"; then pass "Cadd
 if grep -q '"443:443"' "$CADDY_COMPOSE" && grep -q '"80:80"' "$CADDY_COMPOSE"; then pass "publishes 80/443"; else fail "does not publish 80/443"; fi
 if grep -q 'external: true' "$CADDY_COMPOSE"; then pass "joins the external proxy network only"; else fail "proxy network is not external"; fi
 
+# ── T7b: the Caddy edge is its OWN compose project (P0 regression guard) ─────
+# The app stack is project `fahimni`; the edge must be `fahimni-edge`. Both use
+# `up --remove-orphans`, so a shared project name would let either side stop or
+# remove the other's containers.
+printf '\n-- T7b the Caddy edge is a separate compose project\n'
+if grep -q '^name: fahimni-edge' "$CADDY_COMPOSE"; then pass "edge compose pins top-level name: fahimni-edge"; else fail "edge compose has no top-level project name"; fi
+if grep -qE '^[[:space:]]*name: fahimni-edge_caddy_(data|config)' "$CADDY_COMPOSE"; then
+  pass "edge volumes use fixed, project-independent names"
+else
+  fail "edge volumes are not pinned to fahimni-edge_* names"
+fi
+if grep -qE '^[[:space:]]*COMPOSE_PROJECT_NAME=fahimni[[:space:]]*$' "$CADDY_ENV_EXAMPLE" "$CADDY_COMPOSE"; then
+  fail "the edge still sets COMPOSE_PROJECT_NAME=fahimni (the P0 cause)"
+else
+  pass "the edge never sets COMPOSE_PROJECT_NAME=fahimni"
+fi
+# shellcheck disable=SC2016  # literal $, we are grepping the installer source
+if grep -q 'EDGE_PROJECT="${FAHIMNI_EDGE_PROJECT:-fahimni-edge}"' "$SCRIPT"; then pass "installer defaults the edge project to fahimni-edge"; else fail "installer has no fahimni-edge project variable"; fi
+# shellcheck disable=SC2016
+if grep -q -- '-p "$EDGE_PROJECT"' "$SCRIPT"; then pass "installer brings the edge up in its own project (-p)"; else fail "installer does not pass -p to the edge"; fi
+if grep -q '^COMPOSE_PROJECT_NAME=fahimni$' "$REPO_DIR/deploy/env/production.env.example"; then pass "app stack is the separate project fahimni"; else fail "app project name changed (isolation assumption broken)"; fi
+
+# ── T7c: DNS is verified before TLS is trusted ──────────────────────────────
+printf '\n-- T7c DNS verification is present\n'
+if grep -q 'resolve_a' "$SCRIPT" && grep -q 'does not resolve' "$SCRIPT"; then pass "installer resolves and checks apex/api/www DNS"; else fail "installer does not verify DNS"; fi
+
 # ── T8: init-env still generates every required secret ───────────────────────
 printf '\n-- T8 secret generation (init-env.sh)\n'
 if command -v openssl >/dev/null 2>&1; then
@@ -213,7 +239,7 @@ if [ "${1:-}" = "compose" ]; then
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
-      -f|--env-file) shift 2 ;;
+      -f|--env-file|-p|--project-name) shift 2 ;;
       -q|--quiet|--remove-orphans|-d|--detach|-T) shift ;;
       config|build|up) exit 0 ;;
       version) exit 0 ;;
@@ -294,7 +320,7 @@ SSLSTUB
 
   PW="Str0ng-Passw0rd-9f3a"
   run_installer() {
-    local logfile="$1"
+    local logfile="$1"; shift
     local cmd=(env "PATH=$bin:$PATH" \
       "FAKE_SRC=$REPO_DIR" "FAKE_SHA=$FAKE_SHA" "FAKE_BRANCH=$FAKE_BRANCH" \
       "FAKE_LOGO=$REPO_DIR/frontend/public/logo.png" \
@@ -305,8 +331,7 @@ SSLSTUB
         --skip-host-bootstrap --skip-firewall --skip-swap --no-caddy \
         --release-sha "$FAKE_SHA" --branch "$FAKE_BRANCH" \
         --stack-dir "$work/stack" --env-file "$work/t9/production.env" \
-        --domain fahimni.test --api-domain api.fahimni.test \
-        --admin-email admin@fahimni.test)
+        --domain fahimni.test --api-domain api.fahimni.test "$@")
     if [ "${EUID:-$(id -u)}" -eq 0 ]; then
       "${cmd[@]}" > "$logfile" 2>&1
     else
@@ -315,7 +340,7 @@ SSLSTUB
   }
 
   if bash -c 'true' >/dev/null 2>&1 && { [ "${EUID:-$(id -u)}" -eq 0 ] || sudo -n true >/dev/null 2>&1; }; then
-    if run_installer "$work/run1.log"; then
+    if run_installer "$work/run1.log" --admin-email admin@fahimni.test; then
       pass "first run succeeded"
       if grep -q 'installation complete' "$work/run1.log"; then pass "reports completion"; else fail "no completion summary"; fi
       if grep -qE 'CHECK\(S\) FAILED' "$work/run1.log"; then fail "verification reported failures"; else pass "verification passed"; fi
@@ -328,7 +353,7 @@ SSLSTUB
     db1="$(sed -n 's/^DB_PASSWORD=//p' "$work/t9/production.env" 2>/dev/null | head -1)"
     if [ -n "$db1" ]; then pass "generated a DB password"; else fail "no DB password generated"; fi
 
-    if run_installer "$work/run2.log"; then
+    if run_installer "$work/run2.log" --admin-email admin@fahimni.test; then
       pass "second run succeeded"
     else
       fail "second run (idempotent) failed"
@@ -339,6 +364,17 @@ SSLSTUB
     db2="$(sed -n 's/^DB_PASSWORD=//p' "$work/t9/production.env" 2>/dev/null | head -1)"
     if [ -n "$db1" ] && [ "$db1" = "$db2" ]; then pass "DB password unchanged across runs"; else fail "DB password changed on re-run"; fi
     if [ -f "$work/creds.txt" ]; then pass "admin credentials file written"; else fail "admin credentials file missing"; fi
+
+    # Re-run WITHOUT --admin-email: the configured admin login must be kept.
+    if run_installer "$work/run3.log"; then
+      pass "third run (no --admin-email) succeeded"
+    else
+      fail "third run failed"
+      sed 's/^/    | /' "$work/run3.log" | tail -40 >&2
+    fi
+    if grep -q 'keeping the existing admin email' "$work/run3.log"; then pass "existing admin email is kept on re-run"; else fail "admin email was not preserved"; fi
+    admin_email_now="$(sed -n 's/^SUPER_ADMIN_EMAIL=//p' "$work/t9/production.env" 2>/dev/null | head -1)"
+    if [ "$admin_email_now" = "admin@fahimni.test" ]; then pass "admin email unchanged without an explicit request"; else fail "admin email changed to '$admin_email_now'"; fi
   else
     printf '  skip  cannot obtain root for the hermetic run\n'
   fi

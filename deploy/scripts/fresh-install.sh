@@ -39,6 +39,10 @@ ADMIN_NAME="${SUPER_ADMIN_NAME:-مسؤول منصة فهمني}"
 STACK="${FAHIMNI_STACK_DIR:-/opt/fahimni/production}"
 ENVF="${FAHIMNI_ENV_FILE:-/etc/fahimni/production.env}"
 CADDY_ENVF="${FAHIMNI_CADDY_ENV_FILE:-/etc/fahimni/caddy.env}"
+# The Caddy edge lives in its OWN compose project so that its `up --remove-orphans`
+# can never stop/replace the app stack (project `fahimni`). See
+# deploy/caddy/docker-compose.caddy.yml. Overridable only for tests.
+EDGE_PROJECT="${FAHIMNI_EDGE_PROJECT:-fahimni-edge}"
 CREDS_FILE="${FAHIMNI_ADMIN_CREDS_FILE:-/root/fahimni-admin-credentials.txt}"
 REPO_URL="${FAHIMNI_REPO_URL:-https://github.com/Mode2094/fahimni.git}"
 DEPLOY_USER="${FAHIMNI_DEPLOY_USER:-fahimni}"
@@ -268,8 +272,19 @@ generate_env() {
   set_env "$ENVF" APP_PORT "${APP_PORT:-8080}"
   set_env "$ENVF" IMAGE_TAG "$(cat "$STACK/.release-sha")"
 
-  [ -n "$ADMIN_EMAIL" ] || ADMIN_EMAIL="admin@$DOMAIN"
-  set_env "$ENVF" SUPER_ADMIN_EMAIL "$ADMIN_EMAIL"
+  # Never replace an admin login that is already configured unless the operator
+  # explicitly passes --admin-email. On a re-run the existing value is reused.
+  local existing_admin
+  existing_admin="$(env_value "$ENVF" SUPER_ADMIN_EMAIL)"
+  if [ -n "$ADMIN_EMAIL" ]; then
+    set_env "$ENVF" SUPER_ADMIN_EMAIL "$ADMIN_EMAIL"
+  elif [ -n "$existing_admin" ] && [ "$existing_admin" != "CHANGE_ME" ]; then
+    ADMIN_EMAIL="$existing_admin"
+    log "keeping the existing admin email from $ENVF (pass --admin-email to change it)"
+  else
+    ADMIN_EMAIL="admin@$DOMAIN"
+    set_env "$ENVF" SUPER_ADMIN_EMAIL "$ADMIN_EMAIL"
+  fi
   set_env "$ENVF" SUPER_ADMIN_NAME "$ADMIN_NAME"
   if [ -n "$ADMIN_PASSWORD" ]; then set_env "$ENVF" SUPER_ADMIN_PASSWORD "$ADMIN_PASSWORD"; fi
 
@@ -307,15 +322,21 @@ generate_env() {
 
 render_caddy_env() {
   if [ "$DO_CADDY" -ne 1 ]; then return 0; fi
-  local proxy_alias net
+  local proxy_alias net existing_acme
   proxy_alias="$(env_value "$ENVF" PROXY_ALIAS)"
   [ -n "$proxy_alias" ] || proxy_alias=fahimni-prod
   net="$(env_value "$ENVF" FAHIMNI_PROXY_NETWORK)"
   [ -n "$net" ] || net=fahimni-proxy
-  [ -n "$ACME_EMAIL" ] || ACME_EMAIL="admin@$DOMAIN"
+  # Keep the ACME account email already on disk unless one was given explicitly.
+  existing_acme="$(env_value "$CADDY_ENVF" ACME_EMAIL 2>/dev/null || true)"
+  if [ -z "$ACME_EMAIL" ]; then
+    if [ -n "$existing_acme" ]; then ACME_EMAIL="$existing_acme"; else ACME_EMAIL="admin@$DOMAIN"; fi
+  fi
   umask 077
   {
-    printf 'COMPOSE_PROJECT_NAME=fahimni\n'
+    # NOTE: no COMPOSE_PROJECT_NAME here on purpose. The edge project is fixed
+    # to `fahimni-edge` (compose top-level `name:` + `-p` below) so it can never
+    # be merged with the app project `fahimni`.
     printf 'FAHIMNI_PROXY_NETWORK=%s\n' "$net"
     printf 'FAHIMNI_DOMAIN=%s\n' "$DOMAIN"
     printf 'FAHIMNI_API_DOMAIN=%s\n' "$API_DOMAIN"
@@ -403,8 +424,11 @@ wait_public_edge() {
 setup_caddy() {
   if [ "$DO_CADDY" -ne 1 ]; then log "Caddy edge skipped (--no-caddy)"; return 0; fi
   [ -f "$REL/deploy/caddy/docker-compose.caddy.yml" ] || die "caddy compose file missing from the release"
-  log "starting standalone Caddy edge (automatic HTTPS for $DOMAIN, $API_DOMAIN)"
-  ( cd "$REL" && docker compose -f deploy/caddy/docker-compose.caddy.yml \
+  log "starting standalone Caddy edge (project $EDGE_PROJECT; automatic HTTPS for $DOMAIN, $API_DOMAIN)"
+  # `-p "$EDGE_PROJECT"` is explicit and has the highest precedence: the edge is
+  # ALWAYS its own compose project, never the app's `fahimni`. This is what stops
+  # `--remove-orphans` on either side from touching the other stack's containers.
+  ( cd "$REL" && docker compose -p "$EDGE_PROJECT" -f deploy/caddy/docker-compose.caddy.yml \
       --env-file "$CADDY_ENVF" up -d --remove-orphans ) || die "could not start the Caddy edge"
 }
 
@@ -421,6 +445,16 @@ platform_name_of() { # $1 = JSON body -> decoded platform_name
     printf '%s' "$1" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("settings",{}).get("platform_name",""))
 except Exception: pass' 2>/dev/null || true
+  fi
+}
+
+resolve_a() { # resolve_a <host> -> one IPv4 per line (empty when it does not resolve)
+  if command -v getent >/dev/null 2>&1; then
+    getent ahostsv4 "$1" 2>/dev/null | awk '{print $1}' | sort -u
+  elif command -v dig >/dev/null 2>&1; then
+    dig +short A "$1" 2>/dev/null | grep -E '^[0-9]'
+  elif command -v host >/dev/null 2>&1; then
+    host -t A "$1" 2>/dev/null | awk '/has address/{print $NF}'
   fi
 }
 
@@ -465,6 +499,19 @@ verify_all() {
   if printf '%s' "$mig" | grep -q 'Ran'; then vpass "all migrations ran"; else vwarn "could not confirm migration status"; fi
   admin_count="$(compose exec -T app php artisan tinker --execute='echo \App\Models\User::where("is_super_admin", true)->count();' 2>/dev/null | tr -dc '0-9' || true)"
   if [ "${admin_count:-0}" -ge 1 ]; then vpass "super-admin account exists ($admin_count)"; else vfail "no super-admin account found"; fi
+
+  if [ "$DO_CADDY" -eq 1 ]; then
+    printf '\n=== DNS (hostnames must point at this VPS before ACME can issue) ===\n'
+    local apex_ips api_ips www_ips
+    apex_ips="$(resolve_a "$DOMAIN" | tr '\n' ' ')"
+    api_ips="$(resolve_a "$API_DOMAIN" | tr '\n' ' ')"
+    www_ips="$(resolve_a "www.$DOMAIN" | tr '\n' ' ')"
+    if [ -n "${apex_ips// /}" ]; then vpass "$DOMAIN -> ${apex_ips% }"; else vfail "$DOMAIN does not resolve"; fi
+    if [ -n "${api_ips// /}" ]; then vpass "$API_DOMAIN -> ${api_ips% }"; else vfail "$API_DOMAIN does not resolve"; fi
+    if [ -n "${www_ips// /}" ]; then vpass "www.$DOMAIN -> ${www_ips% }"; else vwarn "www.$DOMAIN does not resolve (needed for the www redirect)"; fi
+    if [ -n "${apex_ips// /}" ] && [ -n "${api_ips// /}" ] \
+       && [ "${apex_ips% }" != "${api_ips% }" ]; then vwarn "apex and api resolve to different addresses"; fi
+  fi
 
   if [ "$DO_CADDY" -eq 1 ]; then
     printf '\n=== public HTTPS (SSL) ===\n'

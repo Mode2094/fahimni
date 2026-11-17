@@ -9,7 +9,17 @@
 # The Fahimni database and Redis are never on this network — they live on the
 # app's own `internal: true` data network in docker-compose.yml and publish no
 # ports. This file is independent of every other project on the host.
-# ─────────────────────────────────────────────────────────────────────────────
+#
+# ── PROJECT ISOLATION (do not change) ────────────────────────────────────────
+# The edge runs in its OWN compose project, `fahimni-edge`, fixed by the
+# top-level `name:` below. The app stack is the separate `fahimni` project.
+# Both use `up --remove-orphans`, which only ever touches containers of its own
+# project — so the edge can never stop/replace the app and vice versa. Do NOT
+# set COMPOSE_PROJECT_NAME=fahimni here: that previously collapsed both stacks
+# into one project and let either side remove the other's containers.
+# -----------------------------------------------------------------------------
+name: fahimni-edge
+
 services:
   caddy:
     # caddy 2-alpine, pinned to the digest resolved at authoring time.
@@ -49,7 +59,10 @@ networks:
     external: true
 
 volumes:
+  # Fixed, project-independent names so the edge volumes can never be confused
+  # with (or removed alongside) the app stack's volumes. The app's volumes are
+  # `${COMPOSE_PROJECT_NAME}_*` (e.g. fahimni_postgres_data) in docker-compose.yml.
   caddy_data:
-    name: ${COMPOSE_PROJECT_NAME:-fahimni}_caddy_data
+    name: fahimni-edge_caddy_data
   caddy_config:
-    name: ${COMPOSE_PROJECT_NAME:-fahimni}_caddy_config
+    name: fahimni-edge_caddy_config
