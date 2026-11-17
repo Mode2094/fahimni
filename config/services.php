@@ -101,5 +101,9 @@ return [
         'developer_id' => (string) env('FREEMIUS_DEVELOPER_ID', ''),
         'developer_public_key' => (string) env('FREEMIUS_DEVELOPER_PUBLIC_KEY', ''),
         'developer_secret_key' => (string) env('FREEMIUS_DEVELOPER_SECRET_KEY', ''),
+        // Documented developer API access token (`FSA {dev_id}:{token}`, from
+        // POST /v1/developers/{id}/login.json). Preferred over the legacy key
+        // pair because it authorizes the DOCUMENTED `products/` routes.
+        'developer_fsa_token' => (string) env('FREEMIUS_DEVELOPER_FSA_TOKEN', ''),
     ],
 ];
