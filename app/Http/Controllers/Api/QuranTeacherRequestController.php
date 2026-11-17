@@ -151,10 +151,12 @@ class QuranTeacherRequestController extends Controller
             $broker = \Illuminate\Support\Facades\Password::broker();
             $token = $broker->createToken($user);
 
-            // Build a reset URL pointing to the frontend
-            $resetUrl = config('app.frontend_url', 'http://localhost:3000')
-                . '/ar/reset-password?token=' . $token
-                . '&email=' . urlencode($user->email);
+            // Build a reset URL pointing to the frontend (the same page the
+            // standard password-reset email uses: /reset-password with
+            // token+email in the query string).
+            $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $resetUrl = $frontend.'/reset-password?token='.$token
+                .'&email='.urlencode($user->email);
 
             $planName = $qr->plan?->name;
 

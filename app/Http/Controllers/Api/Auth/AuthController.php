@@ -18,6 +18,7 @@ use App\Models\User;
 use App\Services\StudentGamificationService;
 use App\Support\AuditLogger;
 use App\Support\DevicePolicy;
+use App\Support\MailDelivery;
 use App\Support\MathCaptcha;
 use App\Support\TOTP;
 use Illuminate\Http\JsonResponse;
@@ -550,7 +551,13 @@ class AuthController extends Controller
             Log::warning('Password reset link send failed', ['email_hmac' => $this->redactEmail($request->email), 'error' => $e->getMessage()]);
         }
 
-        return response()->json(['message' => __('passwords.sent')]);
+        // `delivery` is derived ONLY from mailer configuration — never from
+        // whether the account exists — so the UI can be honest about whether a
+        // message could actually be delivered without enabling enumeration.
+        return response()->json([
+            'message' => __('passwords.sent'),
+            'delivery' => MailDelivery::isConfigured() ? 'email' : 'unconfigured',
+        ]);
     }
 
     public function resetPassword(Request $request): JsonResponse
@@ -561,9 +568,11 @@ class AuthController extends Controller
             'password' => 'required|min:8|confirmed',
         ]);
 
+        $loginPath = null;
+
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
-            function (User $user, string $password) {
+            function (User $user, string $password) use (&$loginPath) {
                 $user->forceFill([
                     'password' => Hash::make($password),
                     'remember_token' => Str::random(60),
@@ -572,11 +581,13 @@ class AuthController extends Controller
                 // A reset means the credential may have been compromised:
                 // revoke every bearer token so stolen sessions die instantly.
                 $user->tokens()->delete();
+
+                $loginPath = $user->loginPath();
             }
         );
 
         return $status === Password::PASSWORD_RESET
-            ? response()->json(['message' => __($status)])
+            ? response()->json(['message' => __($status), 'login_path' => $loginPath])
             : response()->json(['message' => __($status)], 400);
     }
 
