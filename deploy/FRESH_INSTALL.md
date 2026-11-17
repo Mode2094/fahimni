@@ -12,6 +12,13 @@ Laravel (PHP-FPM)  +  Next.js  +  PostgreSQL 16  +  Redis 7  +  nginx  (Docker)
         └── standalone Caddy edge (own container) ── automatic HTTPS on your domain
 ```
 
+- **Two separate Docker Compose projects, on purpose.** The app stack is project
+  `fahimni`; the standalone Caddy edge is project `fahimni-edge`. They share only
+  the external `fahimni-proxy` network. Both bring containers up with
+  `up --remove-orphans`, which only ever affects its **own** project — so the edge
+  can never stop/remove the app (and vice versa). Never set
+  `COMPOSE_PROJECT_NAME=fahimni` in the edge env: that would merge the two and let
+  one side remove the other's containers.
 - **New, empty database.** Only `migrate` + the necessary seeders run; the first
   super-admin is created with a strong, locally generated password.
 - **Prices, plans and features are unchanged** — `SubscriptionPlanSeeder` /
@@ -43,19 +50,24 @@ Laravel (PHP-FPM)  +  Next.js  +  PostgreSQL 16  +  Redis 7  +  nginx  (Docker)
 
 ## 2. The one command (Hostinger Terminal)
 
-Run **once** as root on the new VPS (replace the email):
+The installer is **pinned to one commit** so a later push cannot change what the
+VPS runs. Run **once** as root on the new VPS (replace the email):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/fix/launch-blockers-rc/deploy/scripts/fresh-install.sh | sudo -E bash -s -- --acme-email admin@fahimni.me
+curl -fsSL https://raw.githubusercontent.com/Mode2094/fahimni/6062ed65ce79ccec3730279dddd6b3f9ce89f8c5/deploy/scripts/fresh-install.sh | sudo -E bash -s -- --release-sha 6062ed65ce79ccec3730279dddd6b3f9ce89f8c5 --acme-email admin@fahimni.me
 ```
 
-That is the whole install: it bootstraps Docker, hardens the firewall, clones the
-pinned release, generates every secret, builds and starts the stack, runs
-migrations + seeders, creates the admin, starts the standalone Caddy edge with
-automatic HTTPS, and then **verifies the live site**.
+That is the whole install: it bootstraps Docker, hardens the firewall, clones
+**exactly** commit `6062ed65ce79ccec3730279dddd6b3f9ce89f8c5`, generates every secret, builds and starts the stack,
+runs migrations + seeders, creates the admin, starts the standalone Caddy edge
+with automatic HTTPS, and then **verifies the live site** (DNS, TLS, branding,
+migrations, pages).
 
 > Running as `root` already? Drop `sudo -E`:
-> `curl -fsSL <same-url> | bash -s -- --acme-email admin@fahimni.me`
+> `curl -fsSL <same-url> | bash -s -- --release-sha 6062ed65ce79ccec3730279dddd6b3f9ce89f8c5 --acme-email admin@fahimni.me`
+
+> `--release-sha` pins the deployed release to that commit. Omit it only if you
+> deliberately want the tip of `--branch` (default `fix/launch-blockers-rc`).
 
 At the end it prints a summary and writes the admin credentials to
 `/root/fahimni-admin-credentials.txt` (mode 600):
@@ -90,6 +102,8 @@ Then sign in at `https://fahimni.me/admin/login`.
 
 - reuses the cloned release and the existing env file — **secrets are never
   rotated once they exist** (rotating them would disconnect the running DB/Redis);
+- **keeps the configured admin email** unless you explicitly pass
+  `--admin-email` (as well as the ACME email already on disk);
 - re-runs `docker compose up -d` so the stack reconciles;
 - **never** runs `migrate:fresh`, `migrate:rollback`, `down -v` or removes
   volumes;
@@ -107,9 +121,12 @@ sudo bash /opt/fahimni/production/current/deploy/scripts/fresh-install.sh --veri
 ## 5. What the verification checks (no launch is announced on faith)
 
 - Docker daemon reachable; every container `running`; `migrate` exited `0`.
+- **Project isolation**: the Caddy edge runs in its own compose project
+  (`fahimni-edge`), separate from the app (`fahimni`).
 - Loopback health: `/up`, `/api/health`, `/api/health/live`, `/api/health/ready`,
   `/` all `200`.
 - Database: migrations `Ran`, a super-admin row exists.
+- **DNS**: `fahimni.me`, `api.fahimni.me` (and `www`) resolve before TLS is trusted.
 - Public **HTTPS**: `https://<domain>/` `200`, `https://<api>/up` `200`,
   `www` → apex redirect, HSTS present, TLS certificate valid and trusted.
 - **Branding**: the API serves `platform_name = «منصة فهمني»`, no legacy brand
@@ -127,15 +144,17 @@ before announcing the launch.
 
 ```bash
 cd /opt/fahimni/production/current
-docker compose ps
+docker compose ps                                   # app stack (project fahimni)
+docker compose -p fahimni-edge -f deploy/caddy/docker-compose.caddy.yml ps   # edge
 docker compose logs --tail=100 app frontend nginx
 docker compose logs --tail=100 migrate          # schema + seed output
-docker compose -f deploy/caddy/docker-compose.caddy.yml logs --tail=100 caddy
+docker compose -f deploy/caddy/docker-compose.caddy.yml -p fahimni-edge logs --tail=100 caddy
 ```
 
 | Symptom | Likely cause |
 |---------|--------------|
 | Caddy can't get a certificate | DNS not resolving to this VPS yet, or port 80 blocked |
+| The edge removed the app containers | the edge was started in project `fahimni` instead of `fahimni-edge` (never set `COMPOSE_PROJECT_NAME=fahimni` in `caddy.env`) |
 | `migrate` exited non-zero | invalid `SUPER_ADMIN_PASSWORD`, or SMTP/DB values malformed in the env file |
 | `502` from the edge | nginx not up yet, or the proxy network/alias mismatch (`PROXY_ALIAS`) |
 | Login page loads but API fails | check `docker compose logs app` and `/etc/fahimni/production.env` |
@@ -148,6 +167,7 @@ docker compose -f deploy/caddy/docker-compose.caddy.yml logs --tail=100 caddy
 |------|---------|
 | `deploy/scripts/fresh-install.sh` | the installer (this document) |
 | `deploy/caddy/fahimni-standalone.caddy` | standalone Caddyfile (automatic HTTPS) |
-| `deploy/caddy/docker-compose.caddy.yml` | standalone Caddy container |
+| `deploy/caddy/docker-compose.caddy.yml` | standalone Caddy container (project `fahimni-edge`) |
 | `deploy/caddy/caddy.env.example` | template for `/etc/fahimni/caddy.env` |
 | `deploy/tests/fresh-install-test.sh` | CI test (static guards + hermetic idempotent run) |
+| `deploy/tests/caddy-project-isolation-test.sh` | CI test (real Docker: app vs edge never remove each other) |
