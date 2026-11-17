@@ -90,12 +90,10 @@ FREEMIUS_CHECKOUT_URL=https://checkout.freemius.com
 FREEMIUS_SANDBOX=false
 
 # نطاق المطوّر — مطلوب لإنشاء/نشر أسعار الخطط تلقائيًا من لوحة الأدمن.
-# المستحسن: رمز FSA — يوثّق مسار products/ الرسمي في واجهة Freemius (انظر §4.1).
+# المصادقة الرسمية لنطاق المطوّر = Developer Secret-Key (مسار plugins/ — انظر §4.1).
 FREEMIUS_DEVELOPER_ID=40270
-FREEMIUS_DEVELOPER_FSA_TOKEN=xxxxxxxxxxxxxxxx
-# بديل قديم **غير موثّق** (يستخدم مسار plugins/ الداخلي): زوج المفتاح العام/السري.
-# FREEMIUS_DEVELOPER_PUBLIC_KEY=pk_30044d98026f304534b5b24d44a8c
-# FREEMIUS_DEVELOPER_SECRET_KEY=sk_xxxxxxxxxxxxxxxx
+FREEMIUS_DEVELOPER_PUBLIC_KEY=pk_xxxxxxxxxxxxxxxx
+FREEMIUS_DEVELOPER_SECRET_KEY=sk_xxxxxxxxxxxxxxxx
 ```
 
 > **القيم تحتوي رموزًا خاصة** (`(` `)` `%` `]` `&` `*` `#`): ضعها بين علامتَي اقتباس في ملف البيئة.
@@ -106,7 +104,7 @@ FREEMIUS_DEVELOPER_FSA_TOKEN=xxxxxxxxxxxxxxxx
 - **FREEMIUS_PRODUCT_SECRET_KEY**: من `Settings → API & Keys → Secret Key` (يُستخدم للتحقق من توقيع الـWebhook).
 - **FREEMIUS_PUBLIC_KEY**: من نفس الصفحة (يُستخدم من الـJS SDK في الواجهة).
 - **FREEMIUS_PRODUCT_ID**: يظهر في نفس قسم `API & Keys`.
-- **FREEMIUS_DEVELOPER_ID / _FSA_TOKEN** (المستحسن) أو **_PUBLIC_KEY / _SECRET_KEY** (بديل قديم): من `Dashboard → My Profile → Keys`. **إلزامية فقط لإنشاء/نشر الأسعار** (انظر §4.1 و§4.2). رمز المنتج (Bearer) **قراءة فقط** لخطط/تسعيرات Freemius ولا يستطيع تغيير أي سعر.
+- **FREEMIUS_DEVELOPER_ID / _PUBLIC_KEY / _SECRET_KEY**: من `Dashboard → My Profile → Keys`. **إلزامية فقط لإنشاء/نشر الخطط والأسعار** (انظر §4.1 و§4.2). رمز المنتج (Bearer) **قراءة فقط** لخطط/تسعيرات Freemius ولا يستطيع تغيير أو إنشاء أي سعر.
 
 > الأسرار تُقرأ **من البيئة فقط** ولا تُخزَّن في قاعدة البيانات ولا تُعاد عبر أي API. الواجهة تعرض فقط مؤشرات `*_set` (موجود/غير موجود).
 
@@ -141,19 +139,22 @@ FREEMIUS_PLAN_ENTERPRISE_YEARLY_ID=12350
 
 **القاعدة:** بعد الإعداد الأولي، تغيير أي سعر اشتراك يجب أن يعمل من لوحة الأدمن **دون تعديل ملفات أو إعادة نشر**، وأن ينعكس على **سعر الدفع الفعلي** في Freemius في الوقت نفسه.
 
-**لماذا نطاق المطوّر (Developer scope)؟** واجهة Freemius تتيح **قراءة** الخطط والتسعيرات برمز المنتج (Bearer)، لكنها **لا تسمح بكتابة/تغيير أي سعر** إلا من نطاق المطوّر:
+**لماذا نطاق المطوّر (Developer scope)؟** واجهة Freemius تتيح **قراءة** الخطط والتسعيرات برمز المنتج (Bearer)، لكنها **لا تسمح بإنشاء/كتابة خطة أو تسعير** إلا من نطاق المطوّر:
 
 ```
-POST /v1/developers/{developer_id}/products/{product_id}/plans.json                                  # إنشاء خطة
-POST /v1/developers/{developer_id}/products/{product_id}/plans/{plan_id}/pricing.json               # إنشاء تسعير
-PUT  /v1/developers/{developer_id}/products/{product_id}/plans/{plan_id}/pricing/{pricing_id}.json  # تعديل سعر
+POST /v1/developers/{developer_id}/plugins/{product_id}/plans.json                                  # إنشاء خطة
+POST /v1/developers/{developer_id}/plugins/{product_id}/plans/{plan_id}/pricing.json               # إنشاء تسعير
+PUT  /v1/developers/{developer_id}/plugins/{product_id}/plans/{plan_id}/pricing/{pricing_id}.json  # تعديل سعر
 ```
 
-> **هذه هي المسارات الرسمية الموثّقة** (مأخوذة من OpenAPI الرسمي الحيّ: `https://api.freemius.com/v1/openapi.json`). وهي **مسارات نطاق المطوّر**، أي أنها تتطلب **رمز FSA** — الذي يُصدره `POST /v1/developers/{developer_id}/login.json` بصيغة `Authorization: FSA {developer_id}:{access_token}`. لذلك يُضبط `FREEMIUS_DEVELOPER_FSA_TOKEN`.
+> **طريقة المصادقة الرسمية لنطاق المطوّر = مصادقة المفتاح السري (Developer Secret-Key Authentication).**
+> - التوثيق الرسمي: رمز `Bearer` يدعم **نطاق المنتج فقط**؛ أما نطاق المطوّر فيتطلب **الترويسة الموقّعة** `Authorization: FS {developer_id}:{public_key}:{signature}` (حيث `signature = base64url(hmac_sha256_hex)` على `METHOD\nContent-MD5\nContent-Type\nDate\nresourcePath`).
+> - هذا هو ما تستخدمه **الـSDK الرسمي** (`freemius-php-sdk` و`freemius-node-sdk`): `developer.Api('/plugins/{id}.json', ...)` بمفاتيح `pk_`/`sk_` — أي أن بادئة مسار المطوّر هي **`plugins/`**.
+> - **تم التحقق عمليًا (فحص مباشر بلا أسرار):** الطلب الموقّع إلى `POST /v1/developers/40270/plugins/44761/plans.json` **يصل إلى المورد** ويعيد `401 Invalid Authorization header` عند توقيع خاطئ (أي المسار موجود ومقبول). في المقابل `POST /v1/developers/40270/products/44761/plans.json` يعيد `400 not_implemented` «Invalid request path» — أي مسار `products/` لنطاق المطوّر **غير مُفعّل فعليًا** على الـAPI الحيّ (رغم وروده في OpenAPI النظري).
 >
-> **تحذير (مسار غير موثّق):** مفاتيح نطاق المطوّر القديمة (زوج المفتاح العام/السري + توقيع `FS`/`FSP`) يُعيد توجيهها Freemius إلى مسار داخلي باسم **`plugins/`** بدل `products/` — وهو **غير موجود في OpenAPI الرسمي**. النظام يحتفظ به كخيار **بديل فقط** عند غياب رمز FSA (يستخدم `FREEMIUS_DEVELOPER_PUBLIC_KEY` + `FREEMIUS_DEVELOPER_SECRET_KEY`). **المستحسن دائمًا رمز FSA على مسار `products/` الرسمي.**
+> ⚠️ **لا تستخدم رمز FSA (`POST /v1/developers/{id}/login.json`) ولا مسار `products/`**: وردا في OpenAPI لكنهما **غير مُوجَّهين** على الـAPI الحيّ (يردّان `400 not_implemented`). المسار العامل الوحيد هو **`plugins/` + مصادقة المفتاح السري**.
 
-لذلك يلزم ضبط مفاتيح نطاق المطوّر (§3) لتمكين الإنشاء/النشر التلقائي. رمز المنتج وحده **لا يستطيع أبدًا** تغيير سعر.
+لذلك يلزم ضبط مفاتيح نطاق المطوّر من نوع **المفتاح العام + المفتاح السري** (§3) لتمكين الإنشاء/النشر التلقائي. رمز المنتج وحده **لا يستطيع أبدًا** إنشاء خطة أو تغيير سعر.
 
 #### آلية «حفظ ونشر السعر» (Save & publish)
 
@@ -220,7 +221,7 @@ php artisan freemius:provision-plans --apply --tier=starter
 5. **يتحقق** أن السعر والعملة (USD) مطابقان قبل الربط؛ وعند أي اختلاف يوقف الربط ويُبلّغ (لا نجاح وهمي).
 6. لو وُجد للخطة **أكثر من تسعير** بلا ربط صريح، يُعلّمها `ambiguous` و**لا يخمّن** أي تسعير.
 
-> عند رسالة «Developer write credentials: MISSING»: اضبط `FREEMIUS_DEVELOPER_ID` + `FREEMIUS_DEVELOPER_FSA_TOKEN` (المستحسن) على الخادم.
+> عند رسالة «Developer write credentials: MISSING»: اضبط `FREEMIUS_DEVELOPER_ID` + `FREEMIUS_DEVELOPER_PUBLIC_KEY` + `FREEMIUS_DEVELOPER_SECRET_KEY` على الخادم (§3).
 
 ---
 

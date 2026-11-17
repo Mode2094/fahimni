@@ -57,7 +57,7 @@ class FreemiusGateway
     }
 
     /**
-     * @return array{enabled: bool, product_id: string, api_token: string, secret_key: string, public_key: string, api_url: string, checkout_url: string, sandbox: bool, developer_id: string, developer_public_key: string, developer_secret_key: string, developer_fsa_token: string}
+     * @return array{enabled: bool, product_id: string, api_token: string, secret_key: string, public_key: string, api_url: string, checkout_url: string, sandbox: bool, developer_id: string, developer_public_key: string, developer_secret_key: string}
      */
     public static function config(): array
     {
@@ -71,12 +71,6 @@ class FreemiusGateway
             'developer_id' => (string) config('services.freemius.developer_id', ''),
             'developer_public_key' => (string) config('services.freemius.developer_public_key', ''),
             'developer_secret_key' => (string) config('services.freemius.developer_secret_key', ''),
-            // Documented developer API token (`FSA {dev_id}:{token}`, obtained
-            // from POST /v1/developers/{id}/login.json). When present it is
-            // preferred: it authorizes the DOCUMENTED `products/` developer
-            // routes. Only without it do we fall back to the legacy signed
-            // scheme (see developerWrite()).
-            'developer_fsa_token' => (string) config('services.freemius.developer_fsa_token', ''),
             // Non-secret overrides — admin-editable via platform_settings.
             'product_id' => (string) PlatformSetting::get('freemius_product_id', config('services.freemius.product_id', '')),
             'api_url' => rtrim((string) PlatformSetting::get('freemius_api_url', config('services.freemius.api_url', 'https://api.freemius.com')), '/'),
@@ -94,25 +88,17 @@ class FreemiusGateway
 
     /**
      * Whether developer-scope credentials are present. The product Bearer token
-     * can NEVER change a plan price (Freemius allows pricing writes for the
-     * developer scope only); publishing therefore requires either:
-     *   - the documented FSA access token (`FREEMIUS_DEVELOPER_FSA_TOKEN`), or
-     *   - the legacy developer public + secret key pair
-     * from Dashboard → My Profile → Keys.
+     * can NEVER change a plan price (Freemius allows plan/pricing writes for the
+     * developer scope only); publishing therefore requires the developer
+     * public + secret key pair from Dashboard → My Profile → Keys.
      */
     public static function developerConfigured(): bool
     {
         $c = self::config();
 
-        if ($c['developer_id'] === '') {
-            return false;
-        }
-
-        if ($c['developer_fsa_token'] !== '') {
-            return true;
-        }
-
-        return $c['developer_public_key'] !== '' && $c['developer_secret_key'] !== '';
+        return $c['developer_id'] !== ''
+            && $c['developer_public_key'] !== ''
+            && $c['developer_secret_key'] !== '';
     }
 
     public static function productId(): string
@@ -471,13 +457,11 @@ class FreemiusGateway
     /**
      * Update a plan's pricing in Freemius using DEVELOPER-scope authentication.
      *
-     * Documented (current) route — requires the FSA access token:
-     *   PUT /v1/developers/{dev}/products/{prod}/plans/{plan}/pricing/{id}.json
-     *
-     * The product Bearer token does NOT authorize this operation. When only the
-     * legacy developer public+secret key pair is configured (no FSA token) we
-     * fall back to the legacy signed scheme, which the API only routes under an
-     * undocumented `plugins/` alias — see developerWrite().
+     * The product Bearer token does NOT authorize this operation. Developer
+     * scope uses Developer secret-key authentication: a signed `FS`/`FSP`
+     * header whose resource is the live `plugins/` route
+     * (`PUT /v1/developers/{dev}/plugins/{prod}/plans/{plan}/pricing/{id}.json`).
+     * See developerWrite() for the verified path/auth details.
      *
      * Never throws: returns a structured result the caller can act on honestly.
      *
@@ -580,16 +564,17 @@ class FreemiusGateway
     }
 
     /**
-     * Perform a DEVELOPER-scope write using the best available credential.
+     * Perform a DEVELOPER-scope write with the documented Developer secret-key
+     * authentication.
      *
-     * `$documentedPath` is always the OFFICIAL route
-     * (`/v1/developers/{dev}/products/{prod}/...`). When an FSA access token is
-     * configured we call it as-is with `Authorization: FSA {dev}:{token}`.
-     *
-     * Otherwise we fall back to the legacy signed scheme, which the API only
-     * routes under the undocumented `plugins/` alias (rewriting `products/` →
-     * `plugins/`). The fallback keeps the legacy public+secret key pair working;
-     * the documented route is always preferred.
+     * `$documentedPath` is written with `products/`; the LIVE developer-scope
+     * route is registered under the `plugins/` alias, so it is rewritten here.
+     * (Verified against the live API: `POST .../products/{id}/plans.json`
+     * returns `400 not_implemented` "Invalid request path", while the same
+     * request under `plugins/` reaches the resource and only fails auth with a
+     * bogus signature → `401 Invalid Authorization header`.) The official legacy
+     * SDKs (freemius-php-sdk / freemius-node-sdk) likewise call `/plugins/...`
+     * with the signed `FS`/`FSP` header.
      *
      * Never throws and never auto-retries (money-affecting writes).
      *
@@ -607,24 +592,17 @@ class FreemiusGateway
             return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'payload_encode_failed'];
         }
 
-        if ($c['developer_fsa_token'] !== '') {
-            // Documented developer API: the FSA token authorizes `products/`.
-            $path = $documentedPath;
-            $headers = ['Authorization' => "FSA {$c['developer_id']}:{$c['developer_fsa_token']}"];
-        } else {
-            // Legacy signed scheme — only routed on the undocumented plugins/ alias.
-            $path = str_replace("/products/{$c['product_id']}", "/plugins/{$c['product_id']}", $documentedPath);
-            $contentMd5 = md5($json);
-            $date = date('r', time() - self::clockDiff());
-            $authType = ($c['developer_secret_key'] !== $c['developer_public_key']) ? 'FS' : 'FSP';
-            $signature = self::freemiusSignature($method, $contentMd5, $contentType, $date, $path, $c['developer_public_key'], $c['developer_secret_key']);
+        $path = str_replace("/products/{$c['product_id']}", "/plugins/{$c['product_id']}", $documentedPath);
+        $contentMd5 = md5($json);
+        $date = date('r', time() - self::clockDiff());
+        $authType = ($c['developer_secret_key'] !== $c['developer_public_key']) ? 'FS' : 'FSP';
+        $signature = self::freemiusSignature($method, $contentMd5, $contentType, $date, $path, $c['developer_public_key'], $c['developer_secret_key']);
 
-            $headers = [
-                'Date' => $date,
-                'Content-MD5' => $contentMd5,
-                'Authorization' => "{$authType} {$c['developer_id']}:{$c['developer_public_key']}:{$signature}",
-            ];
-        }
+        $headers = [
+            'Date' => $date,
+            'Content-MD5' => $contentMd5,
+            'Authorization' => "{$authType} {$c['developer_id']}:{$c['developer_public_key']}:{$signature}",
+        ];
 
         try {
             $res = Http::baseUrl($c['api_url'])

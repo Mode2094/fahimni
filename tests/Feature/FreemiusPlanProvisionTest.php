@@ -12,11 +12,12 @@ use Illuminate\Support\Str;
  * Idempotent provisioning of the Freemius plans/pricing that back the local
  * tiers: list → create missing → create one USD pricing → link real IDs →
  * verify. Covers dry-run safety, idempotency, the ambiguous/mismatch guards,
- * and that the DOCUMENTED products/ route is used when an FSA token is present.
+ * and that the live developer route (`plugins/` + secret-key signed header) is
+ * used for writes.
  */
 class FreemiusPlanProvisionTest extends TenantTestCase
 {
-    private function configureFreemius(string $fsaToken = ''): void
+    private function configureFreemius(): void
     {
         config()->set('services.freemius.enabled', true);
         config()->set('services.freemius.product_id', '777');
@@ -26,10 +27,8 @@ class FreemiusPlanProvisionTest extends TenantTestCase
         config()->set('services.freemius.api_url', 'https://api.freemius.test');
         config()->set('services.freemius.checkout_url', 'https://checkout.freemius.test');
         config()->set('services.freemius.developer_id', '123');
-        config()->set('services.freemius.developer_fsa_token', $fsaToken);
-        // Legacy fallback (used only when the FSA token is absent).
-        config()->set('services.freemius.developer_public_key', $fsaToken === '' ? 'pk_test' : '');
-        config()->set('services.freemius.developer_secret_key', $fsaToken === '' ? 'sk_test' : '');
+        config()->set('services.freemius.developer_public_key', 'pk_test');
+        config()->set('services.freemius.developer_secret_key', 'sk_test');
     }
 
     private function makeTier(string $slug, float $monthly, float $annual, ?array $metadata = null): SubscriptionPlan
@@ -198,23 +197,24 @@ class FreemiusPlanProvisionTest extends TenantTestCase
         $this->assertNull($plan->fresh()->metadata['freemius_plan_id'] ?? null);
     }
 
-    public function test_fsa_token_uses_the_documented_products_route(): void
+    public function test_create_plan_uses_the_developer_secret_key_route_on_plugins(): void
     {
-        $this->configureFreemius('fsa-dev-token');
-        $this->makeTier('starter', 49.0, 490.0);
+        $this->configureFreemius();
 
         Http::fake([
-            'api.freemius.test/v1/products/777/plans.json' => Http::response(['plans' => []], 200),
+            'api.freemius.test/v1/ping.json' => $this->ping(),
             'api.freemius.test/v1/developers/*' => Http::response(['id' => '1010', 'name' => 'starter'], 200),
         ]);
 
         $created = FreemiusGateway::createPlan(['name' => 'starter', 'title' => 'Starter']);
 
         $this->assertTrue($created['ok']);
+        $this->assertSame('1010', $created['data']['id']);
 
+        // The live developer route is `plugins/` with the signed FS header.
         Http::assertSent(fn ($request) => $request->method() === 'POST'
-            && str_contains($request->url(), '/v1/developers/123/products/777/plans.json')
-            && ! str_contains($request->url(), '/plugins/')
-            && (string) $request->header('Authorization')[0] === 'FSA 123:fsa-dev-token');
+            && str_contains($request->url(), '/v1/developers/123/plugins/777/plans.json')
+            && str_starts_with((string) $request->header('Authorization')[0], 'FS 123:pk_test:')
+            && (string) $request->header('Content-MD5')[0] === md5($request->body()));
     }
 }

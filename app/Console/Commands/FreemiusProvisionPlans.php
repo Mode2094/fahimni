@@ -33,13 +33,10 @@ class FreemiusProvisionPlans extends Command
 
         $readReady = $config['product_id'] !== '' && $config['api_token'] !== '';
         $writeReady = FreemiusGateway::developerConfigured();
-        $authMode = $config['developer_fsa_token'] !== ''
-            ? 'FSA token (documented products/ route)'
-            : 'legacy public/secret key (undocumented plugins/ alias)';
 
         $this->line($apply ? '<fg=yellow>MODE: APPLY</> — plans/pricing will be created and linked on Freemius.' : '<fg=green>MODE: DRY-RUN</> — no changes are made.');
         $this->line('Product read credentials (product_id + api_token): '.($readReady ? '<fg=green>OK</>' : '<fg=red>MISSING</>'));
-        $this->line('Developer write credentials: '.($writeReady ? '<fg=green>OK</>' : '<fg=red>MISSING</>').' — '.$authMode);
+        $this->line('Developer write credentials: '.($writeReady ? '<fg=green>OK</>' : '<fg=red>MISSING</>').' — developer secret-key auth (live route /plugins/)');
         $this->newLine();
 
         if (! $readReady) {
@@ -49,7 +46,7 @@ class FreemiusProvisionPlans extends Command
         }
 
         if ($apply && ! $writeReady) {
-            $this->error('Cannot create/link plans: set FREEMIUS_DEVELOPER_ID and either FREEMIUS_DEVELOPER_FSA_TOKEN (preferred) or the legacy FREEMIUS_DEVELOPER_PUBLIC_KEY + FREEMIUS_DEVELOPER_SECRET_KEY.');
+            $this->error('Cannot create/link plans: set FREEMIUS_DEVELOPER_ID + FREEMIUS_DEVELOPER_PUBLIC_KEY + FREEMIUS_DEVELOPER_SECRET_KEY (Dashboard → My Profile → Keys).');
 
             return self::FAILURE;
         }
