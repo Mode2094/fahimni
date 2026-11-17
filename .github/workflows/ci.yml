@@ -154,6 +154,25 @@ jobs:
         # BLOCKED rather than silently skipped or auto-passed.
         run: deploy/tests/launch-smoke-list-test.sh
 
+      - name: Fresh install script is standalone, safe and idempotent
+        # Static guards (self-contained, refuses non-root, contains no
+        # destructive DB/volume command) plus a hermetic end-to-end run against
+        # stubbed Docker/git proving a second run reuses the release and env
+        # file and never rotates the database password.
+        run: deploy/tests/fresh-install-test.sh
+
+      - name: Standalone Caddy edge validates and joins only the proxy network
+        # Proves the fresh-install TLS edge is well-formed and independent: the
+        # configures only Caddy's own compose file, publishes 80/443 and joins
+        # the external proxy network (never a database/Redis network).
+        run: |
+          docker compose -f deploy/caddy/docker-compose.caddy.yml \
+            --env-file deploy/caddy/caddy.env.example config --quiet
+          docker run --rm \
+            -v "$PWD/deploy/caddy/fahimni-standalone.caddy:/etc/caddy/Caddyfile:ro" \
+            -e ACME_EMAIL=ci@example.com \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+
       - name: Redis maxmemory stays below the container cap
         # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
         run: deploy/tests/redis-memory-check.sh

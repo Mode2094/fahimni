@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Fahimni — standalone Caddy edge (public TLS terminator).
+#
+# Run from this directory with the generated env file:
+#   docker compose -f deploy/caddy/docker-compose.caddy.yml \
+#     --env-file /etc/fahimni/caddy.env up -d
+#
+# It joins ONLY the proxy network (like the app's nginx) and publishes 80/443.
+# The Fahimni database and Redis are never on this network — they live on the
+# app's own `internal: true` data network in docker-compose.yml and publish no
+# ports. This file is independent of every other project on the host.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  caddy:
+    # caddy 2-alpine, pinned to the digest resolved at authoring time.
+    image: caddy@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      FAHIMNI_DOMAIN: "${FAHIMNI_DOMAIN:-fahimni.me}"
+      FAHIMNI_API_DOMAIN: "${FAHIMNI_API_DOMAIN:-api.fahimni.me}"
+      FAHIMNI_UPSTREAM: "${FAHIMNI_UPSTREAM:-fahimni-prod:80}"
+      ACME_EMAIL: "${ACME_EMAIL:?ACME_EMAIL must be set in caddy.env for automatic HTTPS}"
+    volumes:
+      - ${FAHIMNI_CADDYFILE:-./fahimni-standalone.caddy}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - fahimni-proxy
+    healthcheck:
+      # The apex must answer over HTTPS once certificates are issued; a
+      # redirect on www is enough to prove Caddy itself is serving.
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://127.0.0.1/ >/dev/null 2>&1 || wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  # Shared with the app stack; `external: true` means compose never creates or
+  # removes it (fresh-install.sh creates it once).
+  fahimni-proxy:
+    name: ${FAHIMNI_PROXY_NETWORK:-fahimni-proxy}
+    external: true
+
+volumes:
+  caddy_data:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_caddy_data
+  caddy_config:
+    name: ${COMPOSE_PROJECT_NAME:-fahimni}_caddy_config
