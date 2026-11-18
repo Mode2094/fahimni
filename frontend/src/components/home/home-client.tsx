@@ -8,13 +8,13 @@ import { currencyLabel } from '@/lib/utils';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import {
-  GraduationCap, Sparkles, CheckCircle, ArrowLeft, ArrowRight, BookOpen, CreditCard,
+  GraduationCap, Sparkles, CheckCircle, BookOpen, CreditCard,
   BarChart3, Globe, Video, ShieldCheck, Users, Clock, Plus, Minus,
   Wallet, TrendingUp, LayoutGrid, Zap, ChevronDown, Menu, X, Loader2,
   Atom, Calculator, Pencil, Play, Award, FileCheck2, Trophy, Rocket, Medal,
   Timer, BookMarked, Layers, CheckCheck, MousePointerClick, ClipboardList, AlertCircle,
   Pause, QrCode, Download, Share2, Check, PartyPopper, HelpCircle, MessageCircle, Ban,
-  Phone, DatabaseBackup, RefreshCw, Lock, Headphones, Smartphone,
+  Phone, Lock, Smartphone,
 } from 'lucide-react';;
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,22 +48,15 @@ const HERO = {
 const MAIN_FEATURES = [
   { icon: LayoutGrid, title: ['منشئ كورسات', 'Course Builder'], desc: ['أقسام، دروس، فيديو، وملفات — أنشئ كورساً احترافياً في دقائق', 'Sections, lessons, video & files — build a professional course in minutes'], color: '#0d9488' },
   { icon: CreditCard, title: ['بطاقات تسجيل ذكية', 'Smart Registration Cards'], desc: ['رمز واحد يسجل طلابك تلقائياً — اطبعها أو أرسلها واتساب', 'One code enrolls students automatically — print or send via WhatsApp'], color: '#059669' },
-  { icon: Wallet, title: ['حصّل أرباحك', 'Collect Your Earnings'], desc: ['اربط بوابة الدفع الخاصة بك لاستقبال أرباح دوراتك، مع فواتير تلقائية', 'Connect your own payment gateway to receive your course earnings, with automatic invoices'], color: '#d97706' },
+  { icon: ClipboardList, title: ['اختبارات وواجبات', 'Exams & Assignments'], desc: ['أنشئ اختبارات وواجبات، صحّحها تلقائياً وتابع نتائج طلابك لحظياً', 'Create exams & assignments, auto-grade them and track student results in real time'], color: '#d97706' },
   { icon: BarChart3, title: ['تحليلات وإيرادات', 'Analytics & Revenue'], desc: ['تقارير أداء طلابك وإيراداتك لحظياً في لوحة واحدة', 'Real-time student performance & revenue reports in one dashboard'], color: '#ca8a04' },
   { icon: Globe, title: ['موقع خاص بعلامتك', 'Your Own Branded Site'], desc: ['موقع عام بألوانك وشعارك، يبني علامتك التجارية تلقائياً', 'Public site with your colors & logo, building your brand automatically'], color: '#14b8a6' },
   { icon: Video, title: ['بث مباشر', 'Live Streaming'], desc: ['جلسات مباشرة مع طلابك، حجز وحضور وإشعارات تلقائية', 'Live sessions with your students, booking, attendance & auto notifications'], color: '#dc2626' },
 ];
 
-const STEPS = [
-  { icon: Sparkles, title: ['أنشئ حسابك', 'Create your account'], desc: ['سجّل واحصل على موقعك التعليمي الخاص فوراً', 'Sign up and get your own educational site instantly'] },
-  { icon: BookOpen, title: ['أضف كورساتك', 'Add your courses'], desc: ['أنشئ الأقسام والدروس والاختبارات وحدد أسعارك', 'Create sections, lessons, exams and set your prices'] },
-  { icon: TrendingUp, title: ['اجذب طلابك واربح', 'Attract students & earn'], desc: ['شارك بطاقات التسجيل وحصّل أرباحك عبر بوابتك', 'Share registration cards and collect your earnings via your gateway'] },
-];
-
 const FAQS: [string, string][] = [
   ['كيف أبدأ مع المنصة؟', 'سجّل حسابك، أنشئ كورساتك وأقسامك ودروسك خلال دقائق، ثم شارك رابط موقعك مع طلابك.'],
   ['هل يمكنني بيع الكورسات ببطاقات التسجيل؟', 'نعم — ولّد بطاقات برمز QR أو اطبعها أو أرسلها واتساب، وعند الاسترداد يُسجل الطالب تلقائياً في كورسك.'],
-  ['كيف أستلم أرباح دوراتي؟', 'اربط بوابة الدفع الخاصة بك (باي بال، أو بطاقات عبر PayTabs) لاستقبال أرباح دوراتك مباشرة، مع فواتير تلقائية وملخص إيرادات لحظي. واشتراكك في منصة فهمني يُدفع أونلاين بأمان.'],
   ['هل أحصل على موقع خاص بعلامتي التجارية؟', 'نعم — موقع عام كامل بألوانك وشعارك مع إمكانية ربط دومين مخصص، وأدوات تصميم متقدمة.'],
   ['هل يمكنني متابعة أداء طلابي؟', 'نعم — تقارير تقدم الطلاب، نسب الإكمال، نتائج الامتحانات، ومتابعة الأجهزة في لوحة تحليلات متكاملة.'],
   ['كيف ألغي اشتراكي؟', 'من لوحة التحكم أو بمراسلة الدعم — الإلغاء فوري.'],
@@ -224,7 +217,6 @@ export default function HomeClient() {
 
   const navLinks = [
     { id: 'features', label: t('المميزات', 'Features') },
-    { id: 'how', label: t('كيف تعمل', 'How it works') },
     { id: 'student', label: t('تجربة الطالب', 'Student Experience') },
     { id: 'earnings', label: t('الأرباح', 'Earnings') },
     { id: 'pricing', label: t('الأسعار', 'Pricing') },
@@ -470,42 +462,6 @@ export default function HomeClient() {
           {/* CTA مكرر بعد المميزات */}
           <div className="mt-12 text-center">
             <p className="text-sm text-gray-400 mb-4">{t('ابدأ خلال دقائق — كل ما تحتاجه في مكان واحد', 'Start in minutes — everything you need in one place')}</p>
-            <Link href="/register/teacher">
-              <button className="inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.02] cta-shine" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
-                {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
-              </button>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── كيف تعمل ───────────────────────────────────── */}
-      <section id="how" className="py-20" style={{ background: 'linear-gradient(180deg, #f0fdfa, #e8f6f3)' }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="text-center mb-14">
-            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('كيف تعمل؟', 'How it works?')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('ابدأ في 3 خطوات', 'Start in 3 steps')}</p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {STEPS.map((s, i) => (
-              <div key={i} className="relative text-center group">
-                <div className="mx-auto w-20 h-20 rounded-3xl bg-white shadow-brand border border-teal-100 flex items-center justify-center mb-5 transition-all duration-300 group-hover:scale-110 group-hover:-rotate-6 group-hover:border-teal-300">
-                  <s.icon className="h-9 w-9 text-teal-600 transition-transform duration-300 group-hover:scale-110" />
-                </div>
-                <span className="absolute top-0 -start-4 text-7xl font-black text-teal-600/10 select-none transition-all duration-300 group-hover:text-teal-600/25">{i + 1}</span>
-                <h3 className="text-xl font-bold text-teal-950 mt-2">{t(s.title[0], s.title[1])}</h3>
-                <p className="text-teal-900/60 mt-2 text-sm leading-relaxed max-w-xs mx-auto">{t(s.desc[0], s.desc[1])}</p>
-                {i < 2 && (
-                  <div className="hidden md:flex absolute top-10 -end-10 items-center justify-center">
-                    <ArrowLeft className="h-7 w-7 text-teal-300 animate-pulse" style={locale === 'ar' ? { transform: 'rotate(180deg)' } : undefined} />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* CTA مكرر بعد كيف تعمل */}
-          <div className="mt-12 text-center">
             <Link href="/register/teacher">
               <button className="inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.02] cta-shine" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                 {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
@@ -1282,35 +1238,6 @@ export default function HomeClient() {
         </div>
       </section>
 
-      {/* ─── CTA ────────────────────────────────────────── */}
-      <section className="py-20 px-4">
-        <div className="max-w-5xl mx-auto rounded-3xl overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #0f2e2b, #115e54, #0d9488)' }}>
-          <div className="absolute top-0 right-0 w-72 h-72 bg-teal-300/25 rounded-full blur-3xl" />
-          <div className="absolute bottom-0 left-0 w-72 h-72 bg-amber-400/10 rounded-full blur-3xl" />
-          <div className="relative z-10 px-6 py-16 text-center">
-            <h2 className="text-3xl sm:text-4xl font-bold text-white">{t('جاهز تبني علامتك التعليمية؟', 'Ready to build your educational brand?')}</h2>
-            <p className="text-white/70 text-lg mt-4">{t('انضم لآلاف المعلمين، ابدأ الآن ولا تدفع حتى تنجح', 'Join thousands of teachers — start now and pay only when you succeed')}</p>
-            <div className="flex flex-wrap justify-center gap-3 mt-8">
-              <Link href="/register/teacher" className="px-7 py-3.5 rounded-2xl font-semibold text-white shadow-xl hover:scale-[1.02] transition-all" style={{ background: 'linear-gradient(135deg, #d97706, #f59e0b)' }}>
-                {t('ابدأ الآن', 'Start Now')}
-              </Link>
-              <button onClick={() => scrollTo('pricing')} className="px-7 py-3.5 rounded-2xl font-semibold text-white border border-white/25 glass hover:bg-white/10 transition-colors">
-                {t('شاهد الأسعار', 'See Pricing')}
-              </button>
-            </div>
-
-
-            {/* شارات الأمان */}
-            <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-white/55">
-              <span className="inline-flex items-center gap-1.5"><Headphones className="h-3.5 w-3.5 text-teal-300" />{t('دعم 24/7', '24/7 support')}</span>
-
-              <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5 text-teal-300" />{t('تحديثات مستمرة', 'Continuous updates')}</span>
-              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-teal-300" />{t('بيانات مشفّرة', 'Encrypted data')}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ─── بانر مدرسي القرءان ─────────────────────────────── */}
       <div id="quran-teachers">
         <QuranTeacherBanner />
@@ -1331,7 +1258,6 @@ export default function HomeClient() {
             <ul className="space-y-2.5 text-sm">
               <li><button onClick={() => scrollTo('features')} className="text-white/50 hover:text-white transition-colors">{t('المميزات', 'Features')}</button></li>
               <li><button onClick={() => scrollTo('pricing')} className="text-white/50 hover:text-white transition-colors">{t('الأسعار', 'Pricing')}</button></li>
-              <li><button onClick={() => scrollTo('how')} className="text-white/50 hover:text-white transition-colors">{t('كيف تعمل', 'How it works')}</button></li>
             </ul>
           </div>
           <div>

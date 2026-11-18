@@ -19,7 +19,7 @@ import {
   ArrowLeft, ArrowRight, Plus, Trash2, Video, FileText, Lock, Unlock, ChevronDown, ChevronUp, Loader2,
   Pencil, Layers, BookOpen, ClipboardList, HelpCircle, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
   Upload, FileAudio, FileVideo, FileImage, FileArchive, File, Search, ClipboardCheck, CalendarClock, Star, MessageSquare, Send,
-  UploadCloud, Radio } from 'lucide-react';
+  UploadCloud, Radio, ExternalLink, Link2, Copy, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
@@ -294,16 +294,34 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch { toast.error('Failed'); }
   };
   const [liveBusy, setLiveBusy] = useState(false);
-  const createLiveForLesson = async () => {
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [liveTitle, setLiveTitle] = useState('');
+  const [liveMeetUrl, setLiveMeetUrl] = useState('');
+  const [liveError, setLiveError] = useState('');
+
+  const MEET_RE = /^https:\/\/meet\.google\.com\/[a-z0-9-]+(\/)?$/i;
+
+  const openLiveForLesson = () => {
+    if (!lesSection) { toast.error(t('اختر وحدة أولاً', 'Pick a unit first')); return; }
+    setLiveTitle(les.title || lesTarget?.title || t('بث مباشر', 'Live'));
+    setLiveMeetUrl('');
+    setLiveError('');
+    setLiveOpen(true);
+  };
+
+  const saveLiveSession = async () => {
     if (liveBusy) return;
+    if (!MEET_RE.test(liveMeetUrl.trim())) {
+      setLiveError(t('رابط Google Meet غير صحيح — يجب أن يبدأ بـ https://meet.google.com/', 'Invalid Google Meet link — must start with https://meet.google.com/'));
+      return;
+    }
     setLiveBusy(true);
     try {
       let lessonId = lesTarget?.id;
-      let lessonTitle = lesTarget?.title || les.title || t('بث مباشر', 'Live');
+      const lessonTitle = liveTitle.trim() || les.title || t('بث مباشر', 'Live');
 
       // من "درس جديد": أنشئ الدرس أولاً (إن لم يكن محفوظاً بعد)
       if (!lessonId) {
-        if (!lesSection) { toast.error(t('اختر وحدة أولاً', 'Pick a unit first')); return; }
         const lr = await fetch(`${API}/lessons`, {
           method: 'POST',
           headers: headers(),
@@ -316,20 +334,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         toast.success(t('تم إنشاء الدرس', 'Lesson created'));
       }
 
-      const meetingUrl = window.prompt(t('ألصق رابط Google Meet الخاص بك (https://meet.google.com/...)', 'Paste your Google Meet link (https://meet.google.com/...)'));
-      if (!meetingUrl || !/^https:\/\/meet\.google\.com\/[a-z0-9-]+(\/)?$/i.test(meetingUrl.trim())) {
-        toast.error(t('رابط Google Meet غير صحيح', 'Invalid Google Meet link'));
-        return;
-      }
-
       const res = await fetch(`${API}/teacher/live-sessions`, {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ title: `${lessonTitle}`, lesson_id: lessonId, provider: 'google_meet', meeting_url: meetingUrl.trim(), record_enabled: true }),
+        body: JSON.stringify({ title: lessonTitle, lesson_id: lessonId, provider: 'google_meet', meeting_url: liveMeetUrl.trim(), record_enabled: true }),
       });
       const d = await res.json().catch(() => null);
       if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
-      toast.success(t('تم إنشاء البث المباشر داخل الدرس', 'Live session created inside the lesson'));
+      toast.success(t('تم إنشاء حصة البث المباشر داخل الدرس', 'Live session created inside the lesson'));
+      setLiveOpen(false);
       setLesOpen(false); setLesTarget(null); setLes({ ...EMPTY_LESSON });
       load();
     } catch { toast.error('Failed'); } finally { setLiveBusy(false); }
@@ -1031,7 +1044,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     className="rounded-xl border-2 border-gray-200 px-3 py-3 text-sm font-semibold text-gray-500 transition hover:border-violet-300">
                     <ClipboardList className="h-4 w-4 mx-auto mb-1" />{t('اختبار', 'Exam')}
                   </button>
-                  <button type="button" onClick={() => { setLesOpen(false); setLes({ ...EMPTY_LESSON }); setLesSection(lesSection); createLiveForLesson(); }}
+                  <button type="button" onClick={() => { openLiveForLesson(); setLesOpen(false); }}
                     className="rounded-xl border-2 border-gray-200 px-3 py-3 text-sm font-semibold text-gray-500 transition hover:border-teal-300">
                     <Radio className="h-4 w-4 mx-auto mb-1" />{t('بث مباشر', 'Live')}
                   </button>
@@ -1095,6 +1108,67 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <DialogFooter>
             <Button variant="outline" onClick={() => { setLesOpen(false); setLesTarget(null); setLesSection(''); setLes({ ...EMPTY_LESSON }); setLesContents([]); resetContentForm(); }}>{t('إلغاء', 'Cancel')}</Button>
             <Button onClick={saveLesson}>{t('حفظ', 'Save')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── حوار البث المباشر (Google Meet) ─────────── */}
+      <Dialog open={liveOpen} onOpenChange={(v) => { setLiveOpen(v); if (!v) setLiveError(''); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Radio className="h-5 w-5 text-rose-600" />{t('حصة بث مباشر جديدة', 'New live session')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>{t('عنوان الحصة', 'Session title')}</Label>
+              <Input value={liveTitle} onChange={(e) => setLiveTitle(e.target.value)} className="h-11" placeholder={t('مثال: مراجعة الوحدة الأولى', 'e.g. Unit 1 review')} />
+            </div>
+
+            {/* خطوات إنشاء الاجتماع + زر يفتح Google Meet */}
+            <div className="rounded-2xl border border-teal-100 bg-teal-50/60 p-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white border border-teal-100"><Video className="h-4 w-4 text-teal-600" /></span>
+                <div className="text-sm">
+                  <p className="font-semibold text-teal-900">{t('كيف أحصل على رابط Google Meet؟', 'How do I get a Google Meet link?')}</p>
+                  <ol className="mt-1.5 space-y-1 text-[13px] text-teal-900/70 list-decimal ps-4">
+                    <li>{t('اضغط الزر أدناه لفتح Google Meet.', 'Click the button below to open Google Meet.')}</li>
+                    <li>{t('أنشئ اجتماعاً جديداً (New meeting).', 'Create a new meeting.')}</li>
+                    <li>{t('انسخ الرابط (Copy link) وألصقه في الحقل.', 'Copy the link and paste it in the field.')}</li>
+                  </ol>
+                </div>
+              </div>
+              <a href="https://meet.google.com/new" target="_blank" rel="noopener noreferrer"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 transition-colors">
+                <ExternalLink className="h-4 w-4" />{t('افتح Google Meet وأنشئ اجتماعاً', 'Open Google Meet & create a meeting')}
+              </a>
+            </div>
+
+            {/* حقل الرابط */}
+            <div className="space-y-2">
+              <Label>{t('رابط الاجتماع', 'Meeting link')}</Label>
+              <div className={`flex items-center rounded-xl border overflow-hidden bg-white ${liveError ? 'border-red-300' : liveMeetUrl && MEET_RE.test(liveMeetUrl.trim()) ? 'border-emerald-400' : 'border-slate-200'}`}>
+                <span className="px-3 h-11 flex items-center text-gray-400 border-e border-slate-200 bg-slate-50"><Link2 className="h-4 w-4" /></span>
+                <Input value={liveMeetUrl} onChange={(e) => { setLiveMeetUrl(e.target.value); setLiveError(''); }} dir="ltr" placeholder="https://meet.google.com/abc-defg-hij" className="h-11 border-0 rounded-none focus-visible:ring-0" />
+                {liveMeetUrl && (
+                  <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(liveMeetUrl); toast.success(t('تم نسخ الرابط', 'Link copied')); } catch { /* ignore */ } }} className="px-3 h-11 text-gray-400 hover:text-teal-600" aria-label={t('نسخ', 'Copy')}><Copy className="h-4 w-4" /></button>
+                )}
+              </div>
+              {liveError ? (
+                <p className="text-xs text-red-500 inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5" />{liveError}</p>
+              ) : liveMeetUrl && MEET_RE.test(liveMeetUrl.trim()) ? (
+                <p className="text-xs text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />{t('رابط صحيح', 'Valid link')}</p>
+              ) : (
+                <p className="text-xs text-gray-400 inline-flex items-center gap-1"><Info className="h-3.5 w-3.5" />{t('يجب أن يبدأ الرابط بـ https://meet.google.com/', 'The link must start with https://meet.google.com/')}</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLiveOpen(false)}>{t('إلغاء', 'Cancel')}</Button>
+            <Button onClick={saveLiveSession} disabled={liveBusy || !MEET_RE.test(liveMeetUrl.trim())} className="gap-2 bg-rose-600 hover:bg-rose-700 text-white">
+              {liveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}{t('إنشاء الحصة', 'Create session')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

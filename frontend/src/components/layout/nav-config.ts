@@ -1,9 +1,9 @@
 import type { LucideIcon } from 'lucide-react';
 import {
-  LayoutDashboard, CreditCard, Layers, Users, GraduationCap, Ticket, Wallet, ReceiptText, LifeBuoy, Shield, Settings, BookOpen,
+  LayoutDashboard, Layers, Users, GraduationCap, Ticket, Wallet, ReceiptText, LifeBuoy, Shield, Settings, BookOpen,
   ClipboardList, Video, CalendarDays, CalendarClock, HandCoins, FileQuestion,
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
-  BookMarked, Medal, CalendarCheck, UserCircle2, DatabaseBackup, Home, HelpCircle,
+  BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
   ServerCog, Radio, Smartphone, Activity, Bug, Database,
 } from 'lucide-react';
 
@@ -31,16 +31,15 @@ export const ADMIN_NAV: NavGroup[] = [
     ],
   },
   {
-    title: { ar: 'الاشتراكات والخطط', en: 'Subscriptions' },
+    title: { ar: 'المعلمون والاشتراكات', en: 'Teachers & Subscriptions' },
     items: [
-      { href: '/admin/subscriptions', icon: CreditCard, ar: 'الاشتراكات', en: 'Subscriptions' },
-      { href: '/admin/plans', icon: Layers, ar: 'الخطط', en: 'Plans' },
+      { href: '/admin/teachers', icon: Users, ar: 'المعلمون والاشتراكات', en: 'Teachers & Subscriptions', match: ['/admin/teachers', '/admin/subscriptions'] },
+      { href: '/admin/plans', icon: Layers, ar: 'الخطط والأسعار', en: 'Plans & Pricing' },
     ],
   },
   {
     title: { ar: 'المستخدمون', en: 'Users' },
     items: [
-      { href: '/admin/teachers', icon: Users, ar: 'المعلمون', en: 'Teachers' },
       { href: '/admin/students', icon: GraduationCap, ar: 'الطلاب', en: 'Students' },
       { href: '/admin/quran-requests', icon: BookOpen, ar: 'مدرسو القرءان', en: 'Quran Teachers' },
     ],
@@ -61,7 +60,6 @@ export const ADMIN_NAV: NavGroup[] = [
     title: { ar: 'التشغيل', en: 'Operations' },
     items: [
       { href: '/admin/tickets', icon: LifeBuoy, ar: 'الدعم الفني', en: 'Support Tickets' },
-      { href: '/admin/backups', icon: DatabaseBackup, ar: 'النسخ الاحتياطي', en: 'Backups' },
     ],
   },
   {
