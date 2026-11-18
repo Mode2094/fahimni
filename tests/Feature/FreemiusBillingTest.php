@@ -330,6 +330,37 @@ class FreemiusBillingTest extends TenantTestCase
         ], $this->authHeaders($user, $tenant))->assertStatus(422);
     }
 
+    public function test_checkout_allows_trialing_tenant_to_subscribe(): void
+    {
+        $this->configureFreemius();
+        Http::fake($this->pricingStub());
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // A free trial is not a PAID subscription, and the platform provisions
+        // one for every new teacher. The teacher must still be able to start a
+        // paid checkout; activation supersedes the trial row.
+        TenantSubscription::withoutTenant()->create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'plan_id' => $plan->id,
+            'status' => 'trialing',
+            'billing_cycle' => 'monthly',
+            'starts_at' => now(),
+            'trial_ends_at' => now()->addDays(7),
+            'auto_renew' => true,
+        ]);
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($user, $tenant))
+            ->assertOk()
+            ->assertJsonPath('mode', 'checkout');
+    }
+
     public function test_existing_own_license_upgrades_instead_of_blocking(): void
     {
         $this->configureFreemius();

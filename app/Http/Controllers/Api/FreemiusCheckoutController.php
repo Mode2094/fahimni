@@ -437,8 +437,12 @@ class FreemiusCheckoutController extends Controller
             return true;
         }
 
+        // A free trial is NOT a paid subscription: one is provisioned for every
+        // new teacher, and the activation flow supersedes it (the entitlement
+        // sync cancels the local trial row when the paid license binds). Only a
+        // genuinely PAID legacy row blocks a new checkout.
         return TenantSubscription::where('tenant_id', $tenant->id)
-            ->whereIn('status', ['active', 'trialing'])
+            ->where('status', 'active')
             ->where(function ($q) {
                 $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
             })

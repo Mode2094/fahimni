@@ -48,7 +48,7 @@ function SuccessInner() {
         `${API}/subscriptions/freemius/complete?redirect_url=${encodeURIComponent(redirectUrl)}`,
         {
           credentials: 'include',
-          headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('lms_tenant') || '' },
+          headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('tenant_id') || '' },
         },
       );
       const data = await res.json().catch(() => ({}));

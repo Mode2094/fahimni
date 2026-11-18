@@ -66,7 +66,7 @@ function CheckoutInner() {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          'X-Tenant-Id': localStorage.getItem('lms_tenant') || '',
+          'X-Tenant-Id': localStorage.getItem('tenant_id') || '',
         },
         body: JSON.stringify({
           plan_id: plan.id,
