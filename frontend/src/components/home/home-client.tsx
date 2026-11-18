@@ -185,18 +185,12 @@ export default function HomeClient() {
   const monthlyPrices = livePlans.map((p: any) => Number(p.monthly_price)).filter((n) => n > 0);
   const minMonthly = monthlyPrices.length ? Math.min(...monthlyPrices) : null;
 
-  /* مواد تعليمية للشريط المتحرك */
-  const subjects = [
-    { icon: Calculator, label: t('رياضيات', 'Math') },
-    { icon: Atom, label: t('فيزياء', 'Physics') },
-    { icon: BookOpen, label: t('كيمياء', 'Chemistry') },
-    { icon: Pencil, label: t('اللغة العربية', 'Arabic') },
-    { icon: Globe, label: t('إنجليزية', 'English') },
-    { icon: LayoutGrid, label: t('برمجة', 'Programming') },
-    { icon: Medal, label: t('أحياء', 'Biology') },
-    { icon: BookMarked, label: t('تاريخ', 'History') },
-    { icon: TrendingUp, label: t('محاسبة', 'Accounting') },
-    { icon: Timer, label: t('إحصاء', 'Statistics') },
+  /* إحصاءات وثقة — أرقام صحيحة فقط (بدون أرقام وهمية) */
+  const proofStats = [
+    { icon: Wallet, value: t('0%', '0%'), label: t('عمولة على مبيعات كورساتك', 'commission on your sales') },
+    { icon: Timer, value: t('7 أيام', '7 days'), label: t('تجربة مجانية بدون بطاقة', 'free trial, no card') },
+    { icon: ShieldCheck, value: t('100%', '100%'), label: t('ملكية المحتوى والطلاب', 'ownership of content & students') },
+    { icon: MessageCircle, value: t('24/7', '24/7'), label: t('دعم عربي متواصل', 'Arabic support') },
   ];
 
   // عرض تسويقي: أهم الميزات المفعّلة فقط (لا فوضى 46 سطراً ولا ميزات معطلة).
@@ -243,11 +237,15 @@ export default function HomeClient() {
     <div className="min-h-screen bg-white" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
       {/* ─── شريط الإعلان التسويقي ─────────────────────── */}
       <div className="relative overflow-hidden text-white" style={{ background: 'linear-gradient(90deg, #0f2e2b, #0d9488 55%, #115e54)' }}>
-        <div className="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-center text-[13px] font-semibold">
-          <Gift className="h-4 w-4 text-amber-300 shrink-0" />
-          <span className="text-white/90">{t('جرّب منصة فهمني مجاناً 7 أيام — بدون بطاقة ائتمان، وبدون أي عمولة على مبيعاتك', 'Try Fahimni free for 7 days — no credit card, zero commission on your sales')}</span>
-          <Link href="/register/teacher" className="inline-flex items-center gap-1 font-bold text-amber-200 underline underline-offset-4 decoration-amber-300/60 hover:text-white transition-colors">
-            {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-center gap-2 text-[12px] sm:text-[13px] font-semibold leading-tight">
+          <Gift className="h-4 w-4 shrink-0 text-amber-300" />
+          <span className="text-white/90 text-center">
+            <b className="text-white">{t('جرّب فهمني مجاناً 7 أيام', 'Try Fahimni free for 7 days')}</b>
+            <span className="hidden sm:inline">{t(' — بدون بطاقة ائتمان، وبدون أي عمولة على مبيعاتك', ' — no credit card, zero commission on your sales')}</span>
+            <span className="sm:hidden">{t(' — بدون بطاقة، وبدون عمولة', ' — no card, no commission')}</span>
+          </span>
+          <Link href="/register/teacher" className="ms-1 inline-flex shrink-0 items-center gap-1 rounded-full border border-white/30 bg-white/15 px-3 py-1 text-[12px] font-bold text-white transition-colors hover:bg-white/25">
+            {t('ابدأ الآن', 'Start now')} <span className="hidden sm:inline">{locale === 'ar' ? '←' : '→'}</span>
           </Link>
         </div>
       </div>
@@ -337,23 +335,28 @@ export default function HomeClient() {
               </div>
 
               {/* شارات الثقة */}
-              <div className="mt-6 flex flex-wrap justify-center lg:justify-start gap-2.5">
+              <div className="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-center lg:justify-start">
                 {[
                   t('بدون بطاقة ائتمان', 'No credit card'),
                   t('إلغاء في أي وقت', 'Cancel anytime'),
                   t('0% عمولة على مبيعاتك', '0% commission on your sales'),
                   t('دعم عربي 24/7', '24/7 Arabic support'),
                 ].map((x, i) => (
-                  <span key={i} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs font-semibold text-white/90">
-                    <BadgeCheck className="h-3.5 w-3.5 text-teal-300" />{x}
+                  <span key={i} className="inline-flex items-center justify-center gap-1.5 rounded-full glass px-3 py-2 text-center text-xs font-semibold text-white/90 sm:justify-start sm:py-1.5">
+                    <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-teal-300" />{x}
                   </span>
                 ))}
               </div>
 
+              {/* مرساة السعر — عنصر الإقناع الأبرز */}
               {minMonthly !== null && (
-                <p className="mt-6 text-sm text-white/70">
-                  {t('تبدأ من', 'Starting at')} <b className="text-base text-white">{formatPrice(minMonthly)}</b> {t('شهرياً — وكل ما تربحه من كورساتك يبقى لك', 'per month — and everything your courses earn stays yours')}
-                </p>
+                <div className="mt-6 inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-2xl border border-amber-300/40 bg-amber-400/10 px-4 py-3 text-center backdrop-blur-sm lg:justify-start">
+                  <span className="text-sm font-medium text-white/75">{t('تبدأ من', 'Starting at')}</span>
+                  <span className="text-2xl font-black leading-none text-amber-200">{formatPrice(minMonthly)}</span>
+                  <span className="text-sm font-medium text-white/75">{t('شهرياً', 'per month')}</span>
+                  <span className="mx-1 hidden h-4 w-px bg-white/25 sm:inline-block" />
+                  <span className="text-sm font-bold text-white">{t('وكل ما تربحه من كورساتك يبقى لك', 'and everything your courses earn stays yours')}</span>
+                </div>
               )}
             </div>
 
@@ -456,32 +459,17 @@ export default function HomeClient() {
         </div>
       </section>
 
-      {/* شريط متحرك بالمواد التعليمية */}
-      <div className="relative z-10 overflow-hidden border-b border-teal-900/20 bg-[#0a1715] py-5">
-        <div className="mb-3.5 flex items-center justify-center gap-3 text-[11px] font-semibold tracking-[0.2em] text-white/35">
-          <span className="h-px w-10 bg-white/15" />
-          {t('مواد يدرّسها معلمو فهمني', 'Subjects taught on Fahimni')}
-          <span className="h-px w-10 bg-white/15" />
-        </div>
-        {[false, true].map((rev) => (
-          <div key={String(rev)} className={`marquee marquee-mask overflow-hidden ${rev ? 'mt-3 opacity-60' : ''}`}>
-            <div className={`flex w-max gap-3 ${rev ? 'marquee-track-reverse' : 'marquee-track'}`}>
-              {[0, 1].map((dup) => (
-                <div key={dup} className="flex items-center gap-3 pe-3">
-                  {subjects.map((s, i) => (
-                    <span
-                      key={i}
-                      className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/55 transition-colors hover:border-teal-400/40 hover:text-teal-200"
-                    >
-                      <s.icon className="h-4 w-4 text-teal-400/70" />
-                      {s.label}
-                    </span>
-                  ))}
-                </div>
-              ))}
+      {/* شريط الإحصاءات والثقة */}
+      <div className="relative z-10 border-b border-teal-900/20 bg-[#0a1715] py-7">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-x-4 gap-y-6 px-4 sm:grid-cols-4">
+          {proofStats.map((s, i) => (
+            <div key={i} className="flex flex-col items-center gap-1.5 text-center">
+              <s.icon className="h-5 w-5 text-teal-400" />
+              <span className="text-2xl font-black leading-none text-white sm:text-3xl">{s.value}</span>
+              <span className="text-xs leading-snug text-white/55">{s.label}</span>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* ─── المميزات ───────────────────────────────────── */}
@@ -1028,7 +1016,7 @@ export default function HomeClient() {
           </div>
 
           {/* شارات القيمة */}
-          <div className="mb-10 flex flex-wrap justify-center gap-2.5">
+          <div className="mb-8 grid grid-cols-2 gap-2 sm:mb-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-2.5">
             {[
               t('بدون عمولة على مبيعاتك', 'No commission on your sales'),
               t('تجربة مجانية 7 أيام', '7-day free trial'),
@@ -1036,8 +1024,8 @@ export default function HomeClient() {
               t('إلغاء في أي وقت', 'Cancel anytime'),
               t('دعم عربي 24/7', '24/7 Arabic support'),
             ].map((x, i) => (
-              <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-white px-3.5 py-2 text-xs font-semibold text-teal-800 shadow-sm">
-                <CheckCircle className="h-3.5 w-3.5 text-teal-600" />{x}
+              <span key={i} className={`inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-white px-3 py-2 text-center text-xs font-semibold text-teal-800 shadow-sm sm:justify-start sm:px-3.5 ${i === 4 ? 'col-span-2 sm:col-auto' : ''}`}>
+                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-teal-600" />{x}
               </span>
             ))}
           </div>
@@ -1065,7 +1053,7 @@ export default function HomeClient() {
             </div>
           </div>
 
-          <div className="max-w-5xl mx-auto mb-4 flex justify-end">
+          <div className="max-w-5xl mx-auto mb-4 flex justify-center sm:justify-end">
             <button
               onClick={() => setAllExpanded(!allExpanded)}
               className="rounded-full border border-teal-200 bg-teal-50 px-4 py-2.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100"
