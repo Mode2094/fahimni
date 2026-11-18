@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformSetting;
-use App\Models\TenantSetting;
 use App\Support\AuditLogger;
 use App\Support\PlatformBrand;
 use Illuminate\Http\JsonResponse;
@@ -14,22 +13,14 @@ class PlatformSettingController extends Controller
 {
     public function show(Request $request): JsonResponse
     {
+        // هوية منصة فهمني العامة مستقلة تمامًا عن هوية أي معلّم وعن الجلسة:
+        // لا يُسمح لأي ترويسة (خصوصًا X-Tenant-Id) بتخصيص اسم المنصة أو شعارها
+        // هنا. علامة كل معلّم تُخدَم من مصدرها المستقل والآمن فقط:
+        //   • الموقع العلني للمعلّم  → GET /public/{slug} (بالـslug، بلا مصادقة)
+        //   • لوحة المعلّم           → GET /teacher/site-design (TenantMiddleware)
+        // وإلا فإن أي مستخدم يحمل tenant_id في localStorage (بعد الدخول عبر
+        // Google مثلاً) كان يُلوّث اسم/شعار منصة فهمني في الهيدر والفوتر.
         $settings = PlatformSetting::allFlattened();
-
-        // لوجو المعلم (منصة المستأجر) يغلب لوجو المنصة العامة — عند طلب
-        // يحمل X-Tenant-Id (المعلم، الطلاب التابعون له، صفحته العامة).
-        // tenant_id عمود uuid في Postgres — أي قيمة غير UUID (مثلاً قديمة
-        // معطوبة من localStorage) ترمي QueryException، لذا نتحقق قبل الاستعلام.
-        $tenantId = $request->header('X-Tenant-Id');
-        if ($tenantId && \Illuminate\Support\Str::isUuid($tenantId)) {
-            $tenantSetting = TenantSetting::where('tenant_id', $tenantId)->first();
-            if ($tenantSetting?->logo_url) {
-                $settings['logo_url'] = $tenantSetting->logo_url;
-            }
-            if ($tenantSetting?->academy_name) {
-                $settings['platform_name'] = $tenantSetting->academy_name;
-            }
-        }
 
         // المفاتيح السرية لا تُعاد أبداً عبر الـAPI — تُخزَّن مشفَّرة
         // (Crypt) ويخبر `*_set` الواجهةَ بوجودها فقط.

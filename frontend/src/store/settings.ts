@@ -103,16 +103,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   load: async () => {
     try {
-      // X-Tenant-Id يجعل الخادم يعيد لوجو/اسم المعلم (منصته) بدل لوجو المنصة العام.
-      const rawTid = typeof window !== 'undefined' ? localStorage.getItem('tenant_id') : null;
-      // tenant_id values are UUIDs server-side; a stale/garbled value makes the
-      // API 500, so only send well-formed UUIDs.
-      const tid = rawTid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTid) ? rawTid : null;
+      // هوية منصة فهمني العامة لا علاقة لها بالمستأجر/الجلسة: لا نرسل
+      // X-Tenant-Id إطلاقًا حتى لا يستبدل الخادم اسم/شعار المنصة بهوية معلّم.
+      // علامة كل معلّم تُقرأ من مصدرها المستقل (public/{slug} أو teacher/site-design).
       const res = await fetch(`${API}/platform-settings`, {
-        headers: {
-          Accept: 'application/json',
-          ...(tid ? { 'X-Tenant-Id': tid } : {}),
-        },
+        headers: { Accept: 'application/json' },
       });
       if (!res.ok) return;
       const d = await res.json();
