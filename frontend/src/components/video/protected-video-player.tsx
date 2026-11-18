@@ -72,6 +72,9 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [wmPos, setWmPos] = useState(0);
   const hlsRef = useRef<Hls | null>(null);
+  // المصدر المُنتظَر: في التحميل الأول لا يكون عنصر <video> موجودًا بعد (تظهر
+  // شاشة التحميل)، فنتذكّر المصدر ونربطه بعد أن يُركَّب العنصر في الـ DOM.
+  const pendingSource = useRef<{ url: string; kind: Playback['type']; preserve: boolean } | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wmTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -175,6 +178,14 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     }
   }, [destroyHls]);
 
+  // يُربط المصدر بعد أن يصبح عنصر <video> مركَّبًا فعلاً في الصفحة.
+  const applyPendingSource = useCallback(() => {
+    const pending = pendingSource.current;
+    if (!pending || !videoRef.current) return;
+    pendingSource.current = null;
+    attachSource(pending.url, pending.kind, pending.preserve);
+  }, [attachSource]);
+
   const loadPlayback = useCallback(async (preserveTime: boolean) => {
     const tid = localStorage.getItem('tenant_id');
     const deviceId = getDeviceId();
@@ -203,7 +214,7 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
       }
 
       if (p.stream_url) {
-        attachSource(p.stream_url, p.type, preserveTime);
+        pendingSource.current = { url: p.stream_url, kind: p.type, preserve: preserveTime };
       }
 
       if (p.expires_in && p.expires_in > 0) {
@@ -223,6 +234,11 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
       destroyHls();
     };
   }, [loadPlayback, destroyHls]);
+
+  // اربط المصدر بعد كل تغيّر في حالة التشغيل، أي بعد تركيب عنصر <video>.
+  useEffect(() => {
+    applyPendingSource();
+  }, [playback, applyPendingSource]);
 
   const protection = playback?.protection ?? {};
   const blockPip = protection.block_picture_in_picture ?? true;
