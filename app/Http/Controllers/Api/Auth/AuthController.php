@@ -168,6 +168,29 @@ class AuthController extends Controller
             }
         }
 
+        // بريد ترحيبي (منفصل عن بريد التفعيل) — يُرسَل عبر الطابور عبر Resend.
+        try {
+            $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $isTeacher = $role === 'Teacher';
+
+            Mail::to($user->email)->queue(
+                new PlatformNotification(
+                    title: $isTeacher
+                        ? 'مرحباً بك في منصة فهمني — منصتك التعليمية جاهزة'
+                        : 'مرحباً بك في منصة فهمني',
+                    body: $isTeacher
+                        ? "أهلاً {$user->name}،\n\nسعداء بانضمامك! أنشأنا لك منصة تعليمية خاصة تلقائياً، وبدأت تجربتك المجانية على الخطة النشطة.\n\nمن لوحة التحكم يمكنك إضافة كورساتك وأقسامك ودروسك، وضبط بطاقات التسجيل وعلامتك التجارية وطريقة تحصيل أرباحك."
+                        : "أهلاً {$user->name}،\n\nسعداء بانضمامك إلى منصة فهمني!\n\nيمكنك الآن تصفح الكورسات، متابعة تعلّمك من قسم «تعليمي»، وحل الاختبارات.",
+                    data: [
+                        'action_url' => $frontend.($isTeacher ? '/teacher/dashboard' : '/my-learning'),
+                        'action_text' => $isTeacher ? 'افتح لوحة تحكم معلمك' : 'ابدأ التعلّم',
+                    ],
+                )
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Welcome email failed to send', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+        }
+
         // Web (cookie session) registration: sign the user in server-side and
         // never hand a bearer token to the browser.
         if ($request->hasSession()) {

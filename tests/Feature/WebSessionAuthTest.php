@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Mail\PlatformNotification;
 use App\Models\User;
 use App\Support\TOTP;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
@@ -185,6 +187,23 @@ class WebSessionAuthTest extends TenantTestCase
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $email);
+    }
+
+    public function test_registration_queues_a_welcome_email(): void
+    {
+        Mail::fake();
+
+        $email = 'welcome-'.strtolower(Str::random(8)).'@test.local';
+
+        $this->postJson('/api/v1/auth/register', [
+            'name' => 'New Welcome User',
+            'email' => $email,
+            'password' => 'password-123',
+            'password_confirmation' => 'password-123',
+        ], $this->statefulHeaders())->assertStatus(201);
+
+        // A welcome email must be queued (separate from the verification email).
+        Mail::assertQueued(PlatformNotification::class, fn ($mail) => $mail->hasTo($email));
     }
 
     public function test_google_callback_route_uses_the_web_session_stack(): void
