@@ -7,6 +7,7 @@ use App\Models\PlatformSetting;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
 use App\Services\FeatureService;
+use App\Services\TenantSlugService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\Uid\UuidV7;
@@ -27,6 +28,21 @@ class TeacherDomainController extends Controller
         return (string) PlatformSetting::get('platform_domain', 'lms.example.com');
     }
 
+    /** الرابط المجاني للمعلّم: /t/{slug} و {slug}.{platform_domain}. */
+    private function slugPayload(Tenant $tenant): array
+    {
+        $platform = $this->platformDomain();
+        $slug = $tenant->slug;
+
+        return [
+            'slug' => $slug,
+            'platform_domain' => $platform,
+            'page_url' => rtrim((string) config('app.frontend_url') ?: '', '/').'/t/'.$slug,
+            'subdomain' => $slug.'.'.$platform,
+            'subdomain_url' => 'https://'.$slug.'.'.$platform,
+        ];
+    }
+
     public function show(Request $request): JsonResponse
     {
         $this->ensureTeacher($request);
@@ -44,6 +60,67 @@ class TeacherDomainController extends Controller
             'verified_at' => $setting?->metadata['domain_verified_at'] ?? null,
             'platform_domain' => $this->platformDomain(),
             'dns_instructions' => $this->dnsInstructions($domain, $this->platformDomain()),
+            ...$this->slugPayload($request->current_tenant),
+        ]);
+    }
+
+    /** فحص توفّر رابط مطلوب قبل الحفظ (يحترم تشابه الأسماء والكلمات المحجوزة). */
+    public function checkSlug(Request $request, TenantSlugService $slugs): JsonResponse
+    {
+        $this->ensureTeacher($request);
+
+        $raw = (string) $request->query('slug', '');
+        $slug = $slugs->normalize(preg_replace('/\s+/', '', $raw) ?? '');
+
+        $reason = $slugs->unavailabilityReason($slug, $request->current_tenant->id);
+        $available = $reason === null;
+        $current = $slugs->normalize((string) $request->current_tenant->slug);
+
+        return response()->json([
+            'slug' => $slug,
+            'available' => $available,
+            'is_current' => $slug === $current,
+            'reason' => $reason,
+        ]);
+    }
+
+    /** حفظ رابط المعلّم الجديد. */
+    public function updateSlug(Request $request, TenantSlugService $slugs): JsonResponse
+    {
+        $this->ensureTeacher($request);
+
+        $validated = $request->validate([
+            'slug' => 'required|string|max:80',
+        ]);
+
+        $slug = $slugs->normalize(preg_replace('/\s+/', '', $validated['slug']) ?? '');
+        $tenant = $request->current_tenant;
+
+        if ($slug === $slugs->normalize((string) $tenant->slug)) {
+            return response()->json([
+                'message' => 'هذا رابطك الحالي بالفعل.',
+                ...$this->slugPayload($tenant),
+            ]);
+        }
+
+        if (! $slugs->available($slug, $tenant->id)) {
+            $messages = [
+                'invalid' => 'الرابط يجب أن يكون بحروف إنجليزية أو أرقام أو شرطة (-) فقط، بطول 2 إلى 63 حرفاً.',
+                'reserved' => 'هذا الاسم محجوز. اختر اسماً آخر.',
+                'taken' => 'هذا الرابط غير متاح — اختر اسماً آخر.',
+            ];
+
+            return response()->json([
+                'message' => $messages[$slugs->unavailabilityReason($slug) ?? 'taken'] ?? 'هذا الرابط غير متاح — اختر اسماً آخر.',
+                'available' => false,
+            ], 422);
+        }
+
+        $tenant->update(['slug' => $slug]);
+
+        return response()->json([
+            'message' => 'تم تحديث رابط منصتك.',
+            ...$this->slugPayload($tenant->fresh()),
         ]);
     }
 

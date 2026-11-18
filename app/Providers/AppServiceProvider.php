@@ -157,6 +157,8 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('assistant-ask', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));
 
+        RateLimiter::for('slug-check', fn (Request $request) => Limit::perMinute(40)->by($request->user()?->id ?: $request->ip()));
+
         RateLimiter::for('mobile-code', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
 
         RateLimiter::for('monitoring', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));

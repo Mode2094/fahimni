@@ -28,6 +28,7 @@ use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
 use App\Services\PaymentCompletionService;
+use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -182,14 +183,13 @@ class AdminController extends Controller
         ]);
         $user->assignRole('Teacher');
 
-        $tenant = Tenant::create([
+        $tenant = app(TenantSlugService::class)->createTenant([
             'id' => UuidV7::generate(),
             'name' => $validated['name'].' Academy',
             'type' => 'tutor',
-            'slug' => Str::slug($validated['name']).'-'.Str::random(4),
             'email' => strtolower($validated['email']),
             'owner_id' => $user->id,
-        ]);
+        ], $validated['name']);
 
         TenantSetting::create([
             'id' => UuidV7::generate(),

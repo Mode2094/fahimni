@@ -16,6 +16,7 @@ use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
 use App\Services\StudentGamificationService;
+use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
 use App\Support\DevicePolicy;
 use App\Support\MailDelivery;
@@ -122,14 +123,13 @@ class AuthController extends Controller
             $user->assignRole('Teacher');
 
             // إنشاء منصة المعلم الافتراضية (tenant) تلقائياً
-            $tenant = Tenant::create([
+            $tenant = app(TenantSlugService::class)->createTenant([
                 'id' => UuidV7::generate(),
                 'name' => $request->name.' '.__('Platform'),
                 'type' => 'tutor',
-                'slug' => Str::slug($request->name).'-'.Str::random(4),
                 'email' => $request->email,
                 'owner_id' => $user->id,
-            ]);
+            ], $request->name);
 
             TenantSetting::create([
                 'id' => UuidV7::generate(),

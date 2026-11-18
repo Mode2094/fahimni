@@ -11,6 +11,7 @@ use App\Models\TenantSetting;
 use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
+use App\Services\TenantSlugService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -283,15 +284,14 @@ class GoogleAuthController extends Controller
             return null;
         }
 
-        $tenant = Tenant::create([
+        $tenant = app(TenantSlugService::class)->createTenant([
             'id' => UuidV7::generate(),
             'name' => $name.' '.__('Platform'),
             'type' => 'tutor',
-            'slug' => (Str::slug($name) ?: 'platform').'-'.Str::random(6),
             'email' => $email,
             'owner_id' => $user->id,
             'status' => 'active',
-        ]);
+        ], $name);
 
         TenantSetting::create([
             'id' => UuidV7::generate(),

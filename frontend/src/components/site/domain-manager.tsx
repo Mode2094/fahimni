@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Loader2, Globe, Search, CheckCircle2, XCircle, ExternalLink, Copy, Rocket, ShieldCheck, ArrowRight, Link2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
@@ -32,6 +33,9 @@ export default function DomainManager() {
   const [busy, setBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [checking, setChecking] = useState(false);
+  const [slugDraft, setSlugDraft] = useState('');
+  const [slugStatus, setSlugStatus] = useState<{ state: 'idle' | 'checking' | 'available' | 'taken' | 'reserved' | 'invalid' | 'error' }>({ state: 'idle' });
+  const [savingSlug, setSavingSlug] = useState(false);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -45,6 +49,45 @@ export default function DomainManager() {
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
+
+  // مزامنة حقل الرابط مع الرابط المحفوظ على السيرفر
+  useEffect(() => { if (data?.slug) setSlugDraft(data.slug); }, [data?.slug]);
+
+  // فحص توفّر الرابط أثناء الكتابة (مع مهلة صغيرة لتقليل الطلبات)
+  useEffect(() => {
+    const slug = slugDraft.trim().toLowerCase();
+    const current = (data?.slug || '').toLowerCase();
+    if (!slug || slug === current) { setSlugStatus({ state: 'idle' }); return; }
+    setSlugStatus({ state: 'checking' });
+    const id = setTimeout(() => {
+      fetch(`${API}/teacher/domain/slug-available?slug=${encodeURIComponent(slug)}`, { headers: headers() })
+        .then(r => r.json())
+        .then(d => setSlugStatus({ state: d.available ? 'available' : (d.reason || 'taken') }))
+        .catch(() => setSlugStatus({ state: 'error' }));
+    }, 500);
+    return () => clearTimeout(id);
+  }, [slugDraft, data?.slug]);
+
+  const currentSlug = (data?.slug || '').toLowerCase();
+  const cleanSlug = slugDraft.trim().toLowerCase();
+  const slugChanged = cleanSlug !== '' && cleanSlug !== currentSlug;
+  const canSaveSlug = slugChanged && slugStatus.state === 'available' && !savingSlug;
+  const pageLink = typeof window !== 'undefined' && data?.slug ? `${window.location.origin}/t/${data.slug}` : '';
+  const subLink = data?.slug && data?.platform_domain ? `https://${data.slug}.${data.platform_domain}` : '';
+
+  const saveSlug = async () => {
+    if (!canSaveSlug) return;
+    setSavingSlug(true);
+    try {
+      const res = await fetch(`${API}/teacher/domain/slug`, { method: 'PUT', headers: headers(), body: JSON.stringify({ slug: cleanSlug }) });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.message || t('تعذر الحفظ', 'Save failed')); return; }
+      toast.success(t('تم تحديث رابط منصتك', 'Your platform link was updated'));
+      setSlugDraft(d.slug || cleanSlug);
+      load();
+    } catch { toast.error(t('تعذر الحفظ', 'Save failed')); }
+    setSavingSlug(false);
+  };
 
   const connect = async () => {
     const domain = connectDomain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -107,6 +150,67 @@ export default function DomainManager() {
             </Badge>
           </div>
         </div>
+      </Card>
+
+      {/* رابط منصتك المجاني (النطاق الفرعي التابع للمنصة) */}
+      <Card className="border-0 shadow-sm overflow-hidden">
+        <CardContent className="p-6 space-y-5">
+          <div className="flex items-start gap-3.5">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500/10 to-emerald-500/10 border border-teal-100">
+              <Link2 className="h-6 w-6 text-teal-700" />
+            </span>
+            <div>
+              <h2 className="font-bold text-lg">{t('رابط منصتك المجاني', 'Your free platform link')}</h2>
+              <p className="text-sm text-muted-foreground mt-1">{t('هذا رابط صفحتك على منصة فهمني — اختر اسماً يعبّر عنك، ونفحص توفّره فوراً', 'This is your page link on Fahimni — pick a name that represents you, we check availability instantly')}</p>
+            </div>
+          </div>
+
+          {/* الروابط الحالية */}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-2 ps-4">
+              <span className="text-[11px] text-teal-600 shrink-0">{t('المسار', 'Path')}</span>
+              <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">/t/{data?.slug || '—'}</span>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={!pageLink} onClick={() => copy(pageLink, t('الرابط', 'Link'))}><Copy className="h-3.5 w-3.5" /></Button>
+            </div>
+            <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-2 ps-4">
+              <span className="text-[11px] text-teal-600 shrink-0">{t('الدومين الفرعي', 'Subdomain')}</span>
+              <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">{data?.subdomain || '—'}</span>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={!subLink} onClick={() => copy(subLink, t('الرابط', 'Link'))}><Copy className="h-3.5 w-3.5" /></Button>
+            </div>
+          </div>
+
+          {/* تغيير الرابط */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label className="text-xs font-bold text-muted-foreground">{t('اختر اسم رابطك', 'Choose your link name')}</Label>
+              <span className="text-[11px] text-gray-400" dir="ltr">{cleanSlug || 'your-name'}.{data?.platform_domain || ''}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className={`flex flex-1 min-w-[220px] items-center rounded-xl border overflow-hidden bg-white ${slugStatus.state === 'taken' || slugStatus.state === 'reserved' || slugStatus.state === 'invalid' ? 'border-red-300' : slugStatus.state === 'available' ? 'border-emerald-400' : 'border-slate-200'}`}>
+                <span className="px-3 h-11 flex items-center text-xs text-gray-400 border-e border-slate-200 bg-slate-50" dir="ltr">/t/</span>
+                <Input
+                  value={slugDraft}
+                  onChange={(e) => setSlugDraft(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                  dir="ltr"
+                  placeholder="your-name"
+                  className="h-11 border-0 rounded-none focus-visible:ring-0"
+                />
+              </div>
+              <Button onClick={saveSlug} disabled={!canSaveSlug} className="h-11 rounded-xl gap-1.5 shrink-0 text-white" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                {savingSlug ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}{t('حفظ الرابط', 'Save link')}
+              </Button>
+            </div>
+            <div className="text-xs min-h-[18px]">
+              {slugStatus.state === 'checking' && <span className="text-gray-400 inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" />{t('جاري الفحص...', 'Checking...')}</span>}
+              {slugStatus.state === 'available' && <span className="text-emerald-600 inline-flex items-center gap-1 font-medium"><CheckCircle2 className="h-3.5 w-3.5" />{t('متاح ✔ — يمكنك حجزه', 'Available ✔ — you can claim it')}</span>}
+              {slugStatus.state === 'taken' && <span className="text-red-500 inline-flex items-center gap-1 font-medium"><XCircle className="h-3.5 w-3.5" />{t('غير متاح — هذا الاسم مستخدم، اختر غيره', 'Not available — already taken, choose another')}</span>}
+              {slugStatus.state === 'reserved' && <span className="text-red-500 inline-flex items-center gap-1 font-medium"><XCircle className="h-3.5 w-3.5" />{t('اسم محجوز — اختر غيره', 'Reserved name — choose another')}</span>}
+              {slugStatus.state === 'invalid' && <span className="text-red-500 inline-flex items-center gap-1 font-medium"><XCircle className="h-3.5 w-3.5" />{t('حروف إنجليزية وأرقام وشرطة فقط (2-63)', 'Letters, numbers and hyphens only (2–63)')}</span>}
+              {slugStatus.state === 'error' && <span className="text-amber-600 inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5" />{t('تعذر الفحص — حاول مجدداً', 'Could not check — try again')}</span>}
+              {slugStatus.state === 'idle' && <span className="text-gray-400">{t('اكتب الاسم الذي تريده لرابطك', 'Type the name you want for your link')}</span>}
+            </div>
+          </div>
+        </CardContent>
       </Card>
 
       {!enabled ? (

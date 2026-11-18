@@ -608,6 +608,8 @@ Route::prefix('v1')->group(function () {
             // ─── Teacher: Custom Domain ────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/domain')->group(function () {
                 Route::get('/', [TeacherDomainController::class, 'show']);
+                Route::get('slug-available', [TeacherDomainController::class, 'checkSlug'])->middleware('throttle:slug-check');
+                Route::put('slug', [TeacherDomainController::class, 'updateSlug']);
                 Route::put('/', [TeacherDomainController::class, 'connect']);
                 Route::post('verify', [TeacherDomainController::class, 'verify']);
                 Route::delete('/', [TeacherDomainController::class, 'disconnect']);
