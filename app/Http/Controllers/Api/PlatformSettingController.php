@@ -72,6 +72,12 @@ class PlatformSettingController extends Controller
             'contact_whatsapp' => $settings['contact_whatsapp'] ?? '',
             'live_google_meet_enabled' => (bool) ($settings['live_google_meet_enabled'] ?? true),
             'live_default_provider' => (string) ($settings['live_default_provider'] ?? 'google_meet'),
+            // ── Analytics & tracking (public IDs only — never secrets) ──
+            'analytics_enabled' => (bool) ($settings['analytics_enabled'] ?? true),
+            'meta_pixel_id' => (string) ($settings['meta_pixel_id'] ?? ''),
+            'meta_domain_verification' => (string) ($settings['meta_domain_verification'] ?? ''),
+            'ga_measurement_id' => (string) ($settings['ga_measurement_id'] ?? ''),
+            'gtm_container_id' => (string) ($settings['gtm_container_id'] ?? ''),
         ];
 
         return response()->json(['settings' => $payload]);
@@ -121,6 +127,11 @@ class PlatformSettingController extends Controller
             'contact_whatsapp' => 'nullable|string|max:30',
             'live_google_meet_enabled' => 'boolean',
             'live_default_provider' => 'string|in:google_meet',
+            'analytics_enabled' => 'boolean',
+            'meta_pixel_id' => 'nullable|string|max:60',
+            'meta_domain_verification' => 'nullable|string|max:120',
+            'ga_measurement_id' => 'nullable|string|max:40',
+            'gtm_container_id' => 'nullable|string|max:40',
         ];
 
         $validated = $request->validate($allowed);

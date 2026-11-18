@@ -12,6 +12,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { GraduationCap, Loader2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
+import { track } from '@/lib/analytics';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -40,6 +41,7 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
       // Sync the auth store so the app shell (sidebar etc.) appears instantly.
       setSessionHint(true);
       useAuth.setState({ user: data.user, loading: false, initialized: true });
+      track('CompleteRegistration', { content_name: 'student_signup', tenant: slug }, 'sign_up');
       setDone(true);
       setTimeout(() => router.push('/my-learning'), 500);
     } catch { toast.error(locale === 'ar' ? 'فشل التسجيل' : 'Failed'); }

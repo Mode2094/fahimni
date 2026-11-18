@@ -48,7 +48,7 @@ export function buildCsp(nonce: string, isDev: boolean = process.env.NODE_ENV !=
     "object-src 'none'",
     "frame-ancestors 'self'",
     "form-action 'self' https://checkout.freemius.com https://*.freemius.com https://www.paypal.com https://*.paypal.com",
-    `connect-src 'self' https://cdn.jsdelivr.net wss: https://*.b-cdn.net https://video.bunnycdn.com https://*.bunnycdn.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com https://*.paypalobjects.com https://api.freemius.com https://*.freemius.com https://checkout.freemius.com`,
+    `connect-src 'self' https://cdn.jsdelivr.net wss: https://*.b-cdn.net https://video.bunnycdn.com https://*.bunnycdn.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com https://*.paypalobjects.com https://api.freemius.com https://*.freemius.com https://checkout.freemius.com https://connect.facebook.net https://www.facebook.com https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com`,
     [
       "script-src 'self' 'nonce-" + nonce + "' 'strict-dynamic'",
       isDev ? "'unsafe-eval'" : '',

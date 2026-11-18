@@ -10,6 +10,7 @@ import { initMonitoring, instrumentFetch } from '@/lib/monitoring';
 import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { RouteShell } from '@/components/layout/route-shell';
+import { Analytics, MetaVerification } from '@/components/analytics/analytics';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const user = useAuth((s) => s.user);
@@ -69,6 +70,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <Analytics />
+      <MetaVerification />
       <RouteShell>{children}</RouteShell>
       <Toaster richColors position={locale === 'ar' ? 'bottom-left' : 'bottom-right'} />
     </>

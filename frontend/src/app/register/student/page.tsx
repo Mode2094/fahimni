@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
+import { track } from '@/lib/analytics';
 import PlatformLogo from '@/components/brand/platform-logo';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -58,6 +59,7 @@ function StudentRegisterForm() {
       setSessionHint(true);
       useAuth.setState({ user: data.user, loading: false, initialized: true });
       if (data.tenant_id) localStorage.setItem('tenant_id', data.tenant_id);
+      track('CompleteRegistration', { content_name: 'student_signup' }, 'sign_up');
       toast.success(locale === 'ar' ? 'تم إنشاء حساب الطالب' : 'Student account created');
       const from = searchParams.get('from');
       if (from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/\\')) router.push(from);

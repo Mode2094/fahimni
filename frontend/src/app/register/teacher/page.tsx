@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
+import { track } from '@/lib/analytics';
 import PlatformLogo from '@/components/brand/platform-logo';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -45,6 +46,7 @@ export default function TeacherRegisterPage() {
       localStorage.setItem('user', JSON.stringify(data.user));
       setSessionHint(true);
       useAuth.setState({ user: data.user, loading: false, initialized: true });
+      track('CompleteRegistration', { content_name: 'teacher_signup' }, 'sign_up');
       toast.success(locale === 'ar' ? 'تم إنشاء حساب المعلم' : 'Teacher account created');
       router.push('/teacher/dashboard');
     } catch { toast.error(locale === 'ar' ? 'فشل التسجيل' : 'Failed'); }

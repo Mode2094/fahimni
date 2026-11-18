@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import { Save, Settings2, Palette, Bell, Shield, CreditCard, Upload, Loader2, Check, X, KeyRound, BookOpen, ChevronDown, ExternalLink, Settings, Smartphone, EyeOff } from 'lucide-react';
+import { Save, Settings2, Palette, Bell, Shield, CreditCard, Upload, Loader2, Check, X, KeyRound, BookOpen, ChevronDown, ExternalLink, Settings, Smartphone, EyeOff, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -44,6 +44,7 @@ export default function AdminSettingsPage() {
     { id: 'notifications', label: t('الإشعارات', 'Notify'), icon: Bell },
     { id: 'security', label: t('الأمان', 'Security'), icon: Shield },
     { id: 'student_app', label: t('تطبيق الطلاب', 'Student App'), icon: Smartphone },
+    { id: 'analytics', label: t('التحليلات والتتبّع', 'Analytics & Meta'), icon: BarChart3 },
   ];
 
   const TestButton = ({ gateway }: { gateway: 'paytabs' | 'paypal' }) => {
@@ -120,6 +121,12 @@ export default function AdminSettingsPage() {
         student_app_hidden: form.student_app_hidden,
         student_app_android_url: form.student_app_android_url,
         student_app_ios_url: form.student_app_ios_url,
+        // Public tracking IDs (never secrets): Meta Pixel + Google Analytics.
+        analytics_enabled: form.analytics_enabled,
+        meta_pixel_id: form.meta_pixel_id,
+        meta_domain_verification: form.meta_domain_verification,
+        ga_measurement_id: form.ga_measurement_id,
+        gtm_container_id: form.gtm_container_id,
       });
       toast.success(message || t('تم الحفظ — التغييرات سارية في كل المنصة', 'Saved — changes apply everywhere'));
     } catch {
@@ -386,6 +393,55 @@ export default function AdminSettingsPage() {
                 <Button onClick={() => saveForm(t('تم حفظ إعدادات تطبيق الطلاب — التغييرات تظهر للمعلمين فوراً', 'Student app settings saved — teachers see changes immediately'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ', 'Save')}</Button>
                 {form.student_mobile_app && <Badge className="bg-green-100 text-green-700 border-0">{t('مفعّل — المعلمون يرون تطبيق الطلاب', 'Enabled — teachers see the student app')}</Badge>}
                 {!form.student_mobile_app && <Badge className="bg-amber-100 text-amber-700 border-0">{t('قيد التطوير — المعلمون يرون "قيد التطوير"', 'Under development — teachers see "under development"')}</Badge>}
+              </div>
+            </CardContent></Card>
+          )}
+
+          {section === 'analytics' && (
+            <Card><CardContent className="p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold text-lg flex items-center gap-2"><BarChart3 className="h-5 w-5 text-teal-600" />{t('التحليلات والتتبّع', 'Analytics & tracking')}</h2>
+                  <p className="text-sm text-gray-400 -mt-0.5">{t('مفاتيح التتبّع العامة (Meta Pixel و Google Analytics). تُطبَّق فوراً على المنصة وصفحات المعلمين بدون إعادة نشر.', 'Public tracking IDs (Meta Pixel & Google Analytics). Applied instantly platform-wide and on teacher pages — no redeploy needed.')}</p>
+                </div>
+                <Switch checked={form.analytics_enabled !== false} onCheckedChange={(v) => setForm({ ...form, analytics_enabled: v })} label={t('تفعيل التتبّع', 'Enable tracking')} />
+              </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 text-sm text-blue-900/80 flex items-start gap-2">
+                <Shield className="h-4 w-4 mt-0.5 shrink-0" />
+                {t('لا تُكوّن هذه المفاتيح أسراراً — تُخزَّن وتُعرض عبر الـAPI. المفاتيح السرية للبوابات تُضاف في بيئة الخادم فقط.', 'These IDs are not secrets — they are stored and shown via the API. Gateway secrets stay in the server environment.')}
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>{t('معرّف بكسل ميتا (Meta Pixel ID)', 'Meta Pixel ID')}</Label>
+                  <Input value={form.meta_pixel_id || ''} onChange={(e) => setForm({ ...form, meta_pixel_id: e.target.value })} className="h-11" dir="ltr" placeholder="1234567890123456" inputMode="numeric" />
+                  <p className="text-xs text-gray-400">{t('يُلتقط تلقائياً عند التسجيل والشراء (Lead / Purchase).', 'Auto-fires on registration and purchase (Lead / Purchase).')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('معرّف Google Analytics 4', 'GA4 Measurement ID')}</Label>
+                  <Input value={form.ga_measurement_id || ''} onChange={(e) => setForm({ ...form, ga_measurement_id: e.target.value })} className="h-11" dir="ltr" placeholder="G-XXXXXXXXXX" />
+                  <p className="text-xs text-gray-400">{t('يُرسل PageView عند كل تنقّل بين الصفحات.', 'Sends a PageView on every navigation.')}</p>
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>{t('معرّف حاوية Google Tag Manager', 'Google Tag Manager Container ID')}</Label>
+                  <Input value={form.gtm_container_id || ''} onChange={(e) => setForm({ ...form, gtm_container_id: e.target.value })} className="h-11" dir="ltr" placeholder="GTM-XXXXXXX" />
+                  <p className="text-xs text-gray-400">{t('اختياري — للاستخدام المتقدم عبر مدير الوسوم.', 'Optional — for advanced use via Tag Manager.')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('توثيق نطاق فيسبوك (Domain Verification)', 'Facebook domain verification')}</Label>
+                  <Input value={form.meta_domain_verification || ''} onChange={(e) => setForm({ ...form, meta_domain_verification: e.target.value })} className="h-11" dir="ltr" placeholder="abc123def456..." />
+                  <p className="text-xs text-gray-400">{t('القيمة من Meta Business → توثيق النطاق (بديل سجل DNS).', 'Value from Meta Business → domain verification (alternative to a DNS record).')}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button onClick={() => saveForm(t('تم حفظ إعدادات التتبّع — سارية فوراً على كل الصفحات', 'Tracking settings saved — live on all pages immediately'))} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ وتفعيل', 'Save & activate')}</Button>
+                {form.analytics_enabled !== false && (form.meta_pixel_id?.trim() || form.ga_measurement_id?.trim()) && <Badge className="bg-green-100 text-green-700 border-0">{t('التتبّع مفعّل', 'Tracking active')}</Badge>}
+                {form.analytics_enabled !== false && !form.meta_pixel_id?.trim() && !form.ga_measurement_id?.trim() && <Badge className="bg-amber-100 text-amber-700 border-0">{t('بانتظار المعرّفات', 'Awaiting IDs')}</Badge>}
               </div>
             </CardContent></Card>
           )}

@@ -44,6 +44,11 @@ export type PlatformSettings = {
   contact_whatsapp: string;
   live_google_meet_enabled: boolean;
   live_default_provider: string;
+  analytics_enabled: boolean;
+  meta_pixel_id: string;
+  meta_domain_verification: string;
+  ga_measurement_id: string;
+  gtm_container_id: string;
 };
 
 type SettingsState = {
@@ -98,6 +103,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     contact_whatsapp: '',
     live_google_meet_enabled: true,
     live_default_provider: 'google_meet',
+    analytics_enabled: true,
+    meta_pixel_id: '',
+    meta_domain_verification: '',
+    ga_measurement_id: '',
+    gtm_container_id: '',
   },
   loaded: false,
 

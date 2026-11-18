@@ -1,8 +1,9 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useLocale } from '@/store/locale';
+import { track } from '@/lib/analytics';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, XCircle, Loader2, LayoutDashboard, Clock, RefreshCw } from 'lucide-react';
@@ -23,6 +24,8 @@ function SuccessInner() {
   const [state, setState] = useState<UiState>('checking');
   const [message, setMessage] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  // Fire the Purchase conversion exactly once, only after the backend confirms.
+  const purchaseTracked = useRef(false);
 
   // Reconcile with the backend by forwarding the FULL original query string
   // (including Freemius' `signature`). The page NEVER decides success from the
@@ -55,6 +58,10 @@ function SuccessInner() {
 
       if (res.ok && data.status === 'active') {
         setState('active');
+        if (!purchaseTracked.current) {
+          purchaseTracked.current = true;
+          track('Purchase', { currency: 'USD', content_name: 'platform_subscription' }, 'purchase');
+        }
       } else if (data.status === 'pending') {
         setState('pending');
       } else if (data.status === 'mismatch' || data.status === 'unverified' || data.status === 'no_intent') {
