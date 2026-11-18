@@ -14,7 +14,7 @@ import {
   Atom, Calculator, Pencil, Play, Award, FileCheck2, Trophy, Rocket, Medal,
   Timer, BookMarked, Layers, CheckCheck, MousePointerClick, ClipboardList, AlertCircle,
   Pause, QrCode, Download, Share2, Check, PartyPopper, HelpCircle, MessageCircle, Ban,
-  Phone, Lock, Smartphone,
+  Phone, Lock, Smartphone, Gift, BadgeCheck,
 } from 'lucide-react';;
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -182,6 +182,22 @@ export default function HomeClient() {
 
   const livePlans = plans;
   const seg = HERO;
+  const monthlyPrices = livePlans.map((p: any) => Number(p.monthly_price)).filter((n) => n > 0);
+  const minMonthly = monthlyPrices.length ? Math.min(...monthlyPrices) : null;
+
+  /* مواد تعليمية للشريط المتحرك */
+  const subjects = [
+    { icon: Calculator, label: t('رياضيات', 'Math') },
+    { icon: Atom, label: t('فيزياء', 'Physics') },
+    { icon: BookOpen, label: t('كيمياء', 'Chemistry') },
+    { icon: Pencil, label: t('اللغة العربية', 'Arabic') },
+    { icon: Globe, label: t('إنجليزية', 'English') },
+    { icon: LayoutGrid, label: t('برمجة', 'Programming') },
+    { icon: Medal, label: t('أحياء', 'Biology') },
+    { icon: BookMarked, label: t('تاريخ', 'History') },
+    { icon: TrendingUp, label: t('محاسبة', 'Accounting') },
+    { icon: Timer, label: t('إحصاء', 'Statistics') },
+  ];
 
   // عرض تسويقي: أهم الميزات المفعّلة فقط (لا فوضى 46 سطراً ولا ميزات معطلة).
   const PRIORITY = ['storage_limit_mb', 'students_limit', 'courses_limit', 'videos_limit', 'live_stream_enabled', 'live_minutes_limit', 'video_watch_minutes_limit', 'exams_limit', 'questions_limit', 'assignments_limit', 'community_enabled', 'cards_enabled', 'custom_branding_enabled', 'custom_domain', 'blog_enabled', 'export_reports', 'appointments_enabled', 'paid_services_enabled', 'multi_teacher_enabled', 'white_label', 'api_access', 'support_level', 'certificates_enabled', 'scheduled_lessons_enabled', 'secure_playback_enabled', 'video_analytics_enabled'];
@@ -217,7 +233,7 @@ export default function HomeClient() {
 
   const navLinks = [
     { id: 'features', label: t('المميزات', 'Features') },
-    { id: 'student', label: t('تجربة الطالب', 'Student Experience') },
+    { id: 'student', label: t('منصة طلابك', "Your students' view") },
     { id: 'earnings', label: t('الأرباح', 'Earnings') },
     { id: 'pricing', label: t('الأسعار', 'Pricing') },
     { id: 'faq', label: t('الأسئلة', 'FAQ') },
@@ -225,6 +241,17 @@ export default function HomeClient() {
 
   return (
     <div className="min-h-screen bg-white" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
+      {/* ─── شريط الإعلان التسويقي ─────────────────────── */}
+      <div className="relative overflow-hidden text-white" style={{ background: 'linear-gradient(90deg, #0f2e2b, #0d9488 55%, #115e54)' }}>
+        <div className="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-center text-[13px] font-semibold">
+          <Gift className="h-4 w-4 text-amber-300 shrink-0" />
+          <span className="text-white/90">{t('جرّب منصة فهمني مجاناً 7 أيام — بدون بطاقة ائتمان، وبدون أي عمولة على مبيعاتك', 'Try Fahimni free for 7 days — no credit card, zero commission on your sales')}</span>
+          <Link href="/register/teacher" className="inline-flex items-center gap-1 font-bold text-amber-200 underline underline-offset-4 decoration-amber-300/60 hover:text-white transition-colors">
+            {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
+          </Link>
+        </div>
+      </div>
+
       {/* ─── Header ─────────────────────────────────────── */}
       <header className="sticky top-0 z-50 glass-light border-b border-teal-100/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-6">
@@ -300,7 +327,7 @@ export default function HomeClient() {
                 </button>
               </div>
 
-              <div className="flex flex-wrap justify-center lg:justify-start gap-x-6 gap-y-2 mt-8 text-sm text-white/80">
+              <div className="flex flex-wrap justify-center lg:justify-start gap-x-6 gap-y-2 mt-8 text-sm text-white/85">
                 {seg.bullets.slice(0, 3).map((b, i) => (
                   <span key={i} className="inline-flex items-center gap-2">
                     <CheckCircle className="h-4 w-4 shrink-0 text-teal-300" />
@@ -308,6 +335,26 @@ export default function HomeClient() {
                   </span>
                 ))}
               </div>
+
+              {/* شارات الثقة */}
+              <div className="mt-6 flex flex-wrap justify-center lg:justify-start gap-2.5">
+                {[
+                  t('بدون بطاقة ائتمان', 'No credit card'),
+                  t('إلغاء في أي وقت', 'Cancel anytime'),
+                  t('0% عمولة على مبيعاتك', '0% commission on your sales'),
+                  t('دعم عربي 24/7', '24/7 Arabic support'),
+                ].map((x, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs font-semibold text-white/90">
+                    <BadgeCheck className="h-3.5 w-3.5 text-teal-300" />{x}
+                  </span>
+                ))}
+              </div>
+
+              {minMonthly !== null && (
+                <p className="mt-6 text-sm text-white/70">
+                  {t('تبدأ من', 'Starting at')} <b className="text-base text-white">{formatPrice(minMonthly)}</b> {t('شهرياً — وكل ما تربحه من كورساتك يبقى لك', 'per month — and everything your courses earn stays yours')}
+                </p>
+              )}
             </div>
 
             {/* عنصر بصري واحد: لوحة تحكم المنصة */}
@@ -410,31 +457,31 @@ export default function HomeClient() {
       </section>
 
       {/* شريط متحرك بالمواد التعليمية */}
-      <div className="relative z-10 overflow-hidden border-b border-teal-900/20 bg-[#0a1715] py-4 marquee marquee-mask">
-        <div className="flex w-max marquee-track gap-10">
-          {[0, 1].map((dup) => (
-            <div key={dup} className="flex items-center gap-10 pe-10">
-              {[
-                { icon: Calculator, label: t('رياضيات', 'Math') },
-                { icon: Atom, label: t('فيزياء', 'Physics') },
-                { icon: BookOpen, label: t('كيمياء', 'Chemistry') },
-                { icon: Pencil, label: t('اللغة العربية', 'Arabic') },
-                { icon: Globe, label: t('إنجليزية', 'English') },
-                { icon: LayoutGrid, label: t('برمجة', 'Programming') },
-                { icon: Medal, label: t('أحياء', 'Biology') },
-                { icon: BookMarked, label: t('تاريخ', 'History') },
-              ].map((s, i) => (
-                <span key={i} className="inline-flex items-center gap-2.5 text-sm text-white/40 hover:text-teal-300 transition-colors cursor-default">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 border border-white/8 group-hover:bg-teal-500/10 transition-colors">
-                    <s.icon className="h-4 w-4" />
-                  </span>
-                  {s.label}
-                  <span className="text-teal-900 ms-5">•</span>
-                </span>
+      <div className="relative z-10 overflow-hidden border-b border-teal-900/20 bg-[#0a1715] py-5">
+        <div className="mb-3.5 flex items-center justify-center gap-3 text-[11px] font-semibold tracking-[0.2em] text-white/35">
+          <span className="h-px w-10 bg-white/15" />
+          {t('مواد يدرّسها معلمو فهمني', 'Subjects taught on Fahimni')}
+          <span className="h-px w-10 bg-white/15" />
+        </div>
+        {[false, true].map((rev) => (
+          <div key={String(rev)} className={`marquee marquee-mask overflow-hidden ${rev ? 'mt-3 opacity-60' : ''}`}>
+            <div className={`flex w-max gap-3 ${rev ? 'marquee-track-reverse' : 'marquee-track'}`}>
+              {[0, 1].map((dup) => (
+                <div key={dup} className="flex items-center gap-3 pe-3">
+                  {subjects.map((s, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/55 transition-colors hover:border-teal-400/40 hover:text-teal-200"
+                    >
+                      <s.icon className="h-4 w-4 text-teal-400/70" />
+                      {s.label}
+                    </span>
+                  ))}
+                </div>
               ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
 
       {/* ─── المميزات ───────────────────────────────────── */}
@@ -476,11 +523,11 @@ export default function HomeClient() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0d9488' }}>
-              <MousePointerClick className="h-4 w-4 inline me-1" />{t('جرّب بنفسك', 'Try it yourself')}
+              <MousePointerClick className="h-4 w-4 inline me-1" />{t('جرّبها بنفسك الآن', 'Try it yourself')}
             </div>
-            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('عِش تجربة طالبك', 'Experience your student\'s journey')}</h2>
+            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('كيف يرى طلابك المنصة', 'How your students see the platform')}</h2>
             <p className="text-gray-500 text-lg mt-3 leading-relaxed">
-              {t('شاهد درساً، حل اختباراً، واستلم شهادتك — هذه هي الرحلة التي يخوضها طلابك مع كل كورس. جرّبها بنفسك الآن:', 'Watch a lesson, take a quiz, and claim your certificate — this is the journey your students take with every course. Try it now:')}
+              {t('واجهة أنيقة وسهلة: يفتح الطالب الدرس، يحل الاختبار بتصحيح فوري، ويستلم شهادته الموثقة تلقائياً — كل ذلك باسمك أنت. جرّبها كما يراها طلابك:', 'A clean, effortless experience: your students open the lesson, take an instantly-graded quiz, and receive an auto-issued verified certificate — all under your name. Try it exactly as they see it:')}
             </p>
           </div>
 
@@ -804,10 +851,10 @@ export default function HomeClient() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center max-w-2xl mx-auto mb-12">
             <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#d9770615', color: '#d97706' }}>
-              <Calculator className="h-4 w-4 inline me-1" />{t('احسب أرباحك بنفسك', 'Calculate your profits yourself')}
+              <Calculator className="h-4 w-4 inline me-1" />{t('قدّر دخلك من كورساتك', 'Estimate your course income')}
             </div>
-            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('كم ستربح شهرياً؟', 'How much will you earn monthly?')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('حرّك المؤشر وشاهد إيرادك — بدون أي رسوم تخصمها المنصة', 'Move the slider and watch your revenue — with zero platform fees')}</p>
+            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('كم يمكن أن تحقّق كورساتك؟', 'How much can your courses earn you?')}</h2>
+            <p className="text-teal-900/60 mt-3 text-lg">{t('أنت تحدّد سعر كورسك، وأنت من يربح من طلابك — حرّك المؤشر لتقدير دخلك الشهري. المنصة لا تأخذ أي نسبة من مبيعاتك.', 'You set your course price and you earn from your students — move the slider to estimate your monthly income. The platform takes zero commission on your sales.')}</p>
           </div>
 
           <div ref={calcRef} className="grid lg:grid-cols-2 gap-10 items-center">
@@ -848,7 +895,7 @@ export default function HomeClient() {
             <div className="space-y-4">
               <div className="flex items-center justify-between rounded-2xl border border-teal-100 bg-white p-5">
                 <div>
-                  <p className="text-sm text-gray-500">{t('إيرادك الشهري المتوقع', 'Your expected monthly revenue')}</p>
+                  <p className="text-sm text-gray-500">{t('دخلك الشهري المتوقع من كورساتك', 'Your expected monthly income from your courses')}</p>
                   <p className="text-3xl font-black text-teal-700 mt-1">{calcActive ? formatPrice(calcRevenue) : formatPrice(0)}</p>
                 </div>
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10"><Wallet className="h-6 w-6 text-teal-600" /></span>
@@ -867,14 +914,14 @@ export default function HomeClient() {
                   <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '20px 20px' }} />
                   <div className="relative flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-white/60">{t('صافي ربحك معنا', 'Your net profit with us')}</p>
+                      <p className="text-sm text-white/60">{t('دخلك الصافي — يبقى لك بالكامل', 'Your net income — it all stays yours')}</p>
                       <p className="text-4xl font-black text-white mt-1">{calcActive ? formatPrice(calcRevenue) : formatPrice(0)}</p>
-                      <p className="text-xs font-bold mt-1" style={{ color: '#fcd34d' }}>{t('100% ملكك — بدون أي خصم', '100% yours — no deductions')}</p>
+                      <p className="text-xs font-bold mt-1" style={{ color: '#fcd34d' }}>{t('تحقّقه من مبيعات كورساتك — دون أي عمولة من المنصة', 'Earned from your course sales — the platform takes no commission')}</p>
                     </div>
                     <div className="core-pulse flex h-16 w-16 items-center justify-center rounded-full text-center" style={{ background: 'radial-gradient(circle at 35% 30%, rgba(251,191,36,0.35), rgba(13,148,136,0.15))', border: '1px solid rgba(251,191,36,0.4)' }}>
                       <div>
-                        <div className="text-lg font-black text-white leading-none">100%</div>
-                        <div className="text-[9px] font-bold" style={{ color: '#fde68a' }}>{t('لك', 'yours')}</div>
+                        <div className="text-lg font-black text-white leading-none">0%</div>
+                        <div className="text-[9px] font-bold" style={{ color: '#fde68a' }}>{t('عمولة', 'commission')}</div>
                       </div>
                     </div>
                   </div>
@@ -882,12 +929,12 @@ export default function HomeClient() {
               </div>
 
               <p className="text-xs text-gray-400 text-center">
-                {t('بمعدل 20% رسوم منافسين، توفر', 'At a 20% competitor fee, you save')} <b className="text-teal-700">{calcActive ? formatPrice(calcSave) : formatPrice(0)}</b> {t('سنوياً', 'yearly')}
+                {t('لو كنت على منصة تأخذ 20% عمولة، كنت ستخسر', 'On a platform taking a 20% commission, you would lose')} <b className="text-teal-700">{calcActive ? formatPrice(calcSave) : formatPrice(0)}</b> {t('سنوياً — معنا يبقى لك كل شيء', 'per year — with us everything stays yours')}
               </p>
 
               <Link href="/register/teacher" className="block">
                 <button className="w-full rounded-full py-4 text-white font-bold shadow-brand transition-all hover:scale-[1.01] cta-shine" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
-                  {t('ابدأ بتحصيل أرباحك الآن', 'Start earning your profits now')} {locale === 'ar' ? '←' : '→'}
+                  {t('أنشئ كورسك وابدأ الربح', 'Create your course & start earning')} {locale === 'ar' ? '←' : '→'}
                 </button>
               </Link>
             </div>
@@ -952,7 +999,7 @@ export default function HomeClient() {
                     t('موقعك الخاص بألوانك ودومينك', 'Your own site with your colors & domain'),
                     t('تحليلات أداء وإيرادات لحظية', 'Live performance & revenue analytics'),
                     t('شهادات موثقة تصل تلقائياً', 'Verified certificates issued automatically'),
-                    t('أرباحك تصل إليك كاملة — 100%', 'Your profits reach you fully — 100%'),
+                    t('أنت تحقّق الدخل — بدون عمولة على مبيعاتك', 'You earn the income — no commission on your sales'),
                   ].map((x, i) => (
                     <li key={i} className="flex items-start gap-2.5 text-sm text-white/85">
                       <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 text-emerald-400" />{x}
@@ -968,9 +1015,27 @@ export default function HomeClient() {
       {/* ─── الأسعار ─────────────────────────────────── */}
       <section id="pricing" className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="text-center max-w-2xl mx-auto mb-14">
-            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('الأسعار', 'Pricing')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('خطط بسيطة تناسب كل معلم', 'Simple plans for every teacher')}</p>
+          <div className="text-center max-w-2xl mx-auto mb-8">
+            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0d9488' }}>
+              <Rocket className="h-4 w-4 inline me-1" />{t('خطط واضحة، بلا مفاجآت', 'Clear plans, no surprises')}
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('اختر خطتك وابدأ اليوم', 'Pick your plan and start today')}</h2>
+            <p className="text-teal-900/60 mt-3 text-lg">{t('كل ما تربحه من كورساتك يبقى لك — لا نأخذ أي عمولة على مبيعاتك. ابدأ بتجربة مجانية 7 أيام.', 'Everything your courses earn stays yours — we take zero commission on your sales. Start with a 7-day free trial.')}</p>
+          </div>
+
+          {/* شارات القيمة */}
+          <div className="mb-10 flex flex-wrap justify-center gap-2.5">
+            {[
+              t('بدون عمولة على مبيعاتك', 'No commission on your sales'),
+              t('تجربة مجانية 7 أيام', '7-day free trial'),
+              t('بدون بطاقة ائتمان', 'No credit card'),
+              t('إلغاء في أي وقت', 'Cancel anytime'),
+              t('دعم عربي 24/7', '24/7 Arabic support'),
+            ].map((x, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-white px-3.5 py-2 text-xs font-semibold text-teal-800 shadow-sm">
+                <CheckCircle className="h-3.5 w-3.5 text-teal-600" />{x}
+              </span>
+            ))}
           </div>
 
           {/* ─── Billing cycle toggle ─────────────────── */}
@@ -1097,18 +1162,19 @@ export default function HomeClient() {
                         window.location.href = `/checkout?plan=${p.id}&cycle=${cycle}`;
                       }
                     }}
-                    className={`mt-7 w-full flex justify-center items-center gap-2 px-5 py-3.5 rounded-xl text-sm font-semibold transition-all ${p.popular ? 'text-white shadow-brand hover:opacity-90' : 'border border-teal-200 text-teal-800 hover:border-teal-400 hover:text-teal-700'}`}
-                    style={p.popular ? { background: 'linear-gradient(135deg, #d97706, #f59e0b)' } : undefined}>
-                    {t('اختر الخطة', 'Choose Plan')}
+                    className={`mt-7 w-full flex justify-center items-center gap-2 px-5 py-3.5 rounded-xl text-sm font-semibold transition-all ${popular ? 'text-white shadow-brand hover:opacity-90' : 'border border-teal-200 text-teal-800 hover:border-teal-400 hover:text-teal-700'}`}
+                    style={popular ? { background: 'linear-gradient(135deg, #d97706, #f59e0b)' } : undefined}>
+                    {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
                   </Link>
                 </CardContent>
               </Card>
               );
             })}
           </div>
-          <p className="text-center text-gray-400 text-sm mt-8">
-            {t('جميع الخطط تشمل: دعم فني وتحديثات مستمرة', 'All plans include: support & continuous updates')}
-          </p>
+          <div className="mx-auto mt-8 flex max-w-2xl flex-wrap items-center justify-center gap-x-7 gap-y-2 text-sm text-gray-500">
+            <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-emerald-500" />{t('جميع الخطط تشمل الدعم الفني والتحديثات المستمرة', 'All plans include support & continuous updates')}</span>
+            <span className="inline-flex items-center gap-1.5"><BadgeCheck className="h-4 w-4 text-emerald-500" />{t('لا نأخذ أي عمولة على مبيعات كورساتك', 'We take no commission on your course sales')}</span>
+          </div>
 
 
 
