@@ -295,14 +295,25 @@ class PublicSiteController extends Controller
             ->firstOrFail();
 
         $enrollment = null;
+        $isOwner = false;
+
         if ($user) {
+            // المالك/طاقم المؤسسة (معلم/مدير) يملك الكورس ولا يحتاج تسجيلاً
+            // رسمياً — نفس منطق sections() حتى لا يُحجب المعلم عن درسـه.
+            $isOwner = $user->is_super_admin
+                || $user->tenants()
+                    ->where('tenant_id', $course->tenant_id)
+                    ->wherePivotIn('role', ['teacher', 'owner', 'admin'])
+                    ->wherePivot('status', 'active')
+                    ->exists();
+
             $enrollment = $user->enrollments()
                 ->where('course_id', $course->id)
                 ->whereIn('status', ['active', 'completed'])
                 ->first();
         }
 
-        $enrolled = $enrollment !== null;
+        $enrolled = $enrollment !== null || $isOwner;
 
         if (! $lesson->is_free_preview && ! $enrolled) {
             return response()->json(['message' => 'This lesson is locked. Enroll to access it.'], 403);

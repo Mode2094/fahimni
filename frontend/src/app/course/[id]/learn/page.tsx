@@ -186,13 +186,13 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
     setContentLoading(true);
     setContentError(null);
     fetch(`${API}/public/courses/${id}/lessons/${active.id}`, { headers: authHeaders() })
-      .then(r => r.json())
-      .then(d => {
-        if (d.unlock_at) {
-          setContentError('locked');
-        } else {
-          setContent(d);
-        }
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        // 423 (drip locked) يُرجع unlock_at؛ أي خطأ آخر (401/403/5xx) يجب أن
+        // يظهر كخطأ صريح — لا أن يُسقَط بصمت إلى واجهة "درس نصي".
+        if (d?.unlock_at) setContentError('locked');
+        else if (!r.ok) setContentError('error');
+        else setContent(d);
       })
       .catch(() => setContentError('error'))
       .finally(() => setContentLoading(false));
