@@ -863,10 +863,12 @@ export default function HomeClient() {
               <div className="space-y-8">
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <label className="font-bold text-sm text-teal-950">{t('عدد طلابك', 'Your students')}</label>
+                    <label htmlFor="calc-students" className="font-bold text-sm text-teal-950">{t('عدد طلابك', 'Your students')}</label>
                     <span className="text-2xl font-black text-teal-700">{calcStudents.toLocaleString('en-US')}</span>
                   </div>
                   <input
+                    id="calc-students"
+                    aria-label={t('عدد طلابك', 'Your students')}
                     type="range" min={5} max={500} step={5} value={calcStudents}
                     onChange={(e) => setCalcStudents(Number(e.target.value))}
                     className="w-full h-2.5 rounded-full appearance-none cursor-pointer"
@@ -877,10 +879,12 @@ export default function HomeClient() {
 
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <label className="font-bold text-sm text-teal-950">{t('متوسط سعر الكورس', 'Average course price')}</label>
+                    <label htmlFor="calc-price" className="font-bold text-sm text-teal-950">{t('متوسط سعر الكورس', 'Average course price')}</label>
                     <span className="text-2xl font-black text-teal-700">{calcPrice} {currencyLabel(settings.currency, locale === 'ar')}</span>
                   </div>
                   <input
+                    id="calc-price"
+                    aria-label={t('متوسط سعر الكورس', 'Average course price')}
                     type="range" min={5} max={200} step={5} value={calcPrice}
                     onChange={(e) => setCalcPrice(Number(e.target.value))}
                     className="w-full h-2.5 rounded-full appearance-none cursor-pointer"
@@ -1112,14 +1116,7 @@ export default function HomeClient() {
                       </div>
                     );
                   })()}
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xl font-bold text-teal-950">{p.name}</h3>
-                    {popular && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200">
-                        <Sparkles className="h-3 w-3" />{t('الأكثر شيوعاً', 'Most Popular')}
-                      </span>
-                    )}
-                  </div>
+                  <h3 className="text-xl font-bold text-teal-950">{p.name}</h3>
                   <div className="mt-4 flex items-end gap-1">
                     <span className="text-4xl font-black">{formatPrice(price).split(' ')[0]}</span>
                     <span className="text-gray-500 pb-1.5">{currencyLabel(p.currency || 'USD', locale === 'ar')} / {cycle === 'yearly' ? t('سنة', 'year') : t('شهر', 'month')}</span>
@@ -1286,12 +1283,12 @@ export default function HomeClient() {
                   className="space-y-4"
                 >
                   <div>
-                    <label className="text-xs font-bold text-gray-500">{t('اسمك', 'Your name')}</label>
-                    <Input value={callbackName} onChange={(e) => setCallbackName(e.target.value)} placeholder={t('مثال: أحمد محمد', 'e.g. Ahmed Mohammed')} className="h-12 mt-1.5 rounded-xl border-teal-100" />
+                    <label htmlFor="callback-name" className="text-xs font-bold text-gray-500">{t('اسمك', 'Your name')}</label>
+                    <Input id="callback-name" value={callbackName} onChange={(e) => setCallbackName(e.target.value)} placeholder={t('مثال: أحمد محمد', 'e.g. Ahmed Mohammed')} className="h-12 mt-1.5 rounded-xl border-teal-100" />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-500">{t('رقم واتساب', 'WhatsApp number')}</label>
-                    <Input value={callbackPhone} onChange={(e) => setCallbackPhone(e.target.value)} placeholder="+962 7X XXX XXXX" dir="ltr" className="h-12 mt-1.5 rounded-xl border-teal-100 text-end" />
+                    <label htmlFor="callback-phone" className="text-xs font-bold text-gray-500">{t('رقم واتساب', 'WhatsApp number')}</label>
+                    <Input id="callback-phone" value={callbackPhone} onChange={(e) => setCallbackPhone(e.target.value)} placeholder="+962 7X XXX XXXX" dir="ltr" className="h-12 mt-1.5 rounded-xl border-teal-100 text-end" />
                   </div>
                   <button type="submit" className="w-full rounded-full py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.01] cta-shine" style={{ background: 'linear-gradient(135deg, #25d366, #128c7e)' }}>
                     <WhatsAppIcon className="h-4 w-4 inline me-1.5" />{t('يتواصل معي خبير', 'An expert will contact me')}
