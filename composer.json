@@ -14,6 +14,7 @@
         "laravel/socialite": "^5.29",
         "laravel/tinker": "^3.0",
         "phpoffice/phpspreadsheet": "^5.9",
+        "resend/resend-php": "^1.18",
         "sentry/sentry-laravel": "^4.27",
         "spatie/laravel-permission": "^8.3"
     },
