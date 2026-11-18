@@ -73,7 +73,6 @@ export default function DomainManager() {
   const slugChanged = cleanSlug !== '' && cleanSlug !== currentSlug;
   const canSaveSlug = slugChanged && slugStatus.state === 'available' && !savingSlug;
   const pageLink = typeof window !== 'undefined' && data?.slug ? `${window.location.origin}/t/${data.slug}` : '';
-  const subLink = data?.slug && data?.platform_domain ? `https://${data.slug}.${data.platform_domain}` : '';
 
   const saveSlug = async () => {
     if (!canSaveSlug) return;
@@ -165,25 +164,18 @@ export default function DomainManager() {
             </div>
           </div>
 
-          {/* الروابط الحالية */}
-          <div className="grid sm:grid-cols-2 gap-3">
-            <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-2 ps-4">
-              <span className="text-[11px] text-teal-600 shrink-0">{t('المسار', 'Path')}</span>
-              <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">/t/{data?.slug || '—'}</span>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={!pageLink} onClick={() => copy(pageLink, t('الرابط', 'Link'))}><Copy className="h-3.5 w-3.5" /></Button>
-            </div>
-            <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-2 ps-4">
-              <span className="text-[11px] text-teal-600 shrink-0">{t('الدومين الفرعي', 'Subdomain')}</span>
-              <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">{data?.subdomain || '—'}</span>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={!subLink} onClick={() => copy(subLink, t('الرابط', 'Link'))}><Copy className="h-3.5 w-3.5" /></Button>
-            </div>
+          {/* الرابط الحالي */}
+          <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-2 ps-4">
+            <span className="text-[11px] text-teal-600 shrink-0">{t('رابط صفحتك', 'Your page link')}</span>
+            <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">{pageLink ? pageLink.replace(/^https?:\/\//, '') : '/t/—'}</span>
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={!pageLink} onClick={() => copy(pageLink, t('الرابط', 'Link'))}><Copy className="h-3.5 w-3.5" /></Button>
           </div>
 
           {/* تغيير الرابط */}
           <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label className="text-xs font-bold text-muted-foreground">{t('اختر اسم رابطك', 'Choose your link name')}</Label>
-              <span className="text-[11px] text-gray-400" dir="ltr">{cleanSlug || 'your-name'}.{data?.platform_domain || ''}</span>
+              <span className="text-[11px] text-gray-400" dir="ltr">/t/{cleanSlug || 'your-name'}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
               <div className={`flex flex-1 min-w-[220px] items-center rounded-xl border overflow-hidden bg-white ${slugStatus.state === 'taken' || slugStatus.state === 'reserved' || slugStatus.state === 'invalid' ? 'border-red-300' : slugStatus.state === 'available' ? 'border-emerald-400' : 'border-slate-200'}`}>
