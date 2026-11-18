@@ -74,7 +74,7 @@ export default function AdminBiPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <p className="text-xs text-gray-400 flex items-center gap-1"><CircleDollarSign className="h-3.5 w-3.5" />{t('إيراد الشهر', 'Monthly revenue')}</p>
-              <p className="text-2xl font-bold mt-1">{monthlyRev} {bi.revenue_currency || 'JOD'}</p>
+              <p className="text-2xl font-bold mt-1">{monthlyRev} {bi.revenue_currency || 'USD'}</p>
             </CardContent></Card>
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <p className="text-xs text-gray-400 flex items-center gap-1"><Users className="h-3.5 w-3.5" />{t('المشتركون', 'Subscribers')}</p>

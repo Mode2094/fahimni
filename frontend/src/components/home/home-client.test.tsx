@@ -28,7 +28,7 @@ beforeEach(() => {
     settings: {
       ...useSettings.getState().settings,
       platform_name: 'فهمني',
-      currency: 'JOD',
+      currency: 'USD',
       logo_url: null,
       student_app_hidden: true,
     },

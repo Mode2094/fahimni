@@ -59,7 +59,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: {
     platform_name: BRAND_NAME,
-    currency: 'JOD',
+    currency: 'USD',
     currency_rate: 1,
     default_locale: 'ar',
     logo_url: null,

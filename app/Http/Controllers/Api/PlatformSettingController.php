@@ -27,7 +27,7 @@ class PlatformSettingController extends Controller
 
         $payload = [
             'platform_name' => PlatformBrand::normalize($settings['platform_name'] ?? null),
-            'currency' => $settings['currency'] ?? 'JOD',
+            'currency' => $settings['currency'] ?? 'USD',
             'currency_rate' => (float) ($settings['currency_rate'] ?? 1),
             'default_locale' => $settings['default_locale'] ?? 'ar',
             'logo_url' => $settings['logo_url'] ?? null,

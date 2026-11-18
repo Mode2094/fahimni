@@ -91,7 +91,7 @@ class PaymentController extends Controller
                 'payment_id' => $payment->id,
                 'transaction_id' => $payment->transaction_id,
                 'amount' => $payment->amount,
-                'currency' => $payment->currency ?? 'JOD',
+                'currency' => $payment->currency ?? 'USD',
                 'status' => $payment->status,
             ]);
         }

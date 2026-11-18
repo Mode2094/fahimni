@@ -83,7 +83,7 @@ export default function AdminSettingsPage() {
     try {
       await save({
         platform_name: form.platform_name,
-        currency: 'JOD',
+        currency: 'USD',
         currency_rate: 1,
         platform_domain: form.platform_domain,
         default_locale: form.default_locale,
@@ -191,13 +191,13 @@ export default function AdminSettingsPage() {
                   </Select>
                 </div>
                 <div className="p-4 rounded-xl bg-amber-50 border border-amber-100 text-sm text-amber-700 flex items-center gap-2">
-                  <Check className="h-4 w-4 shrink-0" />{t('العملة الرسمية للمنصة: الدينار الأردني (JOD) فقط', 'Platform currency: Jordanian Dinar (JOD) only')}
+                  <Check className="h-4 w-4 shrink-0" />{t('العملة الرسمية للمنصة: الدولار الأمريكي (USD) فقط', 'Platform currency: US Dollar (USD) only')}
                 </div>
                 <div><Label>{t('دومين المنصة الأساسي (لربط الدومينات)', 'Platform domain (for custom domain CNAME)')}</Label><Input value={form.platform_domain || 'lms.example.com'} onChange={(e) => setForm({ ...form, platform_domain: e.target.value })} className="h-11 mt-1" dir="ltr" placeholder="lms.example.com" /><p className="text-xs text-gray-400 mt-1">{t('المعلمون يوجهون سجل CNAME لدومينهم إلى هذا العنوان', 'Teachers point their CNAME record to this address')}</p></div>
               </div>
               <div className="p-3 rounded-xl bg-teal-50 text-teal-700 text-sm flex items-center gap-2">
                 <Check className="h-4 w-4 shrink-0" />
-                {t('جميع الأسعار في المنصة تعرض الآن بـ', 'All prices across the platform now show in')} <b>{form.currency || 'JOD'}</b>
+                {t('جميع الأسعار في المنصة تعرض الآن بـ', 'All prices across the platform now show in')} <b>{form.currency || 'USD'}</b>
               </div>
               <Button onClick={() => saveForm()} disabled={saving} className="gap-2 rounded-full">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ', 'Save')}</Button>
             </CardContent></Card>
