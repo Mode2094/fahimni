@@ -70,6 +70,27 @@ export function buildCsp(nonce: string, isDev: boolean = process.env.NODE_ENV !=
 }
 
 /**
+ * Append the `no-transform` directive to a `Cache-Control` value.
+ *
+ * Cloudflare's "Email Address Obfuscation" (Scrape Shield) rewrites every email
+ * in an HTML response into a `/cdn-cgi/l/email-protection` link plus a
+ * `[email protected]` placeholder, and injects a decoder script that our strict
+ * nonce CSP blocks — leaving a literal placeholder on the page and a React
+ * hydration mismatch (error #418). Per Cloudflare's documentation, the
+ * `Cache-Control: no-transform` directive makes it leave our HTML untouched.
+ * Existing directives are preserved; only `no-transform` is appended (once).
+ */
+export function withNoTransform(cacheControl: string | null | undefined): string {
+  const base = (cacheControl || '').trim().replace(/,\s*$/, '');
+
+  if (/(^|,)\s*no-transform\s*(,|$)/i.test(base)) {
+    return base;
+  }
+
+  return base ? `${base}, no-transform` : 'no-transform';
+}
+
+/**
  * Read the nonce back out of a policy string. Mirrors how Next.js extracts it
  * (the `'nonce-{value}'` pattern) so tests can assert the header the browser
  * receives carries the exact nonce stamped on the scripts.

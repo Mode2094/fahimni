@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { CSP_HEADER, NONCE_HEADER, buildCsp, extractNonce, generateNonce } from '../src/lib/csp.ts';
+import { CSP_HEADER, NONCE_HEADER, buildCsp, extractNonce, generateNonce, withNoTransform } from '../src/lib/csp.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (rel: string) => readFileSync(join(here, '..', rel), 'utf8');
@@ -93,4 +93,27 @@ test('root layout forces dynamic rendering so a nonce exists per request', () =>
 
   assert.match(layout, /from 'next\/server'/, 'layout must import from next/server');
   assert.match(layout, /await connection\(\)/, 'layout must await connection() to opt into dynamic rendering');
+});
+
+test('withNoTransform appends no-transform without dropping existing directives', () => {
+  assert.equal(withNoTransform(null), 'no-transform');
+  assert.equal(withNoTransform(undefined), 'no-transform');
+  assert.equal(withNoTransform(''), 'no-transform');
+  assert.equal(withNoTransform('private, no-cache, max-age=0'), 'private, no-cache, max-age=0, no-transform');
+  assert.equal(withNoTransform('no-store, no-transform'), 'no-store, no-transform');
+  assert.equal(withNoTransform('no-transform'), 'no-transform');
+  // trailing comma / whitespace tolerated, and no duplicate directive
+  assert.equal(withNoTransform('no-cache, '), 'no-cache, no-transform');
+  assert.equal(withNoTransform('public, max-age=0, NO-TRANSFORM'), 'public, max-age=0, NO-TRANSFORM');
+});
+
+test('proxy sets no-transform on HTML responses (Cloudflare email-obfuscation opt-out)', () => {
+  const proxy = src('src/proxy.ts');
+
+  assert.match(proxy, /withNoTransform/, 'proxy must import/use withNoTransform');
+  assert.match(
+    proxy,
+    /response\.headers\.set\(\s*'Cache-Control'\s*,\s*withNoTransform\(/,
+    'withCsp() must emit Cache-Control: no-transform so Cloudflare leaves our HTML unmodified',
+  );
 });

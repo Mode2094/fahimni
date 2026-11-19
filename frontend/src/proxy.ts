@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { CSP_HEADER, NONCE_HEADER, buildCsp, generateNonce } from './lib/csp';
+import { CSP_HEADER, NONCE_HEADER, buildCsp, generateNonce, withNoTransform } from './lib/csp';
 
 // Server-side fetch: must be an absolute URL inside the Docker network
 // (nginx) or localhost in dev — never the browser-relative '/api/v1'.
@@ -65,6 +65,11 @@ export async function proxy(request: NextRequest) {
 
   const withCsp = (response: NextResponse): NextResponse => {
     response.headers.set(CSP_HEADER, csp);
+    // `no-transform` stops Cloudflare's Email Address Obfuscation from
+    // rewriting our HTML (it would replace emails with a "[email protected]"
+    // placeholder + a decoder script that our nonce CSP blocks, breaking the
+    // address and causing a React hydration mismatch). See withNoTransform().
+    response.headers.set('Cache-Control', withNoTransform(response.headers.get('Cache-Control')));
 
     return response;
   };
