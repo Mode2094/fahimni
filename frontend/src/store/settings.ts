@@ -51,6 +51,7 @@ export type PlatformSettings = {
   gtm_container_id: string;
   // Teacher free trial: master switch + limited "first N teachers" offer.
   teacher_trial_enabled: boolean;
+  teacher_trial_days: number;
   teacher_trial_offer_enabled: boolean;
   teacher_trial_offer_seats: number;
   teacher_trial_offer_text: string;
@@ -119,6 +120,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     ga_measurement_id: '',
     gtm_container_id: '',
     teacher_trial_enabled: true,
+    teacher_trial_days: 7,
     teacher_trial_offer_enabled: false,
     teacher_trial_offer_seats: 50,
     teacher_trial_offer_text: '🎁 تجربة مجانية لمدة {days} أيام لأول {seats} معلمًا — الأماكن المتبقية: {remaining}',

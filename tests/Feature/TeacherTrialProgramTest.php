@@ -32,7 +32,7 @@ class TeacherTrialProgramTest extends TenantTestCase
     }
 
     /** An active plan so `trialPlan()` resolves and trials can be granted. */
-    private function makePlan(int $trialDays = 7, float $price = 19.99): SubscriptionPlan
+    private function makePlan(int $trialDays = 3, float $price = 19.99): SubscriptionPlan
     {
         return SubscriptionPlan::create([
             'id' => UuidV7::generate(),
@@ -78,11 +78,29 @@ class TeacherTrialProgramTest extends TenantTestCase
         $this->assertInstanceOf(TenantSubscription::class, $sub, 'a trial must be granted while the master switch is ON');
         $this->assertSame('trialing', $sub->status);
         $this->assertNotNull($sub->trial_ends_at);
+        // The trial length is platform-owned (default 7), NOT the plan's
+        // trial_days (which is 3 here, mirroring production).
         $this->assertEqualsWithDelta(7, $sub->trial_ends_at->diffInDays(now(), true), 0.5);
 
         // The seat counter only moves while the limited offer is on.
         $this->assertSame(0, $this->program()->seatsUsed(), 'the offer counter must stay untouched when the offer is disabled');
         $this->assertFalse((bool) TrialGrant::where('user_id', $user->id)->first()->counted);
+    }
+
+    public function test_trial_length_is_platform_owned_and_configurable(): void
+    {
+        // The plan's own trial_days must never dictate the teacher trial.
+        $this->makePlan(trialDays: 3);
+        $this->disableOffer();
+        $this->assertSame(7, $this->program()->trialDays(), 'the default trial length is 7 days');
+
+        PlatformSetting::set(TeacherTrialProgram::KEY_TRIAL_DAYS, 14);
+        $this->assertSame(14, $this->program()->trialDays());
+
+        $tenant = $this->makeTenant();
+        $sub = $this->program()->grantTrial($this->makeUser(), $tenant->id);
+
+        $this->assertEqualsWithDelta(14, $sub->trial_ends_at->diffInDays(now(), true), 0.5);
     }
 
     public function test_master_on_with_the_offer_enabled_consumes_exactly_one_real_seat(): void
@@ -288,7 +306,14 @@ class TeacherTrialProgramTest extends TenantTestCase
             ->assertJsonPath('settings.teacher_trial_offer_seats', 10)
             // The offer has seats, yet the master switch wins.
             ->assertJsonPath('settings.trial_available', false)
-            ->assertJsonPath('settings.teacher_trial_offer_seats_remaining', 10);
+            ->assertJsonPath('settings.teacher_trial_offer_seats_remaining', 10)
+            ->assertJsonPath('settings.teacher_trial_days', 7);
+
+        // The trial length is platform-owned and admin-editable.
+        $this->withHeaders($headers)
+            ->putJson('/api/v1/platform-settings', ['teacher_trial_days' => 10])
+            ->assertOk()
+            ->assertJsonPath('settings.trial_days', 10);
 
         // The public payload agrees — no surface may advertise a trial.
         $this->getJson('/api/v1/platform-settings')

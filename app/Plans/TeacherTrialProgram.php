@@ -33,6 +33,14 @@ class TeacherTrialProgram
     /** Admin master switch — the highest-priority decision. */
     public const KEY_ENABLED = 'teacher_trial_enabled';
 
+    /**
+     * Length of the teacher free trial in days. Platform-owned (default 7) and
+     * deliberately INDEPENDENT of any plan's `trial_days`: production plans may
+     * carry their own promotional trial length, but the teacher free-trial
+     * program must always grant the configured number of days.
+     */
+    public const KEY_TRIAL_DAYS = 'teacher_trial_days';
+
     /** Limited-offer banner enable/disable. */
     public const KEY_OFFER_ENABLED = 'teacher_trial_offer_enabled';
 
@@ -120,10 +128,15 @@ class TeacherTrialProgram
             ->first();
     }
 
-    /** Effective trial length (days) — from the cheapest active plan. */
+    /**
+     * Effective teacher free-trial length in days.
+     *
+     * Platform-owned (`teacher_trial_days`, default 7) so the trial promise is
+     * identical everywhere regardless of a plan's own `trial_days`.
+     */
     public function trialDays(): int
     {
-        $days = (int) ($this->trialPlan()?->trial_days ?? 0);
+        $days = (int) PlatformSetting::get(self::KEY_TRIAL_DAYS, self::DEFAULT_TRIAL_DAYS);
 
         return max(1, $days ?: self::DEFAULT_TRIAL_DAYS);
     }

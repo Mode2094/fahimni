@@ -130,6 +130,7 @@ export default function AdminSettingsPage() {
         gtm_container_id: form.gtm_container_id,
         // Teacher free trial: master switch + limited "first N teachers" offer.
         teacher_trial_enabled: form.teacher_trial_enabled,
+        teacher_trial_days: Number(form.teacher_trial_days) || 7,
         teacher_trial_offer_enabled: form.teacher_trial_offer_enabled,
         teacher_trial_offer_seats: Number(form.teacher_trial_offer_seats) || 50,
         teacher_trial_offer_text: form.teacher_trial_offer_text,
@@ -249,7 +250,12 @@ export default function AdminSettingsPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>{t('مدة التجربة (أيام)', 'Trial length (days)')}</Label>
+                    <Input type="number" min={1} max={365} value={form.teacher_trial_days ?? 7} onChange={(e) => setForm({ ...form, teacher_trial_days: Number(e.target.value) })} className="h-11" dir="ltr" />
+                    <p className="text-xs text-gray-400">{t('افتراضيًا 7 أيام. مستقلة عن أيام تجربة الخطط المدفوعة.', 'Defaults to 7. Independent of paid plans’ own trial length.')}</p>
+                  </div>
                   <div className="space-y-2">
                     <Label>{t('العدد الإجمالي للمقاعد', 'Total seats')}</Label>
                     <Input type="number" min={1} value={form.teacher_trial_offer_seats ?? 50} onChange={(e) => setForm({ ...form, teacher_trial_offer_seats: Number(e.target.value) })} className="h-11" dir="ltr" />

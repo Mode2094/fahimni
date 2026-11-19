@@ -88,6 +88,7 @@ class PlatformSettingController extends Controller
             'teacher_trial_offer_enabled' => (bool) ($settings[TeacherTrialProgram::KEY_OFFER_ENABLED] ?? false),
             'teacher_trial_offer_seats' => (int) ($settings[TeacherTrialProgram::KEY_OFFER_SEATS] ?? 50),
             'teacher_trial_offer_text' => (string) ($settings[TeacherTrialProgram::KEY_OFFER_TEXT] ?? TeacherTrialProgram::DEFAULT_OFFER_TEXT),
+            'teacher_trial_days' => $trialProgram->trialDays(),
             'teacher_trial_offer_text_rendered' => $trialProgram->renderOfferText(),
             'teacher_trial_offer_seats_used' => $trialProgram->seatsUsed(),
             'teacher_trial_offer_seats_remaining' => $trialProgram->seatsRemaining(),
@@ -149,6 +150,7 @@ class PlatformSettingController extends Controller
             'gtm_container_id' => 'nullable|string|max:40',
             // Teacher free trial: master switch + limited-offer settings.
             'teacher_trial_enabled' => 'boolean',
+            'teacher_trial_days' => 'integer|min:1|max:365',
             'teacher_trial_offer_enabled' => 'boolean',
             'teacher_trial_offer_seats' => 'integer|min:1|max:1000000',
             'teacher_trial_offer_text' => 'nullable|string|max:500',
