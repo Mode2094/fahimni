@@ -34,7 +34,8 @@ export default function TeacherShell({ children }: { children: React.ReactNode }
     if (!planLoaded) void usePlan.getState().load();
   }, [user, isLogin, planLoaded]);
 
-  const needsPlan = !user?.is_super_admin && planLoaded && planActive === false;
+  const needsPlan = !!user && user.roles?.includes('Teacher') && !user.is_super_admin
+    && planLoaded && planActive === false;
 
   useEffect(() => {
     if (isLogin) return;

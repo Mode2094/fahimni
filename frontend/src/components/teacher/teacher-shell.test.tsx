@@ -79,6 +79,23 @@ describe('TeacherShell — forced plan selection', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it('does not send a non-teacher to /pricing (they are routed by the auth guard)', async () => {
+    useAuth.setState({
+      user: { roles: ['Student'], is_super_admin: false } as any,
+      check: () => true,
+    } as any);
+    usePlan.setState({ loaded: true, active: false });
+
+    render(
+      <TeacherShell>
+        <div>SECRET PANEL</div>
+      </TeacherShell>,
+    );
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/student/login'));
+    expect(replace).not.toHaveBeenCalledWith('/pricing');
+  });
+
   it('does not bounce a teacher when the plan status is unknown (fetch failed)', async () => {
     seedTeacher();
     // Plan load fails → `active` stays null → must fail safe (no redirect).
