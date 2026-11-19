@@ -73,6 +73,26 @@ class WebSessionAuthTest extends TenantTestCase
             ->assertJsonPath('user.email', $user->email);
     }
 
+    public function test_web_login_exposes_the_users_tenants_for_client_scoping(): void
+    {
+        $tenant = $this->makeTenant();
+        $user = $this->makeWebUser();
+        $this->attachToTenant($user, $tenant, 'teacher');
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password-123',
+        ], $this->statefulHeaders());
+
+        $response->assertOk();
+
+        // Regression: login must expose the workspace list (like /auth/me and
+        // /auth/register). Without it the SPA cannot resolve X-Tenant-Id after a
+        // client-side login, so every tenant-scoped call — including
+        // /teacher/plan that drives the "choose a plan" gate — 400s.
+        $response->assertJsonPath('user.tenants.0.id', $tenant->id);
+    }
+
     public function test_session_authenticates_tenant_scoped_endpoints(): void
     {
         $tenant = $this->makeTenant();

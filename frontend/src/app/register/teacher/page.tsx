@@ -48,6 +48,9 @@ export default function TeacherRegisterPage() {
       if (!res.ok) { toast.error(data.message || 'Failed'); return; }
       localStorage.setItem('user', JSON.stringify(data.user));
       setSessionHint(true);
+      // The register response already carries the new workspace id — persist it
+      // so the very next tenant-scoped call (plan/limits) works without a reload.
+      if (data.tenant_id) localStorage.setItem('tenant_id', data.tenant_id);
       useAuth.setState({ user: data.user, loading: false, initialized: true });
       track('CompleteRegistration', { content_name: 'teacher_signup' }, 'sign_up');
       if (data.trial_started) track('trial_start', { content_name: 'teacher_trial' });

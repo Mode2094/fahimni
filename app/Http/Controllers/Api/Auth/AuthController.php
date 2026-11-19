@@ -287,7 +287,7 @@ class AuthController extends Controller
             AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
             return response()->json([
-                'user' => new UserResource($user),
+                'user' => new UserResource($user->load('tenants')),
                 'tenant_id' => $tenantId,
             ]);
         }
@@ -301,7 +301,7 @@ class AuthController extends Controller
         AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email]);
 
         return response()->json([
-            'user' => new UserResource($user),
+            'user' => new UserResource($user->load('tenants')),
             'token' => $newToken->plainTextToken,
         ]);
     }
@@ -405,7 +405,7 @@ class AuthController extends Controller
             AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id, ['mode' => 'session']);
 
             return response()->json([
-                'user' => new UserResource($user),
+                'user' => new UserResource($user->load('tenants')),
                 'tenant_id' => $tenantId,
             ]);
         }
@@ -419,7 +419,7 @@ class AuthController extends Controller
         AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id);
 
         return response()->json([
-            'user' => new UserResource($user),
+            'user' => new UserResource($user->load('tenants')),
             'token' => $newToken->plainTextToken,
         ]);
     }
