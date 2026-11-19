@@ -18,9 +18,11 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
-  alternates: {
-    canonical: '/',
-  },
+  // No blanket `alternates.canonical` here: a root default leaks a
+  // `canonical: '/'` into every page that does not override it — including
+  // private, `noindex` sections (e.g. /courses, the teacher course manager),
+  // which then advertise a conflicting canonical pointing at the homepage.
+  // Public pages set their own canonical (the home page sets '/' explicitly).
   verification: {
     google: process.env.NEXT_PUBLIC_GSC_VERIFICATION || undefined,
     other: process.env.NEXT_PUBLIC_BING_VERIFICATION ? { 'msvalidate.01': [process.env.NEXT_PUBLIC_BING_VERIFICATION] } : {},
