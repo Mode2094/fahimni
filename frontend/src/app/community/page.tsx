@@ -77,7 +77,7 @@ export default function CommunityPage() {
       communityApi.overview().then(setOverview).catch(() => {});
       window.location.href = `/community/threads/${thread.id}`;
     } catch (e: any) {
-      toast.error(e.message || 'Failed');
+      toast.error(e.message || t('فشل', 'Failed'));
     }
     setSaving(false);
   };
@@ -86,7 +86,7 @@ export default function CommunityPage() {
     try {
       const d = await communityApi.likeThread(thread.id);
       setThreads((prev) => prev.map((x) => (x.id === thread.id ? { ...x, liked_by_me: d.liked, likes_count: d.likes_count } : x)));
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const tabs = [
@@ -124,7 +124,7 @@ export default function CommunityPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative flex-1 min-w-[180px]">
                   <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('ابحث في المواضيع...', 'Search topics...')} className="h-10 ps-9" />
+                  <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('ابحث في المواضيع...', 'Search topics...')} aria-label={t('بحث', 'Search')} className="h-10 ps-9" />
                 </div>
                 <div className="flex flex-wrap items-center gap-1 bg-gray-100 rounded-full p-1">
                   {tabs.map((tabItem) => (
@@ -171,7 +171,7 @@ export default function CommunityPage() {
                       <div className="flex items-center justify-between mt-4 pt-3 border-t text-xs text-gray-400">
                         <span className="flex items-center gap-2 min-w-0">
                           {thread.author?.avatar_url
-                            ? <img src={thread.author.avatar_url} className="h-6 w-6 rounded-full object-cover" alt="" />
+                            ? <img src={thread.author.avatar_url} className="h-6 w-6 rounded-full object-cover" alt={thread.author?.name || t('صورة المستخدم', 'User avatar')} />
                             : <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-100 text-[10px] font-bold text-teal-700">{initials(thread.author?.name)}</span>}
                           <span className="truncate">{thread.author?.name}</span>
                           <span>·</span>

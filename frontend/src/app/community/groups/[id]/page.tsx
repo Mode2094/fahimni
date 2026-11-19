@@ -66,7 +66,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         toast.success(t('تم الانضمام', 'Joined'));
       }
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setBusy(false);
   };
 
@@ -84,7 +84,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       toast.success(t('تم النشر', 'Posted'));
       setShowThreadForm(false);
       window.location.href = `/community/threads/${thread.id}`;
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setSaving(false);
   };
 
@@ -93,7 +93,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       await communityApi.updateMember(id, m.id, { status: 'active' });
       toast.success(t('تمت الموافقة', 'Approved'));
       loadMembers();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const toggleRole = async (m: CommunityGroupMember) => {
@@ -101,7 +101,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       await communityApi.updateMember(id, m.id, { role: m.role === 'moderator' ? 'member' : 'moderator' });
       toast.success(t('تم تحديث الدور', 'Role updated'));
       loadMembers();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const removeMember = async (m: CommunityGroupMember) => {
@@ -110,25 +110,21 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       await communityApi.removeMember(id, m.id);
       toast.success(t('تمت الإزالة', 'Removed'));
       loadMembers();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const like = async (thread: CommunityThread) => {
     try {
       const d = await communityApi.likeThread(thread.id);
       setThreads((prev) => prev.map((x) => (x.id === thread.id ? { ...x, liked_by_me: d.liked, likes_count: d.likes_count } : x)));
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   if (loading) return <CardSkeleton />;
 
   if (!group) {
     return (
-      <Card className="max-w-md mx-auto mt-16"><CardContent className="flex flex-col items-center gap-4 py-14 text-gray-400">
-        <Lock className="h-12 w-12 opacity-40" />
-        <p className="text-lg">{t('المجموعة غير موجودة أو خاصة', 'Group not found or private')}</p>
-        <Button variant="outline" className="rounded-full" onClick={() => window.location.href = '/community/groups'}>{t('العودة للمجموعات', 'Back to groups')}</Button>
-      </CardContent></Card>
+      <EmptyState icon={Lock} title={t('المجموعة غير موجودة أو خاصة', 'Group not found or private')} className="max-w-md mx-auto mt-16" action={<Button variant="outline" className="rounded-full" onClick={() => window.location.href = '/community/groups'}>{t('العودة للمجموعات', 'Back to groups')}</Button>} />
     );
   }
 
@@ -214,7 +210,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                     <div className="flex items-center justify-between mt-3 pt-3 border-t text-xs text-gray-400">
                       <span className="flex items-center gap-2">
                         {thread.author?.avatar_url
-                          ? <img src={thread.author.avatar_url} className="h-6 w-6 rounded-full object-cover" alt="" />
+                          ? <img src={thread.author.avatar_url} className="h-6 w-6 rounded-full object-cover" alt={thread.author?.name || t('صورة المستخدم', 'User avatar')} />
                           : <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-[10px] font-bold text-teal-700">{initials(thread.author?.name)}</span>}
                         <span>{thread.author?.name}</span>
                         <span>·</span>
@@ -274,7 +270,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 {members.map((m) => (
                   <div key={m.id} className="flex items-center gap-3 rounded-xl border border-gray-100 p-3">
                     {m.avatar_url
-                      ? <img src={m.avatar_url} className="h-9 w-9 rounded-full object-cover" alt="" />
+                      ? <img src={m.avatar_url} className="h-9 w-9 rounded-full object-cover" alt={m.name || t('صورة المستخدم', 'User avatar')} />
                       : <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700">{initials(m.name)}</span>}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium truncate">{m.name}</p>

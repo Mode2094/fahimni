@@ -5,6 +5,7 @@ import { use } from 'react';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { BookOpen, Clock, Loader2, ArrowLeft } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -26,7 +27,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
         <h1 className="text-3xl font-bold mb-8">{locale === 'ar' ? 'جميع الكورسات' : 'All Courses'}</h1>
         {loading ? <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div> :
           courses.length === 0 ? (
-            <Card><CardContent className="text-center py-12 text-gray-400"><BookOpen className="h-12 w-12 mx-auto mb-4 opacity-40" /><p>{locale === 'ar' ? 'لا توجد كورسات' : 'No courses'}</p></CardContent></Card>
+            <EmptyState icon={BookOpen} title={locale === 'ar' ? 'لا توجد كورسات' : 'No courses'} />
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {courses.map((c) => (

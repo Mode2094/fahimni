@@ -321,7 +321,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100dvh-4rem)] max-lg:h-[calc(100dvh-8.5rem)] -m-4 sm:-m-6 lg:-m-8">
       <div className="order-2 lg:order-1 w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-e bg-card overflow-y-auto shrink-0 max-h-[45vh] lg:max-h-none">
-        <div className="p-4 border-b"><h2 className="font-semibold">{data.course?.title || ''}</h2><p className="text-sm text-gray-500">{data.sections?.reduce((a: number, s: any) => a + s.lessons.length, 0) || 0} {locale === 'ar' ? 'درس' : 'lessons'}</p></div>
+        <div className="p-4 border-b"><h1 className="font-semibold">{data.course?.title || ''}</h1><p className="text-sm text-gray-500">{data.sections?.reduce((a: number, s: any) => a + s.lessons.length, 0) || 0} {locale === 'ar' ? 'درس' : 'lessons'}</p></div>
         <div className="p-3 border-b">
           <div className="relative">
             <Search className="h-4 w-4 text-gray-400 absolute start-3 top-1/2 -translate-y-1/2" />

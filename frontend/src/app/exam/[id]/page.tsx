@@ -138,7 +138,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     try {
       const res = await fetch(`${API}/exams/${id}/attempt`, { method: 'POST', headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' } });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('فشل', 'Failed')); return; }
       setAttemptId(d.attempt.id);
       setQuestions(d.questions || []);
       setAntiCheat(!!d.exam?.anti_cheat_enabled);
@@ -153,7 +153,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       startedAtRef.current = Date.now();
       setStarted(true);
       window.scrollTo(0, 0);
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('فشل', 'Failed')); }
     setLoading(false);
   };
 
@@ -180,11 +180,11 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         }),
       });
       const d = await res.json();
-      if (!res.ok) { submittedRef.current = false; toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { submittedRef.current = false; toast.error(d.message || t('فشل', 'Failed')); return; }
       setResult(d.result);
       setStarted(false);
       setDeadline(null);
-    } catch { submittedRef.current = false; toast.error('Failed'); }
+    } catch { submittedRef.current = false; toast.error(t('فشل', 'Failed')); }
     setSubmitting(false);
   };
   submitRef.current = submit;
@@ -209,7 +209,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       <div className="max-w-2xl mx-auto space-y-8 py-8 px-4">
         <Card className="border-0 shadow-sm p-8 text-center space-y-6">
           <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 mx-auto"><AlertTriangle className="h-10 w-10 text-primary" /></div>
-          <h1 className="text-3xl font-bold">{exam?.title || 'Exam'}</h1>
+          <h1 className="text-3xl font-bold">{exam?.title || t('اختبار', 'Exam')}</h1>
           <div className="grid grid-cols-3 gap-3 text-sm">
             <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('المدة', 'Duration')}</p><p className="font-bold text-lg">{exam?.duration_minutes || 0} {t('د', 'm')}</p></div>
             <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('الأسئلة', 'Questions')}</p><p className="font-bold text-lg">{exam?.questions_count ?? questions.length}</p></div>
@@ -218,7 +218,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
           {result ? (
             <div className="space-y-3">
               <div className={`flex h-24 w-24 items-center justify-center rounded-full mx-auto ${result.passed ? 'bg-emerald-100' : 'bg-red-100'}`}>{result.passed ? <Trophy className="h-12 w-12 text-emerald-500" /> : <XCircle className="h-12 w-12 text-red-500" />}</div>
-              <h1 className="text-3xl font-bold">{result.passed ? t('مبروك!', 'Passed!') : t('حاول مرة أخرى', 'Try again')}</h1>
+              <h2 className="text-3xl font-bold">{result.passed ? t('مبروك!', 'Passed!') : t('حاول مرة أخرى', 'Try again')}</h2>
               <div className="text-6xl font-bold">{result.percentage}%</div>
               <div className="text-sm text-gray-500">{result.score} / {result.total} · {t('النجاح', 'Pass')}: {result.pass_mark}%</div>
               {result.attempts_left !== undefined && result.attempts_left !== -1 && (
@@ -267,6 +267,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 py-8 px-4 select-none" style={{ userSelect: 'none' }}>
+      <h1 className="sr-only">{exam?.title || t('اختبار', 'Exam')}</h1>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <a href="/my-learning" className="flex items-center gap-1 text-sm text-gray-500"><ArrowLeft className="h-4 w-4" /> {t('خروج', 'Exit')}</a>
         <div className="flex items-center gap-2">
@@ -290,7 +291,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
           const a = answers[xq.exam_question_id];
           const done = a !== undefined && (typeof a === 'string' ? a !== '' : Array.isArray(a) ? a.length > 0 : true);
           return (
-            <button key={xq.exam_question_id} onClick={() => setCurrent(i)} className={`h-2 flex-1 rounded-full transition-all ${i === current ? 'bg-teal-600' : done ? 'bg-green-400' : 'bg-gray-200'}`} title={`${i + 1}`} />
+            <button key={xq.exam_question_id} onClick={() => setCurrent(i)} className={`h-2 flex-1 rounded-full transition-all ${i === current ? 'bg-teal-600' : done ? 'bg-green-400' : 'bg-gray-200'}`} title={`${i + 1}`} aria-label={t(`سؤال رقم ${i + 1}${i === current ? ' — الحالي' : done ? ' — مُجاب' : ' — غير مُجاب'}`, `Question ${i + 1}${i === current ? ' — current' : done ? ' — answered' : ' — unanswered'}`)} />
           );
         })}
       </div>
@@ -301,7 +302,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
           <Badge variant="outline" className="text-[10px]">{q.points} {t('نقطة', 'pts')}</Badge>
         </div>
         <h2 className="text-xl font-semibold mb-3"><Latex text={q.question_text} /></h2>
-        {q.metadata?.image_url && <img src={q.metadata.image_url} className="rounded-xl border max-h-64 mb-4 object-contain" alt="" />}
+        {q.metadata?.image_url && <img src={q.metadata.image_url} className="rounded-xl border max-h-64 mb-4 object-contain" alt={t('صورة السؤال', 'Question image')} />}
         <QuestionRenderer q={q} value={answers[q.exam_question_id] ?? (q.question_type === 'drag_drop' || q.question_type === 'matching' ? [] : q.question_type === 'ordering' ? (q.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text) : q.question_type === 'fill_blank' ? [] : '')} onChange={(v) => setAnswers({ ...answers, [q.exam_question_id]: v })} />
       </Card>
 
