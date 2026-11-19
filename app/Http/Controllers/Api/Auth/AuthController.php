@@ -8,13 +8,12 @@ use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Resources\UserResource;
 use App\Mail\PlatformNotification;
 use App\Models\PlatformSetting;
-use App\Models\SubscriptionPlan;
 use App\Models\TeacherInvitation;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
-use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
+use App\Plans\TeacherTrialProgram;
 use App\Services\StudentGamificationService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
@@ -81,6 +80,7 @@ class AuthController extends Controller
 
         // ربط الطالب بمنصة المعلم (tenant) فور تسجيله من الموقع العام
         $tenantId = null;
+        $trialGranted = false;
         if ($request->filled('tenant_slug')) {
             $tenant = Tenant::where('slug', $request->input('tenant_slug'))
                 ->where('status', 'active')
@@ -148,24 +148,12 @@ class AuthController extends Controller
             // attach it to every API request.
             $tenantId = $tenant->id;
 
-            // التسجيل = تجربة مجانية فورية (7 أيام) بأرخص خطة نشطة —
-            // بدونها يُحظر حساب المعلم الجديد فورًا بواسطة بوابة الاشتراك.
-            $trialPlan = SubscriptionPlan::where('is_active', true)
-                ->orderBy('monthly_price')
-                ->first();
-
-            if ($trialPlan) {
-                TenantSubscription::create([
-                    'id' => UuidV7::generate(),
-                    'tenant_id' => $tenant->id,
-                    'plan_id' => $trialPlan->id,
-                    'status' => 'trialing',
-                    'billing_cycle' => 'monthly',
-                    'starts_at' => now(),
-                    'trial_ends_at' => now()->addDays(max(1, (int) $trialPlan->trial_days)),
-                    'auto_renew' => true,
-                ]);
-            }
+            // منح التجربة المجانية عبر البرنامج المركزي فقط: يخضع للمفتاح
+            // الرئيسي وعداد المقاعد المحدودة. عند الإيقاف أو نفاد المقاعد لا
+            // تُنشأ أي اشتراكات، ويبقى الحساب في حالة «بانتظار الدفع» بلا
+            // صلاحيات تشغيل حتى يتم التحقق من دفع حقيقي عبر Freemius.
+            $trialGranted = app(TeacherTrialProgram::class)
+                ->grantTrial($user, $tenant->id, 'register', true) !== null;
         }
 
         // بريد ترحيبي (منفصل عن بريد التفعيل) — يُرسَل عبر الطابور عبر Resend.
@@ -173,17 +161,31 @@ class AuthController extends Controller
             $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
             $isTeacher = $role === 'Teacher';
 
+            if ($isTeacher && $trialGranted) {
+                $trialDays = app(TeacherTrialProgram::class)->trialDays();
+                $title = 'مرحباً بك في منصة فهمني — منصتك التعليمية جاهزة';
+                $body = "أهلاً {$user->name}،\n\nسعداء بانضمامك! أنشأنا لك منصة تعليمية خاصة تلقائياً، وبدأت تجربتك المجانية لمدة {$trialDays} أيام على الخطة النشطة.\n\nمن لوحة التحكم يمكنك إضافة كورساتك وأقسامك ودروسك، وضبط بطاقات التسجيل وعلامتك التجارية وطريقة تحصيل أرباحك.";
+                $actionUrl = $frontend.'/teacher/dashboard';
+                $actionText = 'افتح لوحة تحكم معلمك';
+            } elseif ($isTeacher) {
+                $title = 'مرحباً بك في منصة فهمني — منصتك بانتظار الاشتراك';
+                $body = "أهلاً {$user->name}،\n\nسعداء بانضمامك! أنشأنا لك منصة تعليمية خاصة تلقائياً.\n\nلتفعيل منصتك والبدء بنشر كورساتك، اختر خطة الاشتراك المناسبة وأكمل الدفع. سيتم تفعيل منصتك تلقائياً بعد تأكيد الدفع.";
+                $actionUrl = $frontend.'/pricing';
+                $actionText = 'اختر خطة الاشتراك';
+            } else {
+                $title = 'مرحباً بك في منصة فهمني';
+                $body = "أهلاً {$user->name}،\n\nسعداء بانضمامك إلى منصة فهمني!\n\nيمكنك الآن تصفح الكورسات، متابعة تعلّمك من قسم «تعليمي»، وحل الاختبارات.";
+                $actionUrl = $frontend.'/my-learning';
+                $actionText = 'ابدأ التعلّم';
+            }
+
             Mail::to($user->email)->queue(
                 new PlatformNotification(
-                    title: $isTeacher
-                        ? 'مرحباً بك في منصة فهمني — منصتك التعليمية جاهزة'
-                        : 'مرحباً بك في منصة فهمني',
-                    body: $isTeacher
-                        ? "أهلاً {$user->name}،\n\nسعداء بانضمامك! أنشأنا لك منصة تعليمية خاصة تلقائياً، وبدأت تجربتك المجانية على الخطة النشطة.\n\nمن لوحة التحكم يمكنك إضافة كورساتك وأقسامك ودروسك، وضبط بطاقات التسجيل وعلامتك التجارية وطريقة تحصيل أرباحك."
-                        : "أهلاً {$user->name}،\n\nسعداء بانضمامك إلى منصة فهمني!\n\nيمكنك الآن تصفح الكورسات، متابعة تعلّمك من قسم «تعليمي»، وحل الاختبارات.",
+                    title: $title,
+                    body: $body,
                     data: [
-                        'action_url' => $frontend.($isTeacher ? '/teacher/dashboard' : '/my-learning'),
-                        'action_text' => $isTeacher ? 'افتح لوحة تحكم معلمك' : 'ابدأ التعلّم',
+                        'action_url' => $actionUrl,
+                        'action_text' => $actionText,
                     ],
                 )
             );
@@ -202,6 +204,7 @@ class AuthController extends Controller
             return response()->json([
                 'user' => new UserResource($user->load('tenants')),
                 'tenant_id' => $tenantId,
+                'trial_started' => $trialGranted,
             ], 201);
         }
 
@@ -217,6 +220,7 @@ class AuthController extends Controller
             'user' => new UserResource($user->load('tenants')),
             'token' => $newToken->plainTextToken,
             'tenant_id' => $tenantId,
+            'trial_started' => $trialGranted,
         ], 201);
     }
 

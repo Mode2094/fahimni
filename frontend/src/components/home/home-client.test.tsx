@@ -85,6 +85,7 @@ describe('Landing page (home-client)', () => {
     render(<HomeClient />);
 
     expect(screen.getAllByText('Your teaching platform,').length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('button', { name: 'See Pricing' }).length).toBeGreaterThan(0);
+    // Secondary hero CTA now invites the visitor to see how the platform works.
+    expect(screen.getAllByRole('button', { name: 'See how the platform works' }).length).toBeGreaterThan(0);
   });
 });

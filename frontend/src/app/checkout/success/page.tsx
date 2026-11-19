@@ -58,8 +58,14 @@ function SuccessInner() {
 
       if (res.ok && data.status === 'active') {
         setState('active');
-        if (!purchaseTracked.current) {
+        // Dedupe by license id across reloads: a refresh (or a second tab)
+        // must never double-count the Purchase conversion.
+        const key = 'purchase_tracked:' + (search.get('license_id') || search.toString() || 'platform_subscription');
+        let already = false;
+        try { already = sessionStorage.getItem(key) === '1'; } catch { /* storage blocked */ }
+        if (!purchaseTracked.current && !already) {
           purchaseTracked.current = true;
+          try { sessionStorage.setItem(key, '1'); } catch { /* storage blocked */ }
           track('Purchase', { currency: 'USD', content_name: 'platform_subscription' }, 'purchase');
         }
       } else if (data.status === 'pending') {

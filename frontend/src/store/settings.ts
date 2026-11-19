@@ -49,6 +49,16 @@ export type PlatformSettings = {
   meta_domain_verification: string;
   ga_measurement_id: string;
   gtm_container_id: string;
+  // Teacher free trial: master switch + limited "first N teachers" offer.
+  teacher_trial_enabled: boolean;
+  teacher_trial_offer_enabled: boolean;
+  teacher_trial_offer_seats: number;
+  teacher_trial_offer_text: string;
+  teacher_trial_offer_text_rendered: string;
+  teacher_trial_offer_seats_used: number;
+  teacher_trial_offer_seats_remaining: number;
+  trial_available: boolean;
+  trial_days: number;
 };
 
 type SettingsState = {
@@ -108,6 +118,15 @@ export const useSettings = create<SettingsState>((set, get) => ({
     meta_domain_verification: '',
     ga_measurement_id: '',
     gtm_container_id: '',
+    teacher_trial_enabled: true,
+    teacher_trial_offer_enabled: false,
+    teacher_trial_offer_seats: 50,
+    teacher_trial_offer_text: '🎁 تجربة مجانية لمدة {days} أيام لأول {seats} معلمًا — الأماكن المتبقية: {remaining}',
+    teacher_trial_offer_text_rendered: '',
+    teacher_trial_offer_seats_used: 0,
+    teacher_trial_offer_seats_remaining: 50,
+    trial_available: true,
+    trial_days: 7,
   },
   loaded: false,
 

@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import { Save, Settings2, Palette, Bell, Shield, CreditCard, Upload, Loader2, Check, X, KeyRound, BookOpen, ChevronDown, ExternalLink, Settings, Smartphone, EyeOff, BarChart3 } from 'lucide-react';
+import { Save, Settings2, Palette, Bell, Shield, CreditCard, Upload, Loader2, Check, X, KeyRound, BookOpen, ChevronDown, ExternalLink, Settings, Smartphone, EyeOff, BarChart3, Gift, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -24,7 +24,7 @@ export default function AdminSettingsPage() {
   const { settings, load, save, loaded } = useSettings();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
-  const [section, setSection] = useState('general');
+  const [section, setSection] = useState('trial');
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -38,6 +38,7 @@ export default function AdminSettingsPage() {
   }
 
   const sections = [
+    { id: 'trial', label: t('التجربة المجانية والعرض', 'Free trial & offer'), icon: Gift },
     { id: 'general', label: t('عام', 'General'), icon: Settings2 },
     { id: 'branding', label: t('العلامة', 'Branding'), icon: Palette },
     { id: 'payments', label: t('بوابات الدفع', 'Payments'), icon: CreditCard },
@@ -127,6 +128,11 @@ export default function AdminSettingsPage() {
         meta_domain_verification: form.meta_domain_verification,
         ga_measurement_id: form.ga_measurement_id,
         gtm_container_id: form.gtm_container_id,
+        // Teacher free trial: master switch + limited "first N teachers" offer.
+        teacher_trial_enabled: form.teacher_trial_enabled,
+        teacher_trial_offer_enabled: form.teacher_trial_offer_enabled,
+        teacher_trial_offer_seats: Number(form.teacher_trial_offer_seats) || 50,
+        teacher_trial_offer_text: form.teacher_trial_offer_text,
       });
       toast.success(message || t('تم الحفظ — التغييرات سارية في كل المنصة', 'Saved — changes apply everywhere'));
     } catch {
@@ -171,6 +177,38 @@ export default function AdminSettingsPage() {
             <p className="text-muted-foreground mt-1">{t('إعدادات المنصة — العملة واللغة والشعار تطبق في كل مكان تلقائياً', 'Platform settings — currency, language & logo apply everywhere automatically')}</p>
           </div>
       </div>
+
+      {/* ─── المفتاح الرئيسي للتجربة المجانية (أعلى الصفحة دائمًا) ─── */}
+      <div className={cn('mb-5 rounded-2xl border-2 p-5', form.teacher_trial_enabled ? 'border-teal-200 bg-teal-50/60' : 'border-amber-300 bg-amber-50/70')}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', form.teacher_trial_enabled ? 'bg-teal-500/15 text-teal-700' : 'bg-amber-500/15 text-amber-700')}>
+              <Gift className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="font-bold">{t('تفعيل / إيقاف التجربة المجانية للمعلمين', 'Enable / disable the teacher free trial')}</h2>
+              <p className="mt-0.5 max-w-2xl text-sm text-gray-600">
+                {t('القرار الأعلى أولوية: عند الإيقاف تختفي كل نصوص وأزرار التجربة فورًا في كل الصفحات، ويرفض الخادم منح أي تجربة جديدة عبر البريد أو Google أو الـAPI، ويبقى حساب المعلم بحالة «بانتظار الدفع» حتى تأكيد اشتراك مدفوع عبر Freemius. التجارب والاشتراكات الجارية لا تتأثر.',
+                  'Highest-priority switch: when off, all trial copy and buttons disappear instantly site-wide, the server refuses every new trial (email, Google, API) and accounts stay “pending payment” until a paid Freemius subscription is confirmed. Running trials/subscriptions are never affected.')}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-bold text-white', form.teacher_trial_enabled ? 'bg-teal-600' : 'bg-amber-500')}>
+                  {form.teacher_trial_enabled ? t('التجربة مفعّلة', 'Trial ON') : t('التجربة موقوفة', 'Trial OFF')}
+                </span>
+                <span className="rounded-full border bg-white px-2.5 py-1 text-gray-600">{t('مدة التجربة', 'Trial length')}: {settings.trial_days} {t('يوم', 'days')}</span>
+                <span className="rounded-full border bg-white px-2.5 py-1 text-gray-600">{t('التوفر الآن', 'Availability now')}: {settings.trial_available ? t('متاحة', 'Available') : t('غير متاحة', 'Unavailable')}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-end">
+            <Switch checked={!!form.teacher_trial_enabled} onCheckedChange={(v) => setForm({ ...form, teacher_trial_enabled: v })} label={t('تفعيل / إيقاف التجربة المجانية للمعلمين', 'Enable / disable the teacher free trial')} />
+            <Button size="sm" className="gap-1.5 rounded-full" disabled={saving} onClick={() => saveForm(t('تم تحديث المفتاح الرئيسي للتجربة المجانية', 'Master trial switch updated'))}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{t('حفظ', 'Save')}
+            </Button>
+          </div>
+        </div>
+      </div>
+
       <div className="flex gap-6 flex-col lg:flex-row">
         <div className="lg:w-52 shrink-0">
           <div className="bg-white rounded-xl border shadow-sm p-1.5 sticky top-20 space-y-0.5">
@@ -185,6 +223,77 @@ export default function AdminSettingsPage() {
         </div>
 
         <div className="flex-1 space-y-6">
+          {section === 'trial' && (
+            <div className="space-y-6">
+              <Card><CardContent className="space-y-5 p-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="flex items-center gap-2 font-semibold text-lg"><Gift className="h-5 w-5 text-teal-600" />{t('عرض أول معلمين — مقاعد محدودة', 'First-teachers limited offer')}</h2>
+                    <p className="mt-0.5 text-sm text-gray-400">{t('شريط تسويقي حقيقي بعدد مقاعد من قاعدة البيانات (ليس رقمًا عشوائيًا). يُخصم مقعد واحد فقط عند منح تجربة فعلية لمعلم مؤهل، ويختفي الشريط فورًا عند إيقاف المفتاح الرئيسي.', 'A real DB-backed seat banner (never a random number). One seat is consumed only when an eligible teacher actually gets a trial, and the banner disappears the instant the master switch is turned off.')}</p>
+                  </div>
+                  <Switch checked={!!form.teacher_trial_offer_enabled} onCheckedChange={(v) => setForm({ ...form, teacher_trial_offer_enabled: v })} label={t('تفعيل شريط المقاعد المحدودة', 'Enable limited-seats banner')} />
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="rounded-xl border bg-slate-50/70 p-4">
+                    <p className="text-xs text-gray-500">{t('المقاعد المستهلكة', 'Seats used')}</p>
+                    <p className="mt-1 text-2xl font-black text-teal-700">{settings.teacher_trial_offer_seats_used}</p>
+                  </div>
+                  <div className="rounded-xl border bg-slate-50/70 p-4">
+                    <p className="text-xs text-gray-500">{t('المقاعد المتبقية', 'Seats remaining')}</p>
+                    <p className="mt-1 text-2xl font-black text-emerald-600">{settings.teacher_trial_offer_seats_remaining}</p>
+                  </div>
+                  <div className="rounded-xl border bg-slate-50/70 p-4">
+                    <p className="text-xs text-gray-500">{t('الإجمالي', 'Total')}</p>
+                    <p className="mt-1 text-2xl font-black text-slate-700">{form.teacher_trial_offer_seats || 50}</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{t('العدد الإجمالي للمقاعد', 'Total seats')}</Label>
+                    <Input type="number" min={1} value={form.teacher_trial_offer_seats ?? 50} onChange={(e) => setForm({ ...form, teacher_trial_offer_seats: Number(e.target.value) })} className="h-11" dir="ltr" />
+                    <p className="text-xs text-gray-400">{t('افتراضيًا 50 معلمًا. لا يمكن ضبطه أقل من عدد المقاعد المستهلكة فعليًا.', 'Defaults to 50. Cannot be set below the number of seats already consumed.')}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t('نص العرض (رموز: {seats} {remaining} {days})', 'Offer text (tokens: {seats} {remaining} {days})')}</Label>
+                    <textarea
+                      value={form.teacher_trial_offer_text ?? ''}
+                      onChange={(e) => setForm({ ...form, teacher_trial_offer_text: e.target.value })}
+                      rows={3}
+                      className="w-full rounded-md border px-3 py-2 text-sm"
+                      dir="rtl"
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-dashed border-teal-200 bg-teal-50/50 p-4">
+                  <p className="text-xs font-semibold text-teal-700">{t('معاينة الشريط', 'Banner preview')}</p>
+                  <p className="mt-1 text-sm text-teal-900">{settings.teacher_trial_offer_text_rendered || t('(سيظهر النص بعد الحفظ)', '(text appears after saving)')}</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={() => saveForm(t('تم حفظ إعدادات العرض المحدود', 'Limited-offer settings saved'))} disabled={saving} className="gap-2 rounded-full">
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{t('حفظ', 'Save')}
+                  </Button>
+                  {form.teacher_trial_offer_enabled && settings.trial_available && settings.teacher_trial_offer_seats_remaining > 0 && (
+                    <Badge className="border-0 bg-green-100 text-green-700"><Users className="me-1 h-3.5 w-3.5" />{t('الشريط ظاهر الآن على الموقع', 'Banner is live on the site')}</Badge>
+                  )}
+                  {form.teacher_trial_offer_enabled && (settings.teacher_trial_offer_seats_remaining <= 0) && (
+                    <Badge className="border-0 bg-amber-100 text-amber-700">{t('نفدت المقاعد — لن تُمنح تجارب عبر العرض', 'Seats exhausted — no trials via the offer')}</Badge>
+                  )}
+                  {form.teacher_trial_offer_enabled && !settings.trial_available && (
+                    <Badge className="border-0 bg-rose-100 text-rose-700">{t('المفتاح الرئيسي موقوف — الشريط مخفي', 'Master switch OFF — banner hidden')}</Badge>
+                  )}
+                </div>
+              </CardContent></Card>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 text-sm text-blue-900/80">
+                {t('مهم: العداد محمي بمعاملة وقيد قاعدة بيانات (صف مقفل) فلا يمكن تجاوز الحد عند التسجيل المتزامن. حساب الأدمن/الاختبار لا يستهلك مقعدًا. عند نفاد المقاعد تظهر رسالة أن الاشتراك المدفوع متاح.', 'Important: the counter is protected by a transaction and DB constraint (locked row), so concurrent signups can never exceed the limit. Admin/test accounts never consume a seat. When seats run out, the message states that the paid subscription is available.')}
+              </div>
+            </div>
+          )}
+
           {section === 'general' && (
             <Card><CardContent className="space-y-5 p-6">
               <h2 className="font-semibold text-lg">{t('الإعدادات العامة', 'General settings')}</h2>

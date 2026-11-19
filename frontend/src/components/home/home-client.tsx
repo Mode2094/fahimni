@@ -5,6 +5,7 @@ import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
 import { resolveLogoUrl } from '@/lib/logo';
 import { currencyLabel } from '@/lib/utils';
+import { offerBannerText, showOfferBanner, trialCtaLabel, howItWorksLabel } from '@/lib/trial';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import {
@@ -75,7 +76,6 @@ export default function HomeClient() {
   const [quizPick, setQuizPick] = useState<number | null>(null);
   const [calcStudents, setCalcStudents] = useState(50);
   const [calcPrice, setCalcPrice] = useState(25);
-  const [calcActive, setCalcActive] = useState(false);
   const [callbackName, setCallbackName] = useState('');
   const [callbackPhone, setCallbackPhone] = useState('');
   const [scrolledPast, setScrolledPast] = useState(false);
@@ -93,16 +93,8 @@ export default function HomeClient() {
   /* رقم واتساب دعم المنصة — غيّره من هنا */
   const SUPPORT_WHATSAPP = '962793519944';
 
-  /* تفعيل عدّادات الحاسبة عند الظهور */
-  useEffect(() => {
-    if (!calcRef.current) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) { setCalcActive(true); io.disconnect(); }
-    }, { threshold: 0.3 });
-    io.observe(calcRef.current);
-    return () => io.disconnect();
-  }, []);
-
+  // القيم الافتراضية: 50 طالبًا × 25 دولارًا = 1,250 دولارًا — تُعرض فور أول
+  // رسم بلا انتظار أي مراقب تمرير، فلا يظهر 0 USD عند التحميل.
   const calcRevenue = Math.round(calcStudents * calcPrice);
   const calcCompetitorFee = Math.round(calcRevenue * 0.2);
   const calcSave = Math.round(calcCompetitorFee * 12);
@@ -185,10 +177,14 @@ export default function HomeClient() {
   const monthlyPrices = livePlans.map((p: any) => Number(p.monthly_price)).filter((n) => n > 0);
   const minMonthly = monthlyPrices.length ? Math.min(...monthlyPrices) : null;
 
-  /* إحصاءات وثقة — أرقام صحيحة فقط (بدون أرقام وهمية) */
+  /* إحصاءات وثقة — أرقام صحيحة فقط (بدون أرقام وهمية).
+     يُحذف مؤشر التجربة المجانية فورًا عند إيقاف المفتاح الرئيسي. */
+  const trialOn = settings.trial_available;
   const proofStats = [
     { icon: Wallet, value: t('0%', '0%'), label: t('عمولة على مبيعات كورساتك', 'commission on your sales') },
-    { icon: Timer, value: t('7 أيام', '7 days'), label: t('تجربة مجانية بدون بطاقة', 'free trial, no card') },
+    ...(trialOn
+      ? [{ icon: Timer, value: t(`${settings.trial_days} أيام`, `${settings.trial_days} days`), label: t('تجربة مجانية بدون بطاقة', 'free trial, no card') }]
+      : []),
     { icon: ShieldCheck, value: t('100%', '100%'), label: t('ملكية المحتوى والطلاب', 'ownership of content & students') },
     { icon: MessageCircle, value: t('24/7', '24/7'), label: t('دعم عربي متواصل', 'Arabic support') },
   ];
@@ -235,17 +231,25 @@ export default function HomeClient() {
 
   return (
     <div className="min-h-screen bg-white" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
-      {/* ─── شريط الإعلان التسويقي ─────────────────────── */}
+      {/* ─── شريط الإعلان التسويقي (عرض محدود / تجربة / اشتراك) ─────────── */}
       <div className="relative overflow-hidden text-white" style={{ background: 'linear-gradient(90deg, #0f2e2b, #0d9488 55%, #115e54)' }}>
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-center gap-2 text-[12px] sm:text-[13px] font-semibold leading-tight">
           <Gift className="h-4 w-4 shrink-0 text-amber-300" />
           <span className="text-white/90 text-center">
-            <b className="text-white">{t('جرّب فهمني مجاناً 7 أيام', 'Try Fahimni free for 7 days')}</b>
-            <span className="hidden sm:inline">{t(' — بدون بطاقة ائتمان، وبدون أي عمولة على مبيعاتك', ' — no credit card, zero commission on your sales')}</span>
-            <span className="sm:hidden">{t(' — بدون بطاقة، وبدون عمولة', ' — no card, no commission')}</span>
+            {showOfferBanner(settings) ? (
+              <b className="text-white">{offerBannerText(settings, locale)}</b>
+            ) : settings.trial_available ? (
+              <>
+                <b className="text-white">{t(`جرّب فهمني مجاناً ${settings.trial_days} أيام`, `Try Fahimni free for ${settings.trial_days} days`)}</b>
+                <span className="hidden sm:inline">{t(' — بدون بطاقة ائتمان، وبدون أي عمولة على مبيعاتك', ' — no credit card, zero commission on your sales')}</span>
+                <span className="sm:hidden">{t(' — بدون بطاقة، وبدون عمولة', ' — no card, no commission')}</span>
+              </>
+            ) : (
+              <b className="text-white">{t('أنشئ منصتك واختر اشتراكك — أسعار واضحة وبلا عمولة على مبيعاتك', 'Create your platform & choose your plan — clear pricing, zero commission on your sales')}</b>
+            )}
           </span>
           <Link href="/register/teacher" className="ms-1 inline-flex shrink-0 items-center gap-1 rounded-full border border-white/30 bg-white/15 px-3 py-1 text-[12px] font-bold text-white transition-colors hover:bg-white/25">
-            {t('ابدأ الآن', 'Start now')} <span className="hidden sm:inline">{locale === 'ar' ? '←' : '→'}</span>
+            {settings.trial_available ? t('ابدأ الآن', 'Start now') : t('اختر اشتراكك', 'Choose plan')} <span className="hidden sm:inline">{locale === 'ar' ? '←' : '→'}</span>
           </Link>
         </div>
       </div>
@@ -318,10 +322,10 @@ export default function HomeClient() {
               <div className="flex flex-wrap justify-center lg:justify-start gap-3 mt-8">
                 <Link href={seg.href} className="px-8 py-4 rounded-2xl text-white font-bold shadow-brand transition-all hover:opacity-90 hover:scale-[1.02] cta-shine"
                   style={{ background: `linear-gradient(135deg, ${seg.color}, ${seg.color}cc)` }}>
-                  {t(seg.cta[0], seg.cta[1])} {locale === 'ar' ? '←' : '→'}
+                  {trialCtaLabel(settings, locale)} {locale === 'ar' ? '←' : '→'}
                 </Link>
-                <button onClick={() => scrollTo('pricing')} className="px-8 py-4 rounded-2xl font-bold text-white border-2 border-white/25 bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors">
-                  {t('شاهد الأسعار', 'See Pricing')}
+                <button onClick={() => scrollTo('student')} className="px-8 py-4 rounded-2xl font-bold text-white border-2 border-white/25 bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors">
+                  {howItWorksLabel(locale)}
                 </button>
               </div>
 
@@ -337,7 +341,7 @@ export default function HomeClient() {
               {/* شارات الثقة */}
               <div className="mt-6 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-center lg:justify-start">
                 {[
-                  t('بدون بطاقة ائتمان', 'No credit card'),
+                  ...(settings.trial_available ? [t('بدون بطاقة ائتمان', 'No credit card')] : []),
                   t('إلغاء في أي وقت', 'Cancel anytime'),
                   t('0% عمولة على مبيعاتك', '0% commission on your sales'),
                   t('دعم عربي 24/7', '24/7 Arabic support'),
@@ -888,7 +892,7 @@ export default function HomeClient() {
               <div className="flex items-center justify-between rounded-2xl border border-teal-100 bg-white p-5">
                 <div>
                   <p className="text-sm text-gray-500">{t('دخلك الشهري المتوقع من كورساتك', 'Your expected monthly income from your courses')}</p>
-                  <p className="text-3xl font-black text-teal-700 mt-1">{calcActive ? formatPrice(calcRevenue) : formatPrice(0)}</p>
+                  <p className="text-3xl font-black text-teal-700 mt-1">{formatPrice(calcRevenue)}</p>
                 </div>
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10"><Wallet className="h-6 w-6 text-teal-600" /></span>
               </div>
@@ -896,7 +900,7 @@ export default function HomeClient() {
               <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 opacity-90">
                 <div>
                   <p className="text-sm text-gray-400">{t('رسوم المنصات الأخرى', 'Other platforms\' fees')} <span className="line-through">(20-30%)</span></p>
-                  <p className="text-3xl font-black text-slate-300 mt-1 line-through">{calcActive ? formatPrice(calcCompetitorFee) : formatPrice(0)}</p>
+                  <p className="text-3xl font-black text-slate-300 mt-1 line-through">{formatPrice(calcCompetitorFee)}</p>
                 </div>
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100"><Ban className="h-6 w-6 text-slate-400" /></span>
               </div>
@@ -907,7 +911,7 @@ export default function HomeClient() {
                   <div className="relative flex items-center justify-between">
                     <div>
                       <p className="text-sm text-white/60">{t('دخلك الصافي — يبقى لك بالكامل', 'Your net income — it all stays yours')}</p>
-                      <p className="text-4xl font-black text-white mt-1">{calcActive ? formatPrice(calcRevenue) : formatPrice(0)}</p>
+                      <p className="text-4xl font-black text-white mt-1">{formatPrice(calcRevenue)}</p>
                       <p className="text-xs font-bold mt-1" style={{ color: '#fcd34d' }}>{t('تحقّقه من مبيعات كورساتك — دون أي عمولة من المنصة', 'Earned from your course sales — the platform takes no commission')}</p>
                     </div>
                     <div className="core-pulse flex h-16 w-16 items-center justify-center rounded-full text-center" style={{ background: 'radial-gradient(circle at 35% 30%, rgba(251,191,36,0.35), rgba(13,148,136,0.15))', border: '1px solid rgba(251,191,36,0.4)' }}>
@@ -921,7 +925,14 @@ export default function HomeClient() {
               </div>
 
               <p className="text-xs text-gray-400 text-center">
-                {t('لو كنت على منصة تأخذ 20% عمولة، كنت ستخسر', 'On a platform taking a 20% commission, you would lose')} <b className="text-teal-700">{calcActive ? formatPrice(calcSave) : formatPrice(0)}</b> {t('سنوياً — معنا يبقى لك كل شيء', 'per year — with us everything stays yours')}
+                {t('لو كنت على منصة تأخذ 20% عمولة، كنت ستخسر', 'On a platform taking a 20% commission, you would lose')} <b className="text-teal-700">{formatPrice(calcSave)}</b> {t('سنوياً — معنا يبقى لك كل شيء', 'per year — with us everything stays yours')}
+              </p>
+
+              <p className="text-[11px] leading-relaxed text-gray-400 text-center">
+                {t(
+                  'الأرقام تقديرية لأغراض التوضيح وليست أرباحًا مضمونة، وقد لا تشمل رسوم بوابة الدفع وتكاليف الاشتراك.',
+                  'Figures are illustrative estimates, not guaranteed earnings, and may exclude payment-gateway fees and subscription costs.',
+                )}
               </p>
 
               <Link href="/register/teacher" className="block">
@@ -1012,19 +1023,21 @@ export default function HomeClient() {
               <Rocket className="h-4 w-4 inline me-1" />{t('خطط واضحة، بلا مفاجآت', 'Clear plans, no surprises')}
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('اختر خطتك وابدأ اليوم', 'Pick your plan and start today')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('كل ما تربحه من كورساتك يبقى لك — لا نأخذ أي عمولة على مبيعاتك. ابدأ بتجربة مجانية 7 أيام.', 'Everything your courses earn stays yours — we take zero commission on your sales. Start with a 7-day free trial.')}</p>
+            <p className="text-teal-900/60 mt-3 text-lg">{trialOn
+              ? t(`كل ما تربحه من كورساتك يبقى لك — لا نأخذ أي عمولة على مبيعاتك. ابدأ بتجربة مجانية ${settings.trial_days} أيام.`, `Everything your courses earn stays yours — we take zero commission on your sales. Start with a ${settings.trial_days}-day free trial.`)
+              : t('كل ما تربحه من كورساتك يبقى لك — لا نأخذ أي عمولة على مبيعاتك. اختر خطتك وابدأ الآن.', 'Everything your courses earn stays yours — we take zero commission on your sales. Choose your plan and start now.')}</p>
           </div>
 
           {/* شارات القيمة */}
           <div className="mb-8 grid grid-cols-2 gap-2 sm:mb-10 sm:flex sm:flex-wrap sm:justify-center sm:gap-2.5">
             {[
               t('بدون عمولة على مبيعاتك', 'No commission on your sales'),
-              t('تجربة مجانية 7 أيام', '7-day free trial'),
-              t('بدون بطاقة ائتمان', 'No credit card'),
+              ...(trialOn ? [t(`تجربة مجانية ${settings.trial_days} أيام`, `${settings.trial_days}-day free trial`)] : []),
+              ...(trialOn ? [t('بدون بطاقة ائتمان', 'No credit card')] : []),
               t('إلغاء في أي وقت', 'Cancel anytime'),
               t('دعم عربي 24/7', '24/7 Arabic support'),
             ].map((x, i) => (
-              <span key={i} className={`inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-white px-3 py-2 text-center text-xs font-semibold text-teal-800 shadow-sm sm:justify-start sm:px-3.5 ${i === 4 ? 'col-span-2 sm:col-auto' : ''}`}>
+              <span key={i} className={`inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-white px-3 py-2 text-center text-xs font-semibold text-teal-800 shadow-sm sm:justify-start sm:px-3.5`}>
                 <CheckCircle className="h-3.5 w-3.5 shrink-0 text-teal-600" />{x}
               </span>
             ))}
@@ -1356,7 +1369,7 @@ export default function HomeClient() {
       <div className={`md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-gray-100 bg-white/95 backdrop-blur-xl px-4 py-3 flex items-center gap-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] transition-transform duration-300 ${scrolledPast ? 'translate-y-0' : 'translate-y-full'}`}>
         <Link href="/register/teacher" className="flex-1">
           <button className="w-full h-12 rounded-full text-white text-sm font-bold shadow-lg cta-shine" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
-            {t('ابدأ الآن', 'Start now')}
+            {settings.trial_available ? t('ابدأ مجانًا الآن', 'Start free now') : t('أنشئ منصتك واختر اشتراكك', 'Create & choose plan')}
           </button>
         </Link>
         <button onClick={() => scrollTo('pricing')} className="shrink-0 h-12 rounded-full px-4 text-sm font-bold" style={{ color: '#0d9488', border: '1.5px solid #99f6e4', background: '#f0fdfa' }}>

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
@@ -83,7 +83,7 @@ export default function TeacherWebsitePage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="موقعك ينشر خلال دقائق"
           text="سجّل، اختر قالباً، ارفع شعارك، وانشر. شارك الرابط مع طالب واحد وستشعر بالفرق بين صفحة بلا هوية وموقع يحمل اسمك."
           primaryLabel="أنشئ موقعك الآن"
@@ -113,7 +113,7 @@ export default function TeacherWebsitePage() {
 
         <Faq title="أسئلة شائعة عن موقع المعلم" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="ابدأ ببناء علامتك التجارية اليوم"
           text="كل يوم تتدرب فيه على منصة الآخرين هو يوم لا تعمل فيه لصالح اسمك. أنشئ موقعك الخاص وابدأ من اليوم."
           primaryLabel="أنشئ موقعك مجاناً"

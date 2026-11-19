@@ -24,9 +24,11 @@ use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\TicketMessage;
 use App\Models\Transaction;
+use App\Models\TrialGrant;
 use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
+use App\Plans\TeacherTrialProgram;
 use App\Services\PaymentCompletionService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
@@ -206,12 +208,15 @@ class AdminController extends Controller
             'metadata' => [],
         ]);
 
-        // Start the 7-day free trial with the selected (or default cheapest) plan.
+        // ابدأ التجربة المجانية فقط عندما يسمح المفتاح الرئيسي بمنح تجارب
+        // جديدة. تجارب الأدمن لا تستهلك مقعدًا من العرض المحدود (حسابات
+        // الاختبار/التجهيز مستثناة من العداد) لكنها تُسجَّل للتدقيق.
+        $program = app(TeacherTrialProgram::class);
         $plan = $request->filled('plan_id')
             ? SubscriptionPlan::findOrFail($request->plan_id)
             : SubscriptionPlan::where('is_active', true)->orderBy('monthly_price')->first();
 
-        if ($plan) {
+        if ($plan && $program->masterEnabled()) {
             TenantSubscription::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $tenant->id,
@@ -221,6 +226,15 @@ class AdminController extends Controller
                 'starts_at' => now(),
                 'trial_ends_at' => now()->addDays(max(1, (int) $plan->trial_days)),
                 'auto_renew' => true,
+            ]);
+
+            TrialGrant::create([
+                'id' => UuidV7::generate(),
+                'user_id' => $user->id,
+                'tenant_id' => $tenant->id,
+                'source' => 'admin',
+                'counted' => false,
+                'granted_at' => now(),
             ]);
         }
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformSetting;
+use App\Plans\TeacherTrialProgram;
 use App\Support\AuditLogger;
 use App\Support\PlatformBrand;
 use Illuminate\Http\JsonResponse;
@@ -21,6 +22,8 @@ class PlatformSettingController extends Controller
         // وإلا فإن أي مستخدم يحمل tenant_id في localStorage (بعد الدخول عبر
         // Google مثلاً) كان يُلوّث اسم/شعار منصة فهمني في الهيدر والفوتر.
         $settings = PlatformSetting::allFlattened();
+
+        $trialProgram = app(TeacherTrialProgram::class);
 
         // المفاتيح السرية لا تُعاد أبداً عبر الـAPI — تُخزَّن مشفَّرة
         // (Crypt) ويخبر `*_set` الواجهةَ بوجودها فقط.
@@ -78,6 +81,18 @@ class PlatformSettingController extends Controller
             'meta_domain_verification' => (string) ($settings['meta_domain_verification'] ?? ''),
             'ga_measurement_id' => (string) ($settings['ga_measurement_id'] ?? ''),
             'gtm_container_id' => (string) ($settings['gtm_container_id'] ?? ''),
+            // ── Teacher free trial: master switch + limited "first N" offer ──
+            // The master switch is the single source of truth; the seat numbers
+            // are read from the real DB counter, never a fake/local value.
+            'teacher_trial_enabled' => (bool) ($settings[TeacherTrialProgram::KEY_ENABLED] ?? true),
+            'teacher_trial_offer_enabled' => (bool) ($settings[TeacherTrialProgram::KEY_OFFER_ENABLED] ?? false),
+            'teacher_trial_offer_seats' => (int) ($settings[TeacherTrialProgram::KEY_OFFER_SEATS] ?? 50),
+            'teacher_trial_offer_text' => (string) ($settings[TeacherTrialProgram::KEY_OFFER_TEXT] ?? TeacherTrialProgram::DEFAULT_OFFER_TEXT),
+            'teacher_trial_offer_text_rendered' => $trialProgram->renderOfferText(),
+            'teacher_trial_offer_seats_used' => $trialProgram->seatsUsed(),
+            'teacher_trial_offer_seats_remaining' => $trialProgram->seatsRemaining(),
+            'trial_available' => $trialProgram->trialAvailable(),
+            'trial_days' => $trialProgram->trialDays(),
         ];
 
         return response()->json(['settings' => $payload]);
@@ -132,6 +147,11 @@ class PlatformSettingController extends Controller
             'meta_domain_verification' => 'nullable|string|max:120',
             'ga_measurement_id' => 'nullable|string|max:40',
             'gtm_container_id' => 'nullable|string|max:40',
+            // Teacher free trial: master switch + limited-offer settings.
+            'teacher_trial_enabled' => 'boolean',
+            'teacher_trial_offer_enabled' => 'boolean',
+            'teacher_trial_offer_seats' => 'integer|min:1|max:1000000',
+            'teacher_trial_offer_text' => 'nullable|string|max:500',
         ];
 
         $validated = $request->validate($allowed);
