@@ -43,9 +43,13 @@ services:
     networks:
       - fahimni-proxy
     healthcheck:
-      # The apex must answer over HTTPS once certificates are issued; a
-      # redirect on www is enough to prove Caddy itself is serving.
-      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://127.0.0.1/ >/dev/null 2>&1 || wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      # Probe Caddy itself without depending on the upstream app. Connecting to
+      # 127.0.0.1 with the real www hostname is required because Caddy selects
+      # its TLS certificate by SNI (and its site block by Host): probing the bare
+      # IP matches no site block and always fails. --resolve sets both SNI and
+      # Host to www.<domain>, whose permanent redirect is answered by Caddy
+      # alone. A raw TCP connect on 443 is the last-resort fallback.
+      test: ["CMD-SHELL", "curl -sk -o /dev/null --resolve www.${FAHIMNI_DOMAIN:-fahimni.me}:443:127.0.0.1 https://www.${FAHIMNI_DOMAIN:-fahimni.me}/ || nc -z -w3 127.0.0.1 443 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
