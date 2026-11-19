@@ -100,7 +100,7 @@ export const TEACHER_NAV: NavGroup[] = [
         en: 'Appointments & Sessions',
         match: ['/teacher/appointments', '/teacher/services'],
       },
-      { href: '/teacher/live', icon: Radio, ar: 'البث المباشر', en: 'Live Sessions' },
+      { href: '/teacher/live', icon: Radio, ar: 'البث المباشر', en: 'Live Sessions', gate: 'live_stream_enabled' },
       { href: '/teacher/schedule', icon: CalendarDays, ar: 'الدروس المجدولة', en: 'Scheduled Lessons', gate: 'scheduled_lessons_enabled' },
       { href: '/teacher/exams', icon: ClipboardList, ar: 'الاختبارات', en: 'Exams' },
       { href: '/teacher/questions', icon: FileQuestion, ar: 'بنك الأسئلة', en: 'Question Bank', gate: 'question_bank_enabled' },
