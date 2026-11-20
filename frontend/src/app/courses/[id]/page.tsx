@@ -23,6 +23,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
+import VideoUploadQueue from '@/components/media/video-upload-queue';
 import { getDeviceId } from '@/lib/device';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -56,6 +57,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [videoUploadProgress, setVideoUploadProgress] = useState(0);
   const [videoUploadError, setVideoUploadError] = useState('');
   const [videoUploadName, setVideoUploadName] = useState('');
+  const [videoQueueOpen, setVideoQueueOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
@@ -605,6 +607,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           {course?.description && <p className="text-gray-500 text-sm mt-1 max-w-xl">{course.description}</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" className="gap-2 rounded-full" onClick={() => setVideoQueueOpen(true)} title={t('رفع عدة ملفات فيديو مرة واحدة', 'Upload several video files at once')}>
+            <UploadCloud className="h-4 w-4" />{t('رفع فيديوهات متعددة', 'Upload multiple videos')}
+          </Button>
           <a href={`/course/${id}/learn`} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full"><Eye className="h-4 w-4" />{t('معاينة', 'Preview')}</Button></a>
           {course && (
             <Button variant={course.is_published ? 'outline' : 'default'} className="gap-2 rounded-full" onClick={() => {
@@ -1013,6 +1018,14 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
       )}
+
+      <VideoUploadQueue
+        open={videoQueueOpen}
+        onOpenChange={setVideoQueueOpen}
+        sections={sections.map((s: any) => ({ id: s.id, title: s.title }))}
+        lessons={sections.flatMap((s: any) => (s.lessons || []).map((l: any) => ({ id: l.id, title: l.title, section_id: s.id })))}
+        onUploaded={load}
+      />
     </div>
   );
 }
