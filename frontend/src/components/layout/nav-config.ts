@@ -4,7 +4,7 @@ import {
   ClipboardList, Video, CalendarDays, CalendarClock, HandCoins,
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
   BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
-  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot,
+  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -19,7 +19,7 @@ export type NavItem = {
   hideWithApp?: boolean;
   /** extra path prefixes that should highlight this item */
   match?: string[];
-  badge?: 'notifications' | 'messages';
+  badge?: 'notifications' | 'messages' | 'adminNotifications';
 };
 export type NavGroup = { title?: { ar: string; en: string }; items: NavItem[] };
 
@@ -60,6 +60,7 @@ export const ADMIN_NAV: NavGroup[] = [
     title: { ar: 'التشغيل', en: 'Operations' },
     items: [
       { href: '/admin/tickets', icon: LifeBuoy, ar: 'الدعم الفني', en: 'Support Tickets' },
+      { href: '/admin/teacher-notifications', icon: BellRing, ar: 'إشعارات المعلمين', en: 'Teacher Notifications' },
     ],
   },
   {
@@ -113,6 +114,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/blog', icon: Newspaper, ar: 'المدونة', en: 'Blog', gate: 'blog_enabled' },
       { href: '/community', icon: MessagesSquare, ar: 'المجتمع', en: 'Community', gate: 'community_enabled', match: ['/community'] },
       { href: '/announcements', icon: Megaphone, ar: 'الإعلانات', en: 'Announcements' },
+      { href: '/teacher/notifications', icon: BellRing, ar: 'إشعارات الإدارة', en: 'Platform Notifications', badge: 'adminNotifications' },
       { href: '/teacher/assistant', icon: Bot, ar: 'اسألني عن المنصة', en: 'Ask about the platform' },
     ],
   },

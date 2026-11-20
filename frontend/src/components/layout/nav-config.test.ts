@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TEACHER_NAV, isTeacherRoute } from './nav-config';
+import { TEACHER_NAV, ADMIN_NAV, isTeacherRoute } from './nav-config';
 
 /**
  * The AI assistant lives in the teacher sidebar (not a floating button):
@@ -42,5 +42,27 @@ describe('teacher nav plan gating', () => {
     for (const item of gated) {
       expect(item.gate).toMatch(/^[a-z_]+_enabled$|^export_reports$/);
     }
+  });
+});
+
+/**
+ * The Super-Admin → teacher notification centre is a distinct system from
+ * teacher announcements: it must have its own admin entry and a teacher
+ * badge-backed entry that opens inside the teacher panel.
+ */
+describe('platform notification navigation', () => {
+  it('adds a single admin entry for teacher notifications', () => {
+    const items = ADMIN_NAV.flatMap((g) => g.items);
+    const entry = items.filter((i) => i.href === '/admin/teacher-notifications');
+    expect(entry).toHaveLength(1);
+    expect(entry[0].ar).toBe('إشعارات المعلمين');
+  });
+
+  it('adds a teacher entry that carries the admin-notification badge', () => {
+    const items = TEACHER_NAV.flatMap((g) => g.items);
+    const entry = items.filter((i) => i.href === '/teacher/notifications');
+    expect(entry).toHaveLength(1);
+    expect(entry[0].badge).toBe('adminNotifications');
+    expect(isTeacherRoute('/teacher/notifications')).toBe(true);
   });
 });
