@@ -180,6 +180,7 @@ class PublicSiteController extends Controller
         $user = $request->user() ?? auth('sanctum')->user();
         $enrolled = false;
         $enrollment = null;
+        $isOwner = false;
 
         if ($user) {
             // المالك/طاقم المؤسسة (معلم/مدير) يعتبر "مسجلاً" تلقائياً —
@@ -199,18 +200,52 @@ class PublicSiteController extends Controller
             $enrolled = $isOwner || $enrollment !== null;
         }
 
+        // Course groups: a lesson restricted to groups is only visible to their
+        // members. Staff/owner always see everything. Membership never creates
+        // an enrolment, so seats are unaffected.
+        $memberGroupIds = ($user && ! $isOwner)
+            ? \Illuminate\Support\Facades\DB::table('course_group_members as m')
+                ->join('course_groups as g', 'g.id', '=', 'm.course_group_id')
+                ->where('g.course_id', $course->id)
+                ->where('g.is_active', true)
+                ->where('m.user_id', $user->id)
+                ->pluck('g.id')->all()
+            : [];
+
+        $lessonGroupIds = \Illuminate\Support\Facades\DB::table('course_group_lesson as l')
+            ->join('course_groups as g', 'g.id', '=', 'l.course_group_id')
+            ->where('g.course_id', $course->id)
+            ->get(['l.lesson_id', 'l.course_group_id'])
+            ->groupBy('lesson_id')
+            ->map(fn ($rows) => $rows->pluck('course_group_id')->all())
+            ->all();
+
+        $lessonVisible = function (string $lessonId) use ($isOwner, $lessonGroupIds, $memberGroupIds): bool {
+            if ($isOwner || ! isset($lessonGroupIds[$lessonId])) {
+                return true;
+            }
+
+            return count(array_intersect($lessonGroupIds[$lessonId], $memberGroupIds)) > 0;
+        };
+
         // Drip content: lessons unlock gradually after enrollment.
         $dripEnabled = (bool) $course->drip_enabled && $enrolled;
         $intervalDays = max(1, (int) $course->drip_interval_days);
         $position = 0;
 
-        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course) {
+        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible) {
             return [
                 'id' => $section->id,
                 'title' => $section->title,
                 'sort_order' => $section->sort_order,
-                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course) {
+                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible) {
                     $position++;
+
+                    // Hidden for this student's group — not merely locked.
+                    if (! $lessonVisible($lesson->id)) {
+                        return null;
+                    }
+
                     $unlockAt = null;
 
                     if ($dripEnabled) {
@@ -239,7 +274,7 @@ class PublicSiteController extends Controller
                         'file_name' => ! $locked && $file ? ($file->original_name ?? null) : null,
                         'file_previewable' => ! $locked && $file ? $this->isPreviewable($file) : false,
                     ];
-                }),
+                })->filter()->values(),
             ];
         });
 
@@ -316,6 +351,21 @@ class PublicSiteController extends Controller
         }
 
         $enrolled = $enrollment !== null || $isOwner;
+
+        // Course-group restriction: a lesson shared to specific groups is only
+        // reachable by their members (staff always reach it). Enforced before
+        // the free-preview allowance so a restricted lesson never leaks.
+        if (! $isOwner) {
+            $groupIds = $lesson->groups()->pluck('course_groups.id')->all();
+            if ($groupIds) {
+                $isMember = $user && $lesson->groups()
+                    ->whereHas('members', fn ($m) => $m->where('users.id', $user->id))
+                    ->exists();
+                if (! $isMember) {
+                    return response()->json(['message' => 'This lesson is not available for your group.'], 403);
+                }
+            }
+        }
 
         if (! $lesson->is_free_preview && ! $enrolled) {
             return response()->json(['message' => 'This lesson is locked. Enroll to access it.'], 403);

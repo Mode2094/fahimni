@@ -344,6 +344,15 @@ class ExamAttemptController extends Controller
 
         $user = request()->user();
 
+        // Course-group restriction: an exam shared to specific groups is not
+        // attemptable by a student outside those groups (staff always can).
+        if (! $user->is_super_admin && ! $this->isTenantStaff(request(), (string) $exam->tenant_id)) {
+            if ($exam->groups()->exists()
+                && ! $exam->groups()->whereHas('members', fn ($m) => $m->where('users.id', $user->id))->exists()) {
+                return response()->json(['message' => 'This exam is not available for your group.'], 403);
+            }
+        }
+
         $maxAttempts = $exam->max_attempts > 0 ? $exam->max_attempts : PHP_INT_MAX;
 
         // Term scope: the student's current effective enrollment for this

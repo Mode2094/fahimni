@@ -19,11 +19,12 @@ import {
   ArrowLeft, ArrowRight, Plus, Trash2, Video, FileText, Lock, Unlock, ChevronDown, ChevronUp, Loader2,
   Pencil, Layers, BookOpen, ClipboardList, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
   Upload, FileAudio, FileVideo, FileImage, FileArchive, File, ClipboardCheck, CalendarClock, Star, MessageSquare, Send,
-  UploadCloud, Radio, ExternalLink, Link2, Copy, Info } from 'lucide-react';
+  UploadCloud, Radio, ExternalLink, Link2, Copy, Info, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
 import VideoUploadQueue from '@/components/media/video-upload-queue';
+import CourseGroupsManager from '@/components/course/course-groups';
 import { getDeviceId } from '@/lib/device';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -58,6 +59,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [videoUploadError, setVideoUploadError] = useState('');
   const [videoUploadName, setVideoUploadName] = useState('');
   const [videoQueueOpen, setVideoQueueOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
@@ -623,6 +625,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <Button variant="outline" className="gap-2 rounded-full" onClick={() => setVideoQueueOpen(true)} title={t('رفع عدة ملفات فيديو مرة واحدة', 'Upload several video files at once')}>
             <UploadCloud className="h-4 w-4" />{t('رفع فيديوهات متعددة', 'Upload multiple videos')}
           </Button>
+          <Button variant="outline" className="gap-2 rounded-full" onClick={() => setGroupsOpen(true)} title={t('مجموعات الطلاب داخل الكورس', 'In-course student groups')}>
+            <Users className="h-4 w-4" />{t('مجموعات الطلاب', 'Student groups')}
+          </Button>
           <a href={`/course/${id}/learn`} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full"><Eye className="h-4 w-4" />{t('معاينة', 'Preview')}</Button></a>
           {course && (
             <Button variant={course.is_published ? 'outline' : 'default'} className="gap-2 rounded-full" onClick={() => {
@@ -1071,6 +1076,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         lessons={sections.flatMap((s: any) => (s.lessons || []).map((l: any) => ({ id: l.id, title: l.title, section_id: s.id })))}
         onUploaded={load}
       />
+
+      <CourseGroupsManager open={groupsOpen} onOpenChange={setGroupsOpen} courseId={id} />
     </div>
   );
 }

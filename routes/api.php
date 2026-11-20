@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\CommunityThreadController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\ConversationMessageController;
 use App\Http\Controllers\Api\CourseController;
+use App\Http\Controllers\Api\CourseGroupController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\EnrollmentController;
 use App\Http\Controllers\Api\ExamAttemptController;
@@ -218,6 +219,18 @@ Route::prefix('v1')->group(function () {
             Route::get('lessons/{lesson}', [LessonController::class, 'show']);
             Route::put('lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('lessons/{lesson}', [LessonController::class, 'destroy']);
+
+            // ─── Course groups (مجموعات الطلاب داخل الكورس) ───────────
+            // Separate from community/forum groups and from academic terms.
+            Route::get('courses/{course}/groups', [CourseGroupController::class, 'index']);
+            Route::post('courses/{course}/groups', [CourseGroupController::class, 'store']);
+            Route::get('course-groups/{group}', [CourseGroupController::class, 'show']);
+            Route::put('course-groups/{group}', [CourseGroupController::class, 'update']);
+            Route::delete('course-groups/{group}', [CourseGroupController::class, 'destroy']);
+            Route::put('course-groups/{group}/members', [CourseGroupController::class, 'syncMembers']);
+            Route::put('course-groups/{group}/lessons', [CourseGroupController::class, 'syncLessons']);
+            Route::put('course-groups/{group}/exams', [CourseGroupController::class, 'syncExams']);
+            Route::get('course-groups/{group}/results', [CourseGroupController::class, 'results']);
 
             // Lesson Contents
             Route::get('lessons/{lesson}/contents', [LessonContentController::class, 'index']);
