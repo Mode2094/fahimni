@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import TeacherDashboard from './page';
 import { useAuth } from '@/store';
@@ -145,12 +146,50 @@ describe('Teacher Dashboard', () => {
 
     const { container } = render(<TeacherDashboard />);
 
-    expect(await screen.findByText('نشر المنصة')).toBeInTheDocument();
+    expect(await screen.findByText('رابط منصتك')).toBeInTheDocument();
     // The link is shown without the scheme, LTR-isolated, and openable.
     expect(screen.getByText('fahimni.me/t/sami')).toBeInTheDocument();
     expect(container.querySelector('a[href="https://fahimni.me/t/sami"]')).toBeTruthy();
     // The quick route into the platform settings that the teacher asked for.
     expect(container.querySelector('a[href="/teacher/settings"]')).toBeTruthy();
+  });
+
+  it('lays out quick actions and a 2×2 statistics grid that links to real pages', async () => {
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    const { container } = render(<TeacherDashboard />);
+    await screen.findByText(/أ\. سامي/);
+
+    // The two primary quick actions are present and point somewhere real.
+    expect(screen.getByRole('button', { name: /إنشاء كورس/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /إدارة الكورسات/ })).toBeInTheDocument();
+
+    // Every statistic keeps its real destination.
+    expect(container.querySelector('a[href="/students"]')).toBeTruthy();
+    expect(container.querySelectorAll('a[href="/courses"]').length).toBeGreaterThan(0);
+    expect(container.querySelector('a[href="/analytics"]')).toBeTruthy();
+
+    // The statistics container is 2-up on phones and 4-up on desktop.
+    const statsGrid = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.className.includes('grid-cols-2') && d.className.includes('lg:grid-cols-4'),
+    );
+    expect(statsGrid).toBeTruthy();
+  });
+
+  it('collapses the lower sections on phones and expands them on tap', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    render(<TeacherDashboard />);
+    await screen.findByText('استخدام خطتك');
+
+    // On a phone the plan-usage section starts collapsed…
+    const header = screen.getByRole('button', { name: /استخدام خطتك/ });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+
+    // …and opens when the teacher taps it.
+    await user.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('switches every label to English when the locale is English', async () => {

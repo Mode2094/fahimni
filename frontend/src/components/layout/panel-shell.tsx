@@ -242,7 +242,7 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
         />
         <aside
           className={cn(
-            'absolute inset-y-0 start-0 flex w-[280px] max-w-[85vw] bg-sidebar text-sidebar-foreground shadow-2xl transition-transform duration-300',
+            'absolute inset-y-0 start-0 flex w-[280px] max-w-[85vw] flex-col bg-sidebar pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-sidebar-foreground shadow-2xl transition-transform duration-300',
             drawer ? 'translate-x-0' : 'ltr:-translate-x-full rtl:translate-x-full',
           )}
           role="dialog"
@@ -255,7 +255,7 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
 
       {/* ── Content column ── */}
       <div className={cn('flex min-w-0 flex-1 flex-col transition-all duration-200', collapsed ? 'lg:ms-[76px]' : 'lg:ms-[264px]')}>
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur-xl sm:px-4">
+        <header className="sticky top-0 z-30 flex min-h-14 items-center gap-2 border-b bg-background/85 px-3 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-4">
           <button
             onClick={() => setDrawer(true)}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-muted-foreground hover:bg-muted lg:hidden"
@@ -292,7 +292,7 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
           </div>
         </header>
 
-        <main className={cn('flex-1 p-4 sm:p-6', isStudent && 'pb-24 lg:pb-8')}>{children}</main>
+        <main className={cn('flex-1 p-4 sm:p-6', (isStudent || variant === 'teacher') && 'pb-28 lg:pb-8')}>{children}</main>
       </div>
 
       {/* ── Student bottom navigation (mobile) ── */}
