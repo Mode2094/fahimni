@@ -11,8 +11,9 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { TermsIntro, TermsFaq } from '@/components/teacher/terms-guide';
 import {
-  CalendarDays, Plus, Loader2, Users, CheckCircle2, Archive, ArrowRightLeft, AlertTriangle, Power, Link2,
+  CalendarDays, Plus, Loader2, Users, CheckCircle2, Archive, ArrowRightLeft, AlertTriangle, Power, Link2, Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -251,9 +252,18 @@ export default function TermsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {seatsLine}
-          <Button className="gap-2 rounded-full" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />{t('فصل جديد', 'New Term')}</Button>
+          <Button
+            className="gap-2 rounded-full"
+            onClick={() => setCreateOpen(true)}
+            title={t('إنشاء فترة دراسية جديدة', 'Create a new academic period')}
+          >
+            <Plus className="h-4 w-4" />{t('فصل جديد', 'New Term')}
+          </Button>
         </div>
       </div>
+
+      {/* شرح مبسّط: ما الفصول؟ + دليل قابل للفتح (لا يزدحم افتراضيًا) */}
+      <TermsIntro t={t} />
 
       {loading ? <TableSkeleton rows={4} cols={3} /> : terms.length === 0 ? (
         <EmptyState icon={CalendarDays} title={t('لا توجد فصول بعد', 'No terms yet')} description={t('ابدأ بإنشاء فصل دراسي لتنظيم تسجيلات الطلاب.', 'Create a term to organise student enrollments.')} />
@@ -275,17 +285,17 @@ export default function TermsPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {term.status !== 'active' && term.status !== 'archived' && (
-                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full" onClick={() => activate(term)} disabled={busy}>
+                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full" onClick={() => activate(term)} disabled={busy} title={t('بدء استخدام الفصل', 'Start using this term')}>
                         <Power className="h-3.5 w-3.5" />{t('تفعيل', 'Activate')}
                       </Button>
                     )}
                     {term.status !== 'archived' && (
-                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full" onClick={() => openLink(term)}>
+                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full" onClick={() => openLink(term)} title={t('إضافة تسجيلات الطلاب الحاليين إلى الفصل', 'Add existing student enrollments to this term')}>
                         <Link2 className="h-3.5 w-3.5" />{t('ربط طلاب حاليين', 'Link existing students')}
                       </Button>
                     )}
                     {term.status !== 'archived' && (
-                      <Button size="sm" className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => openEnd(term)}>
+                      <Button size="sm" className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => openEnd(term)} title={t('إنهاء التسجيلات واختيار المستمرين وتحرير المقاعد المستحقة', 'End enrollments, pick who continues, and free the due seats')}>
                         <Archive className="h-3.5 w-3.5" />{t('إنهاء الفصل وتجديد المقاعد', 'End & renew seats')}
                       </Button>
                     )}
@@ -299,6 +309,9 @@ export default function TermsPage() {
           ))}
         </div>
       )}
+
+      {/* الأسئلة الشائعة (قابلة للفتح، لا تزدحم الصفحة) */}
+      <TermsFaq t={t} />
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={(v) => !v && setCreateOpen(false)}>
@@ -374,11 +387,25 @@ export default function TermsPage() {
             <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
           ) : (
             <div className="space-y-5 max-h-[65vh] overflow-y-auto pe-1">
-              <div className={`grid grid-cols-3 gap-3 text-center transition-opacity ${previewLoading ? 'opacity-50' : ''}`}>
+              <div className={`grid grid-cols-3 gap-3 text-center transition-opacity ${previewLoading ? 'opacity-50' : ''}`} data-testid="seats-summary">
                 <div className="p-3 rounded-xl bg-gray-50"><p className="text-2xl font-black">{preview.seats_before}</p><p className="text-xs text-gray-500">{t('مقاعد مستخدمة الآن', 'Seats now')}</p></div>
                 <div className="p-3 rounded-xl bg-emerald-50"><p className="text-2xl font-black text-emerald-600">{preview.seats_freed}</p><p className="text-xs text-gray-500">{t('مقاعد ستتحرر', 'Seats freed')}</p></div>
                 <div className="p-3 rounded-xl bg-teal-50"><p className="text-2xl font-black text-teal-700">{preview.seats_after}</p><p className="text-xs text-gray-500">{t('المستخدمة بعد التنفيذ', 'Used after')}</p></div>
               </div>
+
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t(
+                  'تُحسب هذه الأرقام لحظيًا وتُحدَّث عند تغيير المستمرين. «المستخدمة بعد التنفيذ» هي مقاعد خطتك بعد الإنهاء. انتهاء تاريخ الفصل لا يؤرشف التسجيلات تلقائيًا — الإنهاء يتم بتأكيدك فقط.',
+                  'These numbers are computed live and refresh as you change who continues. “Used after” is your plan’s seat count once ending completes. A term’s end date never archives enrollments automatically — ending happens only when you confirm.',
+                )}
+              </p>
+
+              {preview.students_count === 0 && (
+                <div className="flex items-start gap-2 rounded-xl bg-sky-50 p-3 text-sm text-sky-800" data-testid="end-zero-note">
+                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{t('لا توجد تسجيلات في هذا الفصل، لذا تأكيد الإنهاء لن يحرّر أي مقعد.', 'This term has no enrollments, so confirming will free no seats.')}</span>
+                </div>
+              )}
 
               <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-700">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -387,6 +414,16 @@ export default function TermsPage() {
 
               <div>
                 <h3 className="font-semibold text-sm mb-2">{t('طلاب الفصل (' + preview.students_count + ')', 'Term students')} — {t('حدّد المستمرين', 'mark continuing')}</h3>
+                <div className="mb-3 grid gap-2 sm:grid-cols-2" data-testid="continue-help">
+                  <div className="rounded-xl border border-teal-100 bg-teal-50/60 p-3 text-xs leading-relaxed text-teal-900/90">
+                    <span className="font-bold">{t('طالب مستمر:', 'Continuing student:')}</span>{' '}
+                    {t('من تحدّده لتجديده في الفصل القادم؛ تُنشأ له تسجيلات سارية جديدة لنفس كورساته فيحتفظ بمقعده ويتابع من حيث توقف.', 'A student you renew into the next term; new active enrollments are created for their same courses, so they keep their seat and continue where they left off.')}
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs leading-relaxed text-slate-700">
+                    <span className="font-bold">{t('غير المحدد:', 'Not marked:')}</span>{' '}
+                    {t('تُؤرشف تسجيلاته في هذا الفصل ويُحرَّر مقعده إن لم يكن لديه تسجيل ساري آخر، وقد يفقد الوصول إلى محتوى الكورس. درجاته ومحاولاته وسجلاته التاريخية تبقى محفوظة.', 'Their enrollments in this term are archived and their seat is freed if they have no other active enrollment, and they may lose access to the course content. Their grades, attempts and historical records are preserved.')}
+                  </div>
+                </div>
                 <div className="space-y-2">
                   {preview.students.map((s) => {
                     const cont = continueIds.has(s.user_id);
@@ -428,11 +465,18 @@ export default function TermsPage() {
                   )}
                 </div>
               )}
+
+              {preview.students_count > 0 && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800" data-testid="end-final-warning">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{t('بالضغط على «تأكيد الإنهاء» تُؤرشف تسجيلات هذا الفصل ولا يمكن التراجع عنها تلقائيًا. راجع الأرقام وقائمة المستمرين أعلاه قبل التأكيد.', 'Pressing “Confirm & end” archives this term’s enrollments and cannot be undone automatically. Review the numbers and the continuing list above before confirming.')}</span>
+                </div>
+              )}
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setEndTarget(null); setPreview(null); setPreviewToken(null); }}>{t('إلغاء', 'Cancel')}</Button>
-            <Button onClick={confirmEnd} disabled={busy || previewLoading || !preview} className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700">
+            <Button onClick={confirmEnd} disabled={busy || previewLoading || !preview} className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700" title={t('يتطلب معاينة حديثة كما هو موضح بالأعلى', 'Requires a fresh preview, as shown above')}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}{t('تأكيد الإنهاء', 'Confirm & end')}
             </Button>
           </DialogFooter>
