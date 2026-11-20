@@ -53,6 +53,27 @@ return new class extends Migration
         }
     }
 
+    /**
+     * ROLLBACK STRATEGY — restore plan with zero data loss.
+     *
+     * Reversing this migration restores the GLOBAL unique(course_id, user_id).
+     * That is only possible while no student has more than one enrollment row
+     * for the same course — i.e. before any term renewal has produced
+     * historical duplicates. Rolling back after renewals will therefore fail
+     * with a unique-violation, by design: it must never silently delete a
+     * history row to satisfy the old constraint.
+     *
+     * Safe procedure (no data loss):
+     *   1. Take a full backup FIRST (pg_dump -Fc <db> > pre-rollback.dump).
+     *   2. Check for duplicates that would block the rollback:
+     *        SELECT course_id, user_id, count(*)
+     *        FROM enrollments GROUP BY 1,2 HAVING count(*) > 1;
+     *   3. If that returns rows, DO NOT roll back with this migration.
+     *      Keep the partial index (it is a strict superset of the old
+     *      guarantee) and only remove the new columns if truly required.
+     *   4. If it returns nothing, `php artisan migrate:rollback` is safe.
+     *   5. To recover from a failed rollback: restore pre-rollback.dump.
+     */
     public function down(): void
     {
         $driver = Schema::getConnection()->getDriverName();
@@ -64,7 +85,8 @@ return new class extends Migration
         Schema::table('enrollments', function (Blueprint $table) {
             // Restore the original constraint. Best-effort: if a term renewal
             // already produced duplicate (course, user) history rows this may
-            // fail — that is expected and only matters for a manual rollback.
+            // fail — that is expected and only matters for a manual rollback
+            // (see the ROLLBACK STRATEGY note above).
             $table->unique(['course_id', 'user_id']);
         });
 

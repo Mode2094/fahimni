@@ -25,6 +25,7 @@ class StudentAttemptController extends Controller
                     'exam_id' => $attempt->exam_id,
                     'exam_title' => $attempt->exam?->title,
                     'attempt_number' => $attempt->attempt_number,
+                    'academic_term_id' => $attempt->academic_term_id,
                     'status' => $attempt->status,
                     'score' => (float) $attempt->score,
                     'total_points' => (float) $attempt->total_points,

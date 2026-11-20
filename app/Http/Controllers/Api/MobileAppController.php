@@ -107,7 +107,7 @@ class MobileAppController extends Controller
         $enrollments = Enrollment::with('course')
             ->where('tenant_id', $tenant->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->orderByDesc('enrolled_at')
             ->get();
 
@@ -124,7 +124,9 @@ class MobileAppController extends Controller
                                     ->from('enrollments')
                                     ->whereColumn('enrollments.course_id', 'announcements.course_id')
                                     ->where('enrollments.user_id', $user->id)
-                                    ->where('enrollments.tenant_id', $tenant->id);
+                                    ->where('enrollments.tenant_id', $tenant->id)
+                                    ->whereIn('enrollments.status', ['active', 'completed'])
+                                    ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
                             });
                     });
             })
@@ -168,7 +170,7 @@ class MobileAppController extends Controller
 
         $enrolledIds = Enrollment::where('tenant_id', $tenant->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->pluck('course_id')
             ->flip();
 
@@ -203,9 +205,10 @@ class MobileAppController extends Controller
             return response()->json(['message' => 'Course not found.'], 404);
         }
 
-        $enrollment = Enrollment::where('course_id', $course->id)
+        $enrollment = Enrollment::where('tenant_id', $tenant->id)
+            ->where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         $enrolled = $enrollment !== null;
@@ -286,9 +289,10 @@ class MobileAppController extends Controller
             return response()->json(['message' => 'Lesson not found.'], 404);
         }
 
-        $enrollment = Enrollment::where('course_id', $course->id)
+        $enrollment = Enrollment::where('tenant_id', $tenant->id)
+            ->where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         $enrolled = $enrollment !== null;
@@ -390,7 +394,9 @@ class MobileAppController extends Controller
                                     ->from('enrollments')
                                     ->whereColumn('enrollments.course_id', 'announcements.course_id')
                                     ->where('enrollments.user_id', $user->id)
-                                    ->where('enrollments.tenant_id', $tenant->id);
+                                    ->where('enrollments.tenant_id', $tenant->id)
+                                    ->whereIn('enrollments.status', ['active', 'completed'])
+                                    ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
                             });
                     });
             })

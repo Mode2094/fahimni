@@ -255,10 +255,14 @@ class AcademicTermSeatRenewalTest extends TenantTestCase
         $course = $this->course($tenant);
         $student = $this->student($tenant);
 
-        $term1 = AcademicTerm::create(['tenant_id' => $tenant->id, 'name' => 'T1', 'status' => AcademicTerm::STATUS_ARCHIVED]);
+        $term1 = AcademicTerm::create(['tenant_id' => $tenant->id, 'name' => 'T1', 'status' => AcademicTerm::STATUS_ACTIVE]);
         $term2 = AcademicTerm::create(['tenant_id' => $tenant->id, 'name' => 'T2', 'status' => AcademicTerm::STATUS_ACTIVE]);
 
+        // Term 1 is enrolled, then ended (archived) — its row stays as history.
         $e1 = $this->enroll($tenant, $course, $student, ['academic_term_id' => $term1->id]);
+        app(\App\Services\AcademicTermService::class)->end($term1, []);
+
+        // Re-joining the SAME course in the new term adds a fresh live row.
         $e2 = $this->enroll($tenant, $course, $student, ['academic_term_id' => $term2->id]);
 
         $this->assertNotSame($e1->id, $e2->id);

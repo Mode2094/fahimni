@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\EnrollmentService;
 use App\Services\IntegrationService;
 use App\Services\StudentGamificationService;
+use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -72,37 +73,19 @@ class EnrollmentController extends Controller
             return response()->json(['message' => 'Course does not belong to this tenant.'], 403);
         }
 
-        // Only students can be enrolled as students — staff accounts cannot
-        // be silently added to the student roster.
-        $pivot = $student->tenantPivots()
-            ->where('tenant_id', $tenantId)
-            ->where('status', 'active')
-            ->first();
+        // The selected user must be an active STUDENT of this tenant.
+        $service = app(EnrollmentService::class);
+        $service->assertTenantStudent((string) $tenantId, $student);
 
-        if (! $pivot) {
-            return response()->json(['message' => 'Student is not a member of this tenant.'], 403);
-        }
-
-        $isStudentRole = $pivot->role === 'student';
-
-        if (! $isStudentRole && ! $student->is_super_admin) {
-            return response()->json(['message' => 'The selected user is not a student.'], 422);
-        }
-
-        if ($student->is_super_admin) {
-            $memberOfTenant = $student->tenants()->where('tenant_id', $tenantId)->wherePivot('status', 'active')->exists();
-            if (! $memberOfTenant) {
-                return response()->json(['message' => 'Student is not a member of this tenant.'], 403);
-            }
-        }
-
-        // Seat-limit, duplicate and per-course-cap enforcement all live in the
-        // service, under a tenant-level lock (see EnrollmentService).
-        $enrollment = app(EnrollmentService::class)->enroll($course, $student, [
+        // Membership + role + term-state + seat + duplicate + per-course-cap
+        // enforcement all live in the service (under a tenant lock). Only an
+        // explicit, authorised move may replace a live enrollment.
+        $enrollment = $service->enroll($course, $student, [
             'academic_term_id' => $request->input('academic_term_id'),
             'expires_at' => $request->input('expires_at'),
             'source' => $request->input('source', 'manual'),
             'metadata' => $request->input('metadata', []),
+            'authorized_move' => (bool) $request->boolean('authorized_move'),
         ]);
 
         app(StudentGamificationService::class)->logActivity(
@@ -138,14 +121,48 @@ class EnrollmentController extends Controller
         ]);
     }
 
-    public function destroy(string $id): JsonResponse
+    /**
+     * Remove a student from a course.
+     *
+     * Default behaviour is a SAFE ARCHIVE: access stops, the seat is released,
+     * and lesson progress / certificates / attempts stay intact. A hard
+     * delete (which cascades to lesson_progress) is an exceptional admin
+     * action — restricted to super admins and explicitly requested.
+     */
+    public function destroy(Request $request, string $id): JsonResponse
     {
         $enrollment = Enrollment::findOrFail($id);
 
         $this->authorize('delete', $enrollment);
 
-        $enrollment->delete();
+        if ($request->boolean('force')) {
+            if (! $request->user()->is_super_admin) {
+                return response()->json([
+                    'message' => 'Hard delete is an exceptional admin action.',
+                    'code' => 'force_delete_forbidden',
+                ], 403);
+            }
 
-        return response()->json(['message' => 'Enrollment deleted successfully.']);
+            $enrollment->delete();
+
+            AuditLogger::log($request, 'enrollment.force_deleted', 'enrollment', $id, [
+                'course_id' => $enrollment->course_id,
+                'user_id' => $enrollment->user_id,
+            ]);
+
+            return response()->json(['message' => 'Enrollment force-deleted.', 'code' => 'force_deleted']);
+        }
+
+        app(EnrollmentService::class)->archive($enrollment);
+
+        AuditLogger::log($request, 'enrollment.archived', 'enrollment', $id, [
+            'course_id' => $enrollment->course_id,
+            'user_id' => $enrollment->user_id,
+        ]);
+
+        return response()->json([
+            'message' => 'Enrollment archived. Progress, certificates and results are preserved.',
+            'code' => 'archived',
+        ]);
     }
 }

@@ -301,7 +301,7 @@ class AdminController extends Controller
         // ── Students (distinct users with enrollments) ──
         $students = Enrollment::withoutTenant()
             ->where('tenant_id', $tenantId)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->with('student:id,name,email,created_at')
             ->get()
             ->groupBy('user_id')

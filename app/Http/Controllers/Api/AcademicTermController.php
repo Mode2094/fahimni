@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AcademicTermResource;
 use App\Models\AcademicTerm;
+use App\Models\Enrollment;
 use App\Services\AcademicTermService;
+use App\Services\EnrollmentService;
 use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,6 +15,9 @@ use Illuminate\Validation\Rule;
 
 class AcademicTermController extends Controller
 {
+    /** Statuses a term may be created/edited into directly (never `archived`). */
+    private const EDITABLE_STATUSES = [AcademicTerm::STATUS_UPCOMING, AcademicTerm::STATUS_ACTIVE, AcademicTerm::STATUS_COMPLETED];
+
     public function __construct(
         private readonly AcademicTermService $terms,
     ) {}
@@ -48,7 +53,12 @@ class AcademicTermController extends Controller
             'name' => 'required|string|max:255',
             'starts_at' => 'nullable|date',
             'ends_at' => 'nullable|date|after_or_equal:starts_at',
-            'status' => ['nullable', Rule::in(AcademicTerm::STATUSES)],
+            // `archived` is intentionally excluded — archiving only happens
+            // through the end/renew flow so enrollments are handled safely.
+            'status' => ['nullable', Rule::in([
+                AcademicTerm::STATUS_UPCOMING,
+                AcademicTerm::STATUS_ACTIVE,
+            ])],
             'metadata' => 'nullable|array',
         ]);
 
@@ -89,11 +99,31 @@ class AcademicTermController extends Controller
             'name' => 'sometimes|required|string|max:255',
             'starts_at' => 'nullable|date',
             'ends_at' => 'nullable|date|after_or_equal:starts_at',
-            'status' => ['sometimes', Rule::in(AcademicTerm::STATUSES)],
+            'status' => ['sometimes', Rule::in(self::EDITABLE_STATUSES)],
             'metadata' => 'nullable|array',
         ]);
 
+        // An archived term is immutable: un-archiving must go through an
+        // explicit, audited reactivation, never a blind status write.
+        if ($term->status === AcademicTerm::STATUS_ARCHIVED && array_key_exists('status', $data)) {
+            return response()->json([
+                'message' => 'An archived term cannot be reactivated directly.',
+                'code' => 'term_archived',
+            ], 422);
+        }
+
+        // `archived` is not an EDITABLE_STATUS, so a direct archive attempt
+        // already fails validation above. Belt-and-braces:
+        if (($data['status'] ?? null) === AcademicTerm::STATUS_ARCHIVED) {
+            return response()->json([
+                'message' => 'Use the end/renew flow to archive a term.',
+                'code' => 'use_end_flow',
+            ], 422);
+        }
+
         $term->update($data);
+
+        AuditLogger::log($request, 'term.updated', 'academic_term', $term->id, $data);
 
         return response()->json(['term' => new AcademicTermResource($term->fresh())]);
     }
@@ -103,8 +133,17 @@ class AcademicTermController extends Controller
         $term = AcademicTerm::findOrFail($id);
         $this->authorize('delete', $term);
 
-        // Soft-delete only: enrollment rows keep their academic_term_id and
-        // therefore keep the historical grouping intact.
+        // A term that still owns enrollments must be ended (archived) instead
+        // of deleted, so its history grouping is never orphaned.
+        $hasEnrollments = Enrollment::withoutTenant()->where('academic_term_id', $term->id)->exists();
+
+        if ($hasEnrollments) {
+            return response()->json([
+                'message' => 'This term has enrollments. End it instead of deleting it.',
+                'code' => 'term_has_enrollments',
+            ], 422);
+        }
+
         $term->delete();
 
         return response()->json(['message' => 'Term deleted successfully.']);
@@ -115,13 +154,20 @@ class AcademicTermController extends Controller
         $term = AcademicTerm::findOrFail($id);
         $this->authorize('update', $term);
 
+        if ($term->status === AcademicTerm::STATUS_ARCHIVED) {
+            return response()->json([
+                'message' => 'An archived term cannot be reactivated directly.',
+                'code' => 'term_archived',
+            ], 422);
+        }
+
         $term->update(['status' => AcademicTerm::STATUS_ACTIVE]);
 
         return response()->json(['term' => new AcademicTermResource($term->fresh())]);
     }
 
     /**
-     * Enroll students into a course within this term.
+     * Enroll NEW students into a course within this term.
      */
     public function assignStudents(Request $request, string $id): JsonResponse
     {
@@ -146,19 +192,70 @@ class AcademicTermController extends Controller
     }
 
     /**
-     * Dry-run preview of ending a term: who is freed, who stays, seats after.
+     * Students with an effective, term-less enrollment that can be linked.
+     */
+    public function linkableStudents(Request $request, string $id): JsonResponse
+    {
+        $term = AcademicTerm::findOrFail($id);
+        $this->authorize('view', $term);
+
+        $courseId = $request->filled('course_id')
+            ? $request->validate(['course_id' => 'string|exists:courses,id'])['course_id']
+            : null;
+
+        return response()->json([
+            'students' => $this->terms->linkableStudents((string) $term->tenant_id, $courseId),
+        ]);
+    }
+
+    /**
+     * Link EXISTING enrollments to this term (no delete, no recreate).
+     */
+    public function linkStudents(Request $request, string $id): JsonResponse
+    {
+        $term = AcademicTerm::findOrFail($id);
+        $this->authorize('update', $term);
+
+        $data = $request->validate([
+            'user_ids' => 'required|array|min:1',
+            'user_ids.*' => 'string|exists:users,id',
+            'course_id' => 'nullable|string|exists:courses,id',
+        ]);
+
+        $result = $this->terms->linkEnrollments($term, $data['user_ids'], $data['course_id'] ?? null);
+
+        AuditLogger::log($request, 'term.students_linked', 'academic_term', $term->id, [
+            'linked' => $result['linked'],
+            'skipped' => count($result['skipped']),
+            'course_id' => $data['course_id'] ?? null,
+        ]);
+
+        return response()->json([
+            'result' => $result,
+            'seats' => $this->terms->seatSummary((string) $term->tenant_id),
+        ]);
+    }
+
+    /**
+     * Dry-run preview of ending a term. Recompute on every selection change by
+     * passing `continue[]`; the response carries a `signature` the client must
+     * echo back when confirming.
      */
     public function endPreview(Request $request, string $id): JsonResponse
     {
         $term = AcademicTerm::findOrFail($id);
         $this->authorize('view', $term);
 
-        $continue = (array) $request->input('continue', []);
+        $request->validate([
+            'continue' => 'nullable|array',
+            'continue.*' => 'string|exists:users,id',
+        ]);
 
-        $preview = $this->terms->endPreview($term, $continue);
-        unset($preview['free_ids'], $preview['continuing_ids'], $preview['active_elsewhere_ids']);
+        $preview = $this->terms->endPreview($term, (array) $request->input('continue', []));
+        $signature = $preview['signature'];
+        unset($preview['free_ids'], $preview['continuing_ids'], $preview['active_elsewhere_ids'], $preview['signature']);
 
-        return response()->json(['preview' => $preview]);
+        return response()->json(['preview' => $preview, 'signature' => $signature]);
     }
 
     /**
@@ -176,34 +273,29 @@ class AcademicTermController extends Controller
             'create_next.name' => 'nullable|string|max:255',
             'create_next.starts_at' => 'nullable|date',
             'create_next.ends_at' => 'nullable|date|after_or_equal:create_next.starts_at',
+            'preview_token' => 'nullable|string',
         ]);
 
         $tenantId = (string) $term->tenant_id;
-        $continue = $data['continue'] ?? [];
 
-        $nextTerm = null;
+        $spec = [];
 
         if (! empty($data['next_term_id'])) {
-            $nextTerm = AcademicTerm::where('tenant_id', $tenantId)->findOrFail($data['next_term_id']);
+            $spec['next_term_id'] = $data['next_term_id'];
         } elseif (! empty($data['create_next']['name'])) {
-            $nextTerm = AcademicTerm::create([
-                'tenant_id' => $tenantId,
+            $spec['create'] = [
                 'name' => $data['create_next']['name'],
                 'starts_at' => $data['create_next']['starts_at'] ?? null,
                 'ends_at' => $data['create_next']['ends_at'] ?? null,
-                'status' => AcademicTerm::STATUS_ACTIVE,
-                'created_by' => $request->user()->id,
-            ]);
+            ];
         }
 
-        if (! empty($continue) && ! $nextTerm) {
-            return response()->json([
-                'message' => 'يجب تحديد الفصل القادم (أو إنشاؤه) قبل ترحيل الطلاب المستمرين.',
-                'code' => 'next_term_required',
-            ], 422);
-        }
-
-        $summary = $this->terms->end($term, $continue, $nextTerm);
+        $summary = $this->terms->end(
+            $term,
+            $data['continue'] ?? [],
+            $spec,
+            $data['preview_token'] ?? null,
+        );
 
         AuditLogger::log($request, 'term.ended', 'academic_term', $term->id, [
             'seats_freed' => $summary['seats_freed'] ?? null,

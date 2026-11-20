@@ -104,7 +104,7 @@ class MediaSecurityService
         return Enrollment::withoutTenant()
             ->where('course_id', $courseId)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->exists();
     }
 

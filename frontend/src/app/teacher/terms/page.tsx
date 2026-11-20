@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
-  CalendarDays, Plus, Loader2, Users, CheckCircle2, Archive, ArrowRightLeft, AlertTriangle, Power,
+  CalendarDays, Plus, Loader2, Users, CheckCircle2, Archive, ArrowRightLeft, AlertTriangle, Power, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -28,11 +28,12 @@ type Preview = {
   students_count: number; students: PreviewStudent[]; seats: Seats;
   seats_before: number; seats_after: number; seats_freed: number;
 };
+type LinkableStudent = { id: string; name: string; email: string };
 
 export default function TermsPage() {
   const { check } = useAuth();
   const { locale } = useLocale();
-  const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const t = useCallback((ar: string, en: string) => (locale === 'ar' ? ar : en), [locale]);
 
   const [terms, setTerms] = useState<Term[]>([]);
   const [seats, setSeats] = useState<Seats | null>(null);
@@ -45,29 +46,36 @@ export default function TermsPage() {
   // End / renew wizard
   const [endTarget, setEndTarget] = useState<Term | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [continueIds, setContinueIds] = useState<Set<string>>(new Set());
   const [nextMode, setNextMode] = useState<'none' | 'existing' | 'new'>('none');
   const [nextTermId, setNextTermId] = useState('');
   const [nextForm, setNextForm] = useState({ name: '', starts_at: '', ends_at: '' });
 
-  const headers = () => {
+  // Link existing (pre-migration) students to a term
+  const [linkTarget, setLinkTarget] = useState<Term | null>(null);
+  const [linkable, setLinkable] = useState<LinkableStudent[]>([]);
+  const [linkIds, setLinkIds] = useState<Set<string>>(new Set());
+  const [linkLoading, setLinkLoading] = useState(false);
+
+  const headers = useCallback(() => {
     const tid = localStorage.getItem('tenant_id');
     return { 'X-Tenant-Id': tid || '', Accept: 'application/json' };
-  };
+  }, []);
 
-  const jsonHeaders = () => ({ ...headers(), 'Content-Type': 'application/json' });
+  const jsonHeaders = useCallback(() => ({ ...headers(), 'Content-Type': 'application/json' }), [headers]);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     fetch(`${API}/terms`, { headers: headers() })
       .then((r) => r.json())
       .then((d) => { setTerms(d.terms || []); setSeats(d.seats || null); })
       .catch(() => toast.error(t('تعذّر تحميل الفصول', 'Failed to load terms')))
       .finally(() => setLoading(false));
-  };
+  }, [headers, t]);
 
-  useEffect(() => { if (check()) load(); }, [check()]);
+  useEffect(() => { if (check()) load(); }, [check, load]);
 
   const otherTerms = useMemo(() => terms.filter((x) => x.id !== endTarget?.id && x.status !== 'archived'), [terms, endTarget]);
 
@@ -98,19 +106,37 @@ export default function TermsPage() {
     } catch { toast.error(t('فشل التفعيل', 'Failed')); } finally { setBusy(false); }
   };
 
-  const openEnd = async (term: Term) => {
+  // Server is the single source of truth for freed/remaining seats. It is
+  // recomputed on EVERY change of the continuing set, and the returned token
+  // is echoed back at confirm time so a stale selection can never execute.
+  const loadPreview = useCallback(async (termId: string, contIds: string[]) => {
+    setPreviewLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      contIds.forEach((id) => qs.append('continue[]', id));
+      const res = await fetch(`${API}/terms/${termId}/end-preview?${qs.toString()}`, { headers: headers() });
+      if (!res.ok) throw new Error();
+      const body = await res.json();
+      setPreview(body.preview);
+      setPreviewToken(body.signature ?? null);
+    } catch { toast.error(t('تعذّر تحميل المعاينة', 'Preview failed')); } finally { setPreviewLoading(false); }
+  }, [headers, t]);
+
+  const openEnd = (term: Term) => {
     setEndTarget(term);
     setPreview(null);
+    setPreviewToken(null);
     setContinueIds(new Set());
     setNextMode('none');
     setNextTermId('');
-    setPreviewLoading(true);
-    try {
-      const res = await fetch(`${API}/terms/${term.id}/end-preview`, { headers: headers() });
-      if (!res.ok) throw new Error();
-      setPreview((await res.json()).preview);
-    } catch { toast.error(t('تعذّر تحميل المعاينة', 'Preview failed')); } finally { setPreviewLoading(false); }
   };
+
+  // Recompute whenever the continuing selection changes (and on open).
+  const continueKey = useMemo(() => [...continueIds].sort().join(','), [continueIds]);
+  useEffect(() => {
+    if (endTarget) loadPreview(endTarget.id, [...continueIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endTarget?.id, continueKey]);
 
   const toggleContinue = (id: string) => {
     setContinueIds((prev) => {
@@ -122,13 +148,25 @@ export default function TermsPage() {
 
   const confirmEnd = async () => {
     if (!endTarget) return;
+    if (previewLoading || !preview) {
+      toast.error(t('انتظر تحديث المعاينة', 'Wait for the preview to refresh'));
+      return;
+    }
     if (continueIds.size && nextMode === 'none') {
       toast.error(t('اختر الفصل القادم للطلاب المستمرين', 'Choose a next term for continuing students'));
       return;
     }
+    if (continueIds.size && nextMode === 'existing' && !nextTermId) {
+      toast.error(t('اختر الفصل القادم', 'Select the next term'));
+      return;
+    }
+    if (continueIds.size && nextMode === 'new' && !nextForm.name.trim()) {
+      toast.error(t('اكتب اسم الفصل القادم', 'Enter the next term name'));
+      return;
+    }
     setBusy(true);
     try {
-      const payload: Record<string, unknown> = { continue: [...continueIds] };
+      const payload: Record<string, unknown> = { continue: [...continueIds], preview_token: previewToken };
       if (continueIds.size && nextMode === 'existing' && nextTermId) payload.next_term_id = nextTermId;
       if (continueIds.size && nextMode === 'new' && nextForm.name.trim()) payload.create_next = {
         name: nextForm.name.trim(), starts_at: nextForm.starts_at || undefined, ends_at: nextForm.ends_at || undefined,
@@ -137,9 +175,46 @@ export default function TermsPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.message || 'failed');
       toast.success(t(`تم إنهاء الفصل — تحرر ${body.summary?.seats_freed ?? 0} مقعد`, `Term ended — ${body.summary?.seats_freed ?? 0} seat(s) freed`));
-      setEndTarget(null); setPreview(null);
+      setEndTarget(null); setPreview(null); setPreviewToken(null);
       load();
     } catch (e) { toast.error((e as Error).message || t('فشل إنهاء الفصل', 'Failed to end term')); } finally { setBusy(false); }
+  };
+
+  const openLink = async (term: Term) => {
+    setLinkTarget(term);
+    setLinkable([]);
+    setLinkIds(new Set());
+    setLinkLoading(true);
+    try {
+      const res = await fetch(`${API}/terms/${term.id}/linkable-students`, { headers: headers() });
+      if (!res.ok) throw new Error();
+      setLinkable((await res.json()).students || []);
+    } catch { toast.error(t('تعذّر تحميل الطلاب القابلين للربط', 'Failed to load linkable students')); } finally { setLinkLoading(false); }
+  };
+
+  const toggleLink = (id: string) => {
+    setLinkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const submitLink = async () => {
+    if (!linkTarget || linkIds.size === 0) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API}/terms/${linkTarget.id}/link-students`, {
+        method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ user_ids: [...linkIds] }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message || 'failed');
+      const linked = body.result?.linked ?? 0;
+      const skipped = body.result?.skipped?.length ?? 0;
+      toast.success(t(`تم ربط ${linked} تسجيل بالفصل${skipped ? ` · تم تجاهل ${skipped}` : ''}`, `Linked ${linked} enrollment(s)${skipped ? ` · ${skipped} skipped` : ''}`));
+      setLinkTarget(null);
+      load();
+    } catch (e) { toast.error((e as Error).message || t('فشل الربط', 'Failed to link')); } finally { setBusy(false); }
   };
 
   const statusBadge = (term: Term) => {
@@ -205,6 +280,11 @@ export default function TermsPage() {
                       </Button>
                     )}
                     {term.status !== 'archived' && (
+                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full" onClick={() => openLink(term)}>
+                        <Link2 className="h-3.5 w-3.5" />{t('ربط طلاب حاليين', 'Link existing students')}
+                      </Button>
+                    )}
+                    {term.status !== 'archived' && (
                       <Button size="sm" className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => openEnd(term)}>
                         <Archive className="h-3.5 w-3.5" />{t('إنهاء الفصل وتجديد المقاعد', 'End & renew seats')}
                       </Button>
@@ -247,15 +327,54 @@ export default function TermsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Link existing students dialog */}
+      <Dialog open={!!linkTarget} onOpenChange={(v) => { if (!v) setLinkTarget(null); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle>{t('ربط الطلاب الحاليين بالفصل', 'Link existing students to term')}</DialogTitle></DialogHeader>
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pe-1">
+            <div className="flex items-start gap-2 rounded-xl bg-sky-50 p-3 text-sm text-sky-700">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{t('الطلاب المسجّلون قبل إنشاء الفصول يظهرون هنا. الربط يضيفهم للفصل فقط — لا يُحذف أي تقدّم أو نتيجة.', 'Students enrolled before terms existed appear here. Linking only tags them with the term — no progress or result is removed.')}</span>
+            </div>
+            {linkLoading ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-7 w-7 animate-spin text-teal-600" /></div>
+            ) : linkable.length === 0 ? (
+              <p className="text-sm text-gray-400 py-6 text-center">{t('لا يوجد طلاب غير مرتبطين بفصل', 'No unlinked students')}</p>
+            ) : (
+              <div className="space-y-2">
+                {linkable.map((s) => {
+                  const on = linkIds.has(s.id);
+                  return (
+                    <label key={s.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${on ? 'border-teal-200 bg-teal-50/50' : ''}`}>
+                      <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-teal-600" checked={on} onChange={() => toggleLink(s.id)} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{s.name}</p>
+                        <p className="text-[11px] text-gray-400 truncate">{s.email}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkTarget(null)}>{t('إلغاء', 'Cancel')}</Button>
+            <Button onClick={submitLink} disabled={busy || linkIds.size === 0} className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}{t(`ربط (${linkIds.size})`, `Link (${linkIds.size})`)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* End / renew wizard */}
-      <Dialog open={!!endTarget} onOpenChange={(v) => { if (!v) { setEndTarget(null); setPreview(null); } }}>
+      <Dialog open={!!endTarget} onOpenChange={(v) => { if (!v) { setEndTarget(null); setPreview(null); setPreviewToken(null); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>{t('إنهاء الفصل وتجديد مقاعد الطلاب', 'End term & renew student seats')}</DialogTitle></DialogHeader>
-          {previewLoading || !preview ? (
+          {!preview ? (
             <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
           ) : (
             <div className="space-y-5 max-h-[65vh] overflow-y-auto pe-1">
-              <div className="grid grid-cols-3 gap-3 text-center">
+              <div className={`grid grid-cols-3 gap-3 text-center transition-opacity ${previewLoading ? 'opacity-50' : ''}`}>
                 <div className="p-3 rounded-xl bg-gray-50"><p className="text-2xl font-black">{preview.seats_before}</p><p className="text-xs text-gray-500">{t('مقاعد مستخدمة الآن', 'Seats now')}</p></div>
                 <div className="p-3 rounded-xl bg-emerald-50"><p className="text-2xl font-black text-emerald-600">{preview.seats_freed}</p><p className="text-xs text-gray-500">{t('مقاعد ستتحرر', 'Seats freed')}</p></div>
                 <div className="p-3 rounded-xl bg-teal-50"><p className="text-2xl font-black text-teal-700">{preview.seats_after}</p><p className="text-xs text-gray-500">{t('المستخدمة بعد التنفيذ', 'Used after')}</p></div>
@@ -312,7 +431,7 @@ export default function TermsPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setEndTarget(null); setPreview(null); }}>{t('إلغاء', 'Cancel')}</Button>
+            <Button variant="outline" onClick={() => { setEndTarget(null); setPreview(null); setPreviewToken(null); }}>{t('إلغاء', 'Cancel')}</Button>
             <Button onClick={confirmEnd} disabled={busy || previewLoading || !preview} className="gap-1.5 rounded-full bg-teal-600 hover:bg-teal-700">
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}{t('تأكيد الإنهاء', 'Confirm & end')}
             </Button>

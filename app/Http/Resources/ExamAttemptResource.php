@@ -13,6 +13,7 @@ class ExamAttemptResource extends JsonResource
             'id' => $this->id,
             'exam_id' => $this->exam_id,
             'user_id' => $this->user_id,
+            'academic_term_id' => $this->academic_term_id,
             'attempt_number' => $this->attempt_number,
             'status' => $this->status,
             'score' => $this->score,

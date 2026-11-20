@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Exam\SubmitExamRequest;
 use App\Http\Resources\ExamAttemptResource;
+use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\ExamAnswer;
 use App\Models\ExamAttempt;
@@ -162,33 +163,52 @@ class ExamAttemptController extends Controller
 
         $maxAttempts = $exam->max_attempts > 0 ? $exam->max_attempts : PHP_INT_MAX;
 
-        $attempt = DB::transaction(function () use ($exam, $user, $maxAttempts) {
+        // Term scope: the student's current effective enrollment for this
+        // exam's course decides which term's attempt budget applies.
+        $termId = $this->currentTermId((string) $exam->tenant_id, (string) $exam->course_id, (string) $user->id);
+
+        $attempt = DB::transaction(function () use ($exam, $user, $maxAttempts, $termId) {
             Exam::whereKey($exam->id)->lockForUpdate()->first();
 
             // An in-progress attempt that has outlived its duration is a
             // dead end: auto-submit it (grade whatever exists, zero answers
-            // if nothing was saved) so it can never block a retake.
-            ExamAttempt::where('exam_id', $exam->id)
-                ->where('user_id', $user->id)
-                ->where('status', 'in_progress')
-                ->where('started_at', '<', now()->subMinutes(max(1, $exam->duration_minutes)))
-                ->each(function (ExamAttempt $stale) {
-                    $this->autoSubmit($stale);
-                });
+            // if nothing was saved) so it can never block a retake. Scoped to
+            // this term so another term's live attempt is untouched.
+            $stale = $this->scopeToTerm(
+                ExamAttempt::where('exam_id', $exam->id)
+                    ->where('user_id', $user->id)
+                    ->where('status', 'in_progress'),
+                $termId
+            )->where('started_at', '<', now()->subMinutes(max(1, $exam->duration_minutes)))
+                ->get();
 
+            foreach ($stale as $staleAttempt) {
+                $this->autoSubmit($staleAttempt);
+            }
+
+            // Attempts are counted PER TERM against the exam's limit, so a
+            // re-enrolled student starts a fresh budget without mixing results.
+            $usedInTerm = $this->scopeToTerm(
+                ExamAttempt::where('exam_id', $exam->id)->where('user_id', $user->id),
+                $termId
+            )->count();
+
+            if ($usedInTerm >= $maxAttempts) {
+                return null;
+            }
+
+            // Numbering stays globally monotonic, respecting the unique key
+            // (exam_id, user_id, attempt_number).
             $attemptNumber = ExamAttempt::where('exam_id', $exam->id)
                 ->where('user_id', $user->id)
                 ->max('attempt_number') + 1;
-
-            if ($attemptNumber > $maxAttempts) {
-                return null;
-            }
 
             return ExamAttempt::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $exam->tenant_id,
                 'exam_id' => $exam->id,
                 'user_id' => $user->id,
+                'academic_term_id' => $termId,
                 'attempt_number' => $attemptNumber,
                 'status' => 'in_progress',
                 'started_at' => now(),
@@ -249,10 +269,12 @@ class ExamAttemptController extends Controller
             return $data;
         });
 
-        $attemptsUsed = ExamAttempt::where('exam_id', $exam->id)
-            ->where('user_id', $user->id)
-            ->where('status', 'submitted')
-            ->count();
+        $attemptsUsed = $this->scopeToTerm(
+            ExamAttempt::where('exam_id', $exam->id)
+                ->where('user_id', $user->id)
+                ->where('status', 'submitted'),
+            $termId
+        )->count();
         $attemptsLeft = $exam->max_attempts > 0 ? max(0, $exam->max_attempts - $attemptsUsed) : -1;
 
         return response()->json([
@@ -380,10 +402,12 @@ class ExamAttemptController extends Controller
             'metadata' => $metadata,
         ]);
 
-        $attemptsUsed = ExamAttempt::where('exam_id', $exam->id)
-            ->where('user_id', $request->user()->id)
-            ->where('status', 'submitted')
-            ->count();
+        $attemptsUsed = $this->scopeToTerm(
+            ExamAttempt::where('exam_id', $exam->id)
+                ->where('user_id', $request->user()->id)
+                ->where('status', 'submitted'),
+            $attempt->academic_term_id !== null ? (string) $attempt->academic_term_id : null
+        )->count();
         $attemptsLeft = $exam->max_attempts > 0 ? max(0, $exam->max_attempts - $attemptsUsed) : -1;
 
         if ($passed) {
@@ -544,6 +568,37 @@ class ExamAttemptController extends Controller
     private function perPage(Request $request): int
     {
         return min(max((int) $request->input('per_page', 20), 1), 100);
+    }
+
+    /**
+     * The academic term that scopes this student's attempts for a course:
+     * their current effective enrollment's term, or NULL when it is not
+     * term-bound (legacy rows). Historical attempts from another term never
+     * count against the current budget.
+     */
+    private function currentTermId(string $tenantId, string $courseId, string $userId): ?string
+    {
+        $termId = Enrollment::withoutTenant()
+            ->where('tenant_id', $tenantId)
+            ->where('course_id', $courseId)
+            ->where('user_id', $userId)
+            ->effective()
+            ->orderByDesc('enrolled_at')
+            ->value('academic_term_id');
+
+        return $termId !== null ? (string) $termId : null;
+    }
+
+    /**
+     * Constrain an attempt query to one term scope. A NULL scope matches the
+     * legacy "no term" rows only, so old results are never pulled into a
+     * term-bound limit.
+     */
+    private function scopeToTerm(\Illuminate\Database\Eloquent\Builder $query, ?string $termId): \Illuminate\Database\Eloquent\Builder
+    {
+        return $termId === null
+            ? $query->whereNull('academic_term_id')
+            : $query->where('academic_term_id', $termId);
     }
 
     private function checkAnswer(Question $question, mixed $givenAnswer): bool

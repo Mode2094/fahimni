@@ -135,6 +135,13 @@ export default function StudentsPage() {
               : t(`${seats.used} / ${seats.limit} مقعد · متاح ${seats.remaining}`, `${seats.used} / ${seats.limit} seats · ${seats.remaining} available`)}
           </div>
         )}
+        <a
+          href="/teacher/terms"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-semibold ${seats ? '' : 'ms-auto'}`}
+        >
+          <Calendar className="h-4 w-4" />
+          {t('الفصول وربط الطلاب', 'Terms & link students')}
+        </a>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">

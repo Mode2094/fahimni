@@ -246,6 +246,8 @@ Route::prefix('v1')->group(function () {
                 Route::delete('terms/{term}', [AcademicTermController::class, 'destroy']);
                 Route::post('terms/{term}/activate', [AcademicTermController::class, 'activate']);
                 Route::post('terms/{term}/students', [AcademicTermController::class, 'assignStudents']);
+                Route::get('terms/{term}/linkable-students', [AcademicTermController::class, 'linkableStudents']);
+                Route::post('terms/{term}/link-students', [AcademicTermController::class, 'linkStudents']);
                 Route::get('terms/{term}/end-preview', [AcademicTermController::class, 'endPreview']);
                 Route::post('terms/{term}/end', [AcademicTermController::class, 'end']);
                 Route::post('terms/{term}/promote', [AcademicTermController::class, 'promote']);
