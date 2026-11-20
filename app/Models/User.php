@@ -57,6 +57,63 @@ class User extends Authenticatable
     }
 
     /**
+     * Normalize an email for storage and lookup: one canonical form, so an
+     * account can never be duplicated under a case/whitespace variant.
+     */
+    public static function normalizeEmail(string $email): string
+    {
+        return strtolower(trim($email));
+    }
+
+    /**
+     * Find an account by email INCLUDING soft-deleted rows.
+     *
+     * A soft-deleted row still holds its address in the `users_email_unique`
+     * index, so a plain `where('email', ...)` misses it and the next INSERT
+     * trips the unique constraint — the production `google.callback_unique_
+     * collision` that dead-ended in «تعارض مؤقت — أعد المحاولة». Every auth
+     * and provisioning path must resolve an address through here instead of a
+     * raw `where('email')`.
+     */
+    public static function findByEmail(string $email): ?self
+    {
+        $normalized = static::normalizeEmail($email);
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        return static::withTrashed()->where('email', $normalized)->first();
+    }
+
+    /**
+     * Bring a soft-deleted account — and the workspaces it owns or belongs to —
+     * back into view. Deletion on this platform is non-destructive: it hides an
+     * account while preserving its data (enforcement is `is_active = false`), so
+     * a flow that has PROVEN ownership of the address (a correct password, a
+     * verified Google identity, an emailed reset token) may reactivate it.
+     */
+    public function restoreWithWorkspaces(): void
+    {
+        if (! $this->trashed()) {
+            return;
+        }
+
+        $tenantIds = TenantUser::withoutGlobalScope('tenant')
+            ->where('user_id', $this->id)
+            ->pluck('tenant_id');
+
+        Tenant::withTrashed()
+            ->where(function ($query) use ($tenantIds) {
+                $query->whereIn('id', $tenantIds)
+                    ->orWhere('owner_id', $this->id);
+            })
+            ->restore();
+
+        $this->restore();
+    }
+
+    /**
      * Send a branded, Arabic password-reset email pointing at the frontend.
      *
      * Laravel's default ResetPassword notification builds a URL from the

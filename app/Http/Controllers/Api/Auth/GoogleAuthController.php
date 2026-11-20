@@ -125,7 +125,10 @@ class GoogleAuthController extends Controller
             return $this->redirectToFrontend($frontend, $role, ['error' => 'no_email']);
         }
 
-        $user = User::where('email', $email)->first();
+        // Include soft-deleted rows: a deleted account keeps its address in the
+        // unique index, so a plain lookup would miss it and the later INSERT
+        // would collide (the `error=retry` dead-end).
+        $user = User::findByEmail($email);
         $existingTenant = $user ? $user->tenantPivots()->first() : null;
 
         // ── Gates. Decided BEFORE any write so a rejected attempt never
@@ -146,6 +149,13 @@ class GoogleAuthController extends Controller
             && ! ($user && $user->hasRole('Teacher'))
             && ! $this->teacherRegistrationAllowed($email)) {
             return $this->redirectToFrontend($frontend, $role, ['error' => 'teacher_registration_disabled']);
+        }
+
+        // The verified Google email proves ownership of a soft-deleted account:
+        // reactivate it (non-destructively, with its workspaces) so login never
+        // dead-ends on the reserved address.
+        if ($user && $user->trashed()) {
+            $user->restoreWithWorkspaces();
         }
 
         if ($user && ! $user->is_active) {
@@ -178,7 +188,13 @@ class GoogleAuthController extends Controller
             [$user, $tenant] = DB::transaction(function () use ($email, $name, $regData, $role, $wantsStaffTenant, &$trialStarted) {
                 // Re-read inside the transaction and take a row lock so
                 // concurrent callbacks converge on one row.
-                $user = User::where('email', $email)->lockForUpdate()->first();
+                $user = User::withTrashed()->where('email', $email)->lockForUpdate()->first();
+
+                if ($user && $user->trashed()) {
+                    // A concurrent path may have soft-deleted mid-flight; the
+                    // verified email still owns it, so reactivate.
+                    $user->restoreWithWorkspaces();
+                }
 
                 if (! $user) {
                     $user = User::create([
@@ -220,7 +236,7 @@ class GoogleAuthController extends Controller
                 throw $e;
             }
 
-            $user = User::where('email', $email)->first();
+            $user = User::findByEmail($email);
 
             if (! $user) {
                 Log::warning('google.callback_unique_collision');

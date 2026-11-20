@@ -168,10 +168,17 @@ class AdminController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'nullable|string|min:8',
             'plan_id' => 'nullable|exists:subscription_plans,id',
         ]);
+
+        if (User::onlyTrashed()->where('email', strtolower($validated['email']))->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — استخدم بريداً آخر، أو أطلب من صاحبه استعادة الحساب بتسجيل الدخول.',
+                'code' => 'email_previously_deleted',
+            ], 422);
+        }
 
         $password = $validated['password'] ?? Str::random(14);
         $user = User::create([
@@ -559,11 +566,18 @@ class AdminController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'nullable|string|min:8',
             'tenant_id' => 'nullable|exists:tenants,id',
             'course_id' => 'nullable|exists:courses,id',
         ]);
+
+        if (User::onlyTrashed()->where('email', strtolower($validated['email']))->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — استخدم بريداً آخر، أو أطلب من صاحبه استعادة الحساب بتسجيل الدخول.',
+                'code' => 'email_previously_deleted',
+            ], 422);
+        }
 
         $password = $validated['password'] ?? Str::random(12);
         $user = User::create([

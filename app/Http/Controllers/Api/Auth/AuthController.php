@@ -53,7 +53,10 @@ class AuthController extends Controller
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            // Ignore soft-deleted rows: a deleted account keeps its address
+            // reserved, and we answer that case explicitly below with a clear,
+            // recoverable message instead of a bare "already taken".
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'required|string|min:8|confirmed',
             'locale' => 'sometimes|string|in:ar,en',
             'role' => 'sometimes|string|in:Student,Teacher',
@@ -63,6 +66,17 @@ class AuthController extends Controller
         // Normalize the email so accounts can never be registered with
         // case-variants of an existing address (impersonation vectors).
         $email = strtolower(trim($validated['email']));
+
+        // A previously deleted account keeps its address reserved. Never
+        // silently re-provision it — that would hand a stranger control of a
+        // deleted account. Its owner recovers it by proving ownership (sign in,
+        // Google, or a password reset).
+        if (User::onlyTrashed()->where('email', $email)->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — سجّل الدخول لاستعادة الحساب أو استخدم بريداً آخر.',
+                'code' => 'email_previously_deleted',
+            ], 422);
+        }
 
         $user = User::create([
             'id' => UuidV7::generate(),
@@ -232,7 +246,10 @@ class AuthController extends Controller
             }
         }
 
-        $user = User::where('email', strtolower(trim($request->email)))->first();
+        // Include soft-deleted rows: the email is still reserved by the unique
+        // index, so a plain lookup would miss the account and any re-create
+        // would collide.
+        $user = User::findByEmail((string) $request->email);
 
         // Timing-safe login: unknown emails run a dummy hash comparison so
         // account existence cannot be inferred from response latency.
@@ -244,6 +261,12 @@ class AuthController extends Controller
             return response()->json([
                 'message' => __('auth.failed'),
             ], 401);
+        }
+
+        // A correct password proves ownership: bring a soft-deleted account
+        // back instead of dead-ending on a reserved-but-hidden address.
+        if ($user->trashed()) {
+            $user->restoreWithWorkspaces();
         }
 
         if (! $user->is_active) {
@@ -568,6 +591,11 @@ class AuthController extends Controller
         // Uniform response: never reveal whether an account exists — a mailer
         // failure must not surface as a distinct status (500 for existing email
         // vs 200 for unknown would leak account existence).
+        // A reset link is delivered to the account's own inbox (proving
+        // ownership), so a soft-deleted account is restored first — otherwise
+        // the password broker cannot see its reserved-but-hidden email.
+        User::findByEmail((string) $request->email)?->restoreWithWorkspaces();
+
         try {
             $status = Password::sendResetLink($request->only('email'));
 
@@ -596,6 +624,10 @@ class AuthController extends Controller
         ]);
 
         $loginPath = null;
+
+        // The emailed token proves ownership of the address: restore a
+        // soft-deleted account so the broker can complete the reset.
+        User::findByEmail((string) $request->email)?->restoreWithWorkspaces();
 
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),

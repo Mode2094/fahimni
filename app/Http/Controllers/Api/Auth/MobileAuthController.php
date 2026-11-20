@@ -58,7 +58,7 @@ class MobileAuthController extends Controller
         $tenant = $validation['tenant'];
 
         // 2. Credential check (timing-safe, mirrors web login).
-        $user = User::where('email', strtolower(trim((string) $request->input('email'))))->first();
+        $user = User::findByEmail((string) $request->input('email'));
 
         if (! $user || ! Hash::check((string) $request->input('password'), $user->password)) {
             Hash::check((string) $request->input('password'), self::DUMMY_HASH);
@@ -67,6 +67,12 @@ class MobileAuthController extends Controller
                 'message' => 'Invalid credentials.',
                 'reason' => 'invalid_credentials',
             ], 401);
+        }
+
+        // A correct password proves ownership: reactivate a soft-deleted
+        // account instead of dead-ending on its reserved-but-hidden address.
+        if ($user->trashed()) {
+            $user->restoreWithWorkspaces();
         }
 
         if (! $user->is_active) {
@@ -198,10 +204,12 @@ class MobileAuthController extends Controller
 
         // Same account as the web platform: if the email already exists the
         // student logs in — never silently duplicates.
-        $existing = User::where('email', $email)->first();
+        $existing = User::findByEmail($email);
         if ($existing) {
             return response()->json([
-                'message' => 'This email is already registered. Please log in instead.',
+                'message' => $existing->trashed()
+                    ? 'This email belongs to a deleted account. Sign in to restore it, or use another email.'
+                    : 'This email is already registered. Please log in instead.',
                 'reason' => 'account_exists',
             ], 422);
         }
@@ -289,7 +297,13 @@ class MobileAuthController extends Controller
             ], 422);
         }
 
-        $user = User::where('email', $email)->first();
+        // Include soft-deleted rows; a verified Google email proves ownership,
+        // so a deleted account is reactivated rather than colliding below.
+        $user = User::findByEmail($email);
+
+        if ($user && $user->trashed()) {
+            $user->restoreWithWorkspaces();
+        }
 
         if (! $user) {
             $user = User::create([
