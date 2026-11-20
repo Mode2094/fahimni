@@ -5,131 +5,200 @@ import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
 import { Card, CardContent } from '@/components/ui/card';
-import { Users, GraduationCap, BookOpen, CreditCard, UserPlus, Wallet, Loader2, TrendingUp, Sparkles, Crown, FileText, Ticket } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dashboard-kit';
+import { cn } from '@/lib/utils';
+import {
+  Users, GraduationCap, BookOpen, CreditCard, UserPlus, Wallet, TrendingUp,
+  Crown, Ticket, FileText, BellRing, LayoutGrid, ShieldCheck, Activity, RefreshCw, AlertTriangle,
+} from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
+/**
+ * Super-Admin dashboard — mobile-first redesign.
+ *
+ * One responsive layout serves every width: the phone opens on a compact
+ * header, a single revenue card and a 2×2 statistics grid, while desktop keeps
+ * the same components laid out 4-up with roomier spacing. Revenue is shown
+ * exactly once, secondary stats live in their own section, and every tile
+ * links to a real admin page.
+ */
 export default function AdminDashboardPage() {
   const { check, user } = useAuth();
   const { locale } = useLocale();
   const { formatPrice, load: loadSettings } = useSettings();
+  const isDesktop = useIsDesktop();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const loadStats = async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const tid = localStorage.getItem('tenant_id');
+      const res = await fetch(`${API}/dashboard`, {
+        headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStats(await res.json());
+    } catch {
+      // Surface a clear, retryable error instead of zeroes that look real.
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!check()) return;
-    const token = localStorage.getItem('lms_authed');
-    const tid = localStorage.getItem('tenant_id');
     loadSettings();
-    fetch(`${API}/dashboard`, { headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' } })
-      .then(r => r.json()).then(d => setStats(d)).catch(() => {})
-      .finally(() => setLoading(false));
+    loadStats();
   }, [check()]);
 
-  const cards = [
-    { label: t('المعلمون', 'Teachers'), value: stats?.total_tenants ?? 0, icon: Users, color: '#0d9488', href: '/admin/teachers' },
-    { label: t('الطلاب', 'Students'), value: stats?.total_students ?? 0, icon: GraduationCap, color: '#7c3aed', href: '/admin/students' },
-    { label: t('الكورسات', 'Courses'), value: stats?.total_courses ?? 0, icon: BookOpen, color: '#059669', href: '/admin/teachers' },
-    { label: t('الاشتراكات النشطة', 'Active subscriptions'), value: stats?.active_subscriptions ?? 0, icon: CreditCard, color: '#0891b2', href: '/admin/subscriptions' },
-    { label: t('مستخدمي المنصة', 'Platform users'), value: stats?.total_users ?? 0, icon: UserPlus, color: '#ea580c', href: '/admin/teachers' },
-    { label: t('إجمالي الإيرادات', 'Total revenue'), value: formatPrice(stats?.total_revenue ?? 0), icon: Wallet, color: '#dc2626', href: '/admin/payments', big: true },
+  const firstName = (user?.name || '').trim().split(/\s+/)[0] || '';
+
+  // 2×2 on phones · 4-up from lg — the four headline platform statistics.
+  const primaryStats = [
+    { label: t('المعلمون', 'Teachers'), value: stats?.total_tenants ?? 0, href: '/admin/teachers', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
+    { label: t('الطلاب', 'Students'), value: stats?.total_students ?? 0, href: '/admin/students', icon: GraduationCap, tone: 'bg-violet-500/10 text-violet-600' },
+    { label: t('الكورسات', 'Courses'), value: stats?.total_courses ?? 0, href: '/admin/teachers', icon: BookOpen, tone: 'bg-emerald-500/10 text-emerald-600' },
+    { label: t('الاشتراكات النشطة', 'Active subscriptions'), value: stats?.active_subscriptions ?? 0, href: '/admin/subscriptions', icon: CreditCard, tone: 'bg-sky-500/10 text-sky-600' },
   ];
 
-  const quickLinks = [
-    { label: t('الخطط والأسعار', 'Plans & pricing'), icon: Crown, href: '/admin/plans', color: '#d97706' },
-    { label: t('تذاكر الدعم', 'Support tickets'), icon: Ticket, href: '/admin/tickets', color: '#7c3aed' },
-    { label: t('الفواتير', 'Invoices'), icon: FileText, href: '/admin/invoices', color: '#059669' },
+  // Every destination below is a real, existing admin page.
+  const quickActions = [
+    { label: t('إدارة المعلمين', 'Manage teachers'), href: '/admin/teachers', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
+    { label: t('الخطط والأسعار', 'Plans & pricing'), href: '/admin/plans', icon: Crown, tone: 'bg-amber-500/10 text-amber-600' },
+    { label: t('الدعم الفني', 'Support'), href: '/admin/tickets', icon: Ticket, tone: 'bg-violet-500/10 text-violet-600' },
+    { label: t('المبيعات والفواتير', 'Sales & invoices'), href: '/admin/payments', icon: FileText, tone: 'bg-emerald-500/10 text-emerald-600' },
+    { label: t('إشعارات المعلمين', 'Teacher notifications'), href: '/admin/teacher-notifications', icon: BellRing, tone: 'bg-sky-500/10 text-sky-600' },
   ];
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-6xl space-y-4 sm:space-y-6" data-testid="admin-dashboard-loading">
+        <Skeleton className="h-28 w-full rounded-3xl" />
+        <Skeleton className="h-20 w-full rounded-2xl" />
+        <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          <Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" />
+        </div>
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mx-auto max-w-6xl" data-testid="admin-dashboard-error">
+        <Card className="border-0 shadow-sm">
+          <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10">
+              <AlertTriangle className="h-7 w-7 text-amber-500" />
+            </span>
+            <div>
+              <p className="font-bold">{t('تعذّر تحميل الإحصائيات', 'Could not load the statistics')}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{t('تحقّق من اتصالك ثم أعد المحاولة.', 'Check your connection and try again.')}</p>
+            </div>
+            <button
+              onClick={loadStats}
+              data-testid="dashboard-retry"
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {t('إعادة المحاولة', 'Retry')}
+            </button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* ─── ترحيب ─────────────────────────────── */}
-      <section className="relative overflow-hidden rounded-3xl p-6 sm:p-8" style={{ background: 'linear-gradient(135deg, #0f2e2b 0%, #115e54 55%, #0d9488 100%)' }}>
-        <div className="absolute top-0 left-1/4 w-72 h-72 bg-teal-300/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-64 h-64 bg-emerald-300/15 rounded-full blur-3xl" />
-        <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '26px 26px' }} />
-        <div className="relative z-10 flex flex-wrap items-start justify-between gap-6">
-          <div className="min-w-0 flex-1">
-            <span className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1 text-xs font-medium text-white mb-3">
-              <Sparkles className="h-3.5 w-3.5 text-teal-200" />
-              {t('مركز إدارة المنصة', 'Platform control center')}
-            </span>
-            <h1 className="text-2xl sm:text-3xl font-bold text-white leading-snug">{t('لوحة الإدارة', 'Admin Dashboard')}</h1>
-            <p className="text-white/65 text-sm sm:text-base mt-1.5 max-w-lg">
-              {t('إحصائيات المنصة لحظياً — المعلمون، الطلاب، الاشتراكات والإيرادات', 'Live platform stats — teachers, students, subscriptions & revenue')}
-            </p>
-            <div className="flex flex-wrap gap-2.5 mt-5">
-              {quickLinks.map((q, i) => (
-                <a key={i} href={q.href} className="inline-flex items-center gap-1.5 rounded-full glass px-4 py-2 text-xs font-bold text-white transition-all hover:bg-white/15 hover:scale-[1.03]">
-                  <q.icon className="h-3.5 w-3.5" style={{ color: q.color }} /> {q.label}
-                </a>
-              ))}
-            </div>
-          </div>
-          <div className="glass rounded-3xl px-6 py-5 min-w-[220px]">
-            <p className="text-[11px] text-white/60 mb-1">{t('إجمالي إيرادات المنصة', 'Platform total revenue')}</p>
-            <div className="text-3xl font-black text-white">{formatPrice(stats?.total_revenue ?? 0)}</div>
-            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-1.5 text-xs text-white/60">
-              <TrendingUp className="h-3.5 w-3.5 text-emerald-300" />
-              {t('جميع الإيرادات المكتملة', 'All completed revenue')}
-            </div>
-          </div>
+    <div className="mx-auto max-w-6xl space-y-4 sm:space-y-6" data-testid="admin-dashboard">
+      {/* ─── رأس مختصر ─────────────────────────────── */}
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-800 to-teal-700 p-4 text-white shadow-brand sm:p-5">
+        <div className="pointer-events-none absolute -end-10 -top-12 h-40 w-40 rounded-full bg-white/10 blur-3xl" aria-hidden="true" />
+        <div className="relative min-w-0">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-bold ring-1 ring-white/20">
+            <ShieldCheck className="h-3 w-3 text-teal-100" />
+            {t('مركز إدارة المنصة', 'Platform control center')}
+          </span>
+          <h1 className="mt-2 text-xl font-extrabold leading-snug tracking-tight sm:text-2xl lg:text-3xl">
+            {t('لوحة الإدارة', 'Admin Dashboard')}{firstName ? <span className="font-semibold text-teal-50/80"> · {firstName}</span> : null}
+          </h1>
+          <p className="mt-1 text-xs text-teal-50/85 sm:text-sm">{t('ملخص المنصة لحظياً', 'Live platform summary')}</p>
         </div>
       </section>
 
-      {loading ? (
-        <div className="flex justify-center py-24"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>
-      ) : (
-        <>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {cards.map((s, i) => (
-              <Card key={i} className="group border-0 shadow-sm card-hover overflow-hidden relative">
-                <div className="absolute -top-8 -end-8 h-24 w-24 rounded-full opacity-10 transition-opacity group-hover:opacity-20" style={{ background: s.color }} />
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl" style={{ backgroundColor: `${s.color}12` }}>
-                      <s.icon className="h-6 w-6" style={{ color: s.color }} />
-                    </div>
-                    <a href={s.href} className="text-[10px] font-bold text-muted-foreground/50 hover:text-teal-700 transition-colors">{t('عرض', 'View')} →</a>
-                  </div>
-                  <div className={`font-black tracking-tight ${s.big ? 'text-2xl' : 'text-3xl'}`}>{s.value}</div>
-                  <div className="text-sm text-muted-foreground mt-1">{s.label}</div>
-                </CardContent>
-              </Card>
-            ))}
+      {/* ─── الإيرادات (بطاقة واحدة، بلا تكرار) ─────── */}
+      <Card className="border-0 shadow-sm" data-testid="revenue-card">
+        <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-teal-500/10">
+            <Wallet className="h-6 w-6 text-teal-600" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-muted-foreground">{t('إجمالي إيرادات المنصة', 'Platform total revenue')}</p>
+            <p className="mt-1 break-words text-2xl font-black leading-none tabular-nums sm:text-3xl" data-testid="revenue-value">
+              {formatPrice(stats?.total_revenue ?? 0)}
+            </p>
+            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
+              {t('جميع الإيرادات المكتملة', 'All completed revenue')}
+            </p>
           </div>
+        </CardContent>
+      </Card>
 
-          <Card className="border-0 shadow-md overflow-hidden">
-            <div className="p-6 sm:p-8 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0f2e2b, #115e54 60%, #0d9488)' }}>
-              <div className="absolute -top-16 right-1/4 w-64 h-64 rounded-full bg-teal-300/15 blur-3xl" />
-              <div className="relative flex flex-wrap items-center justify-between gap-6">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 border border-white/10"><TrendingUp className="h-7 w-7 text-teal-200" /></div>
-                  <div>
-                    <p className="text-white/60 text-sm">{t('نبذة المنصة', 'Platform snapshot')}</p>
-                    <p className="text-2xl sm:text-3xl font-black text-white mt-0.5">{formatPrice(stats?.total_revenue ?? 0)}</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2.5">
-                  {[
-                    { label: t('معلمون', 'Teachers'), value: stats?.total_tenants ?? 0 },
-                    { label: t('طلاب', 'Students'), value: stats?.total_students ?? 0 },
-                    { label: t('كورسات', 'Courses'), value: stats?.total_courses ?? 0 },
-                    { label: t('اشتراكات', 'Subscriptions'), value: stats?.active_subscriptions ?? 0 },
-                  ].map((s, i) => (
-                    <div key={i} className="glass rounded-2xl px-4 py-3 text-center min-w-[90px]">
-                      <div className="text-lg font-black text-white">{s.value}</div>
-                      <div className="text-[10px] text-white/60 mt-0.5">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </Card>
-        </>
-      )}
+      {/* ─── الإحصائيات الرئيسية (2×2 على الهاتف) ────── */}
+      <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" data-testid="stats-grid">
+        {primaryStats.map((s, i) => (
+          <StatTile key={i} testId={`stat-${i}`} label={s.label} value={s.value} href={s.href} icon={s.icon} tone={s.tone} />
+        ))}
+      </div>
+
+      {/* ─── إجراءات سريعة ──────────────────────────── */}
+      <SectionCard
+        icon={LayoutGrid}
+        title={t('إجراءات سريعة', 'Quick actions')}
+        description={t('أكثر مهام الإدارة استخداماً', 'The most-used admin tasks')}
+        forceOpen
+      >
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5" data-testid="quick-actions">
+          {quickActions.map((q) => (
+            <a
+              key={q.href}
+              href={q.href}
+              className="group flex min-h-[76px] flex-col justify-between gap-2 rounded-2xl border border-border bg-card p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className={cn('flex h-9 w-9 items-center justify-center rounded-xl', q.tone)}>
+                <q.icon className="h-[18px] w-[18px]" />
+              </span>
+              <span className="text-xs font-bold leading-tight sm:text-sm">{q.label}</span>
+            </a>
+          ))}
+        </div>
+      </SectionCard>
+
+      {/* ─── بقية الإحصائيات في قسم مناسب ────────────── */}
+      <SectionCard
+        icon={Activity}
+        title={t('نظرة عامة على المنصة', 'Platform overview')}
+        description={t('مؤشرات إضافية', 'Additional metrics')}
+        forceOpen={isDesktop}
+        testId="platform-overview"
+      >
+        <div className="flex items-center gap-3 rounded-2xl border border-border bg-background p-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600">
+            <UserPlus className="h-5 w-5" />
+          </span>
+          <p className="min-w-0 flex-1 text-sm font-semibold text-muted-foreground">{t('مستخدمو المنصة', 'Platform users')}</p>
+          <p className="shrink-0 text-2xl font-bold tabular-nums">{stats?.total_users ?? 0}</p>
+        </div>
+      </SectionCard>
     </div>
   );
 }

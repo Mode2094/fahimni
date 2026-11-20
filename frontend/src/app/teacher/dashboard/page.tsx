@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
@@ -8,9 +8,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dashboard-kit';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink, LayoutGrid, ChevronDown, Activity, Smartphone, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -23,101 +24,6 @@ const ONBOARDING_META: Record<string, { ar: string; en: string; icon: any; href:
   live: { ar: 'ابدأ بثاً مباشراً', en: 'Hold a live session', icon: Radio, href: '/teacher/live' },
   schedule: { ar: 'جدوِل درساً بموعد ثابت', en: 'Schedule a lesson', icon: CalendarDays, href: '/teacher/schedule' },
 };
-
-/**
- * Tracks the desktop breakpoint so a section header behaves as a real toggle on
- * phones and as a plain, always-open heading on large screens. SSR-safe: it
- * starts `false` (phone shape) and settles after mount, and the dashboard body
- * only renders once the data has loaded on the client.
- */
-function useIsDesktop() {
-  const [isDesktop, setIsDesktop] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const onChange = () => setIsDesktop(mq.matches);
-    onChange();
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  return isDesktop;
-}
-
-/**
- * A dashboard section. On phones it collapses behind its header (progressive
- * disclosure) so the page opens short and focused; on desktop it is always
- * expanded, exactly as before.
- */
-function SectionCard({
-  title, icon: Icon, description, badge, defaultOpen = false, forceOpen = false, children,
-}: {
-  title: string;
-  icon: ComponentType<{ className?: string }>;
-  description?: string;
-  badge?: ReactNode;
-  defaultOpen?: boolean;
-  forceOpen?: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const expanded = forceOpen || open;
-
-  return (
-    <Card className="overflow-hidden border-0 shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={expanded}
-        className={cn(
-          'flex w-full items-center gap-3 p-4 text-start transition-colors hover:bg-muted/40 lg:p-5',
-          forceOpen && 'lg:pointer-events-none lg:hover:bg-transparent',
-        )}
-      >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-500/10">
-          <Icon className="h-[18px] w-[18px] text-teal-600" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="font-bold">{title}</span>
-            {badge}
-          </span>
-          {description && <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>}
-        </span>
-        <ChevronDown
-          className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 lg:hidden', expanded && 'rotate-180')}
-        />
-      </button>
-      <div className={cn('px-4 pb-4 sm:px-5 sm:pb-5', expanded ? 'block' : 'hidden')}>{children}</div>
-    </Card>
-  );
-}
-
-/** One of the four headline statistics (2×2 on phones, 4-up on desktop). */
-function StatTile({
-  label, value, href, icon: Icon, tone,
-}: {
-  label: string;
-  value: ReactNode;
-  href: string;
-  icon: ComponentType<{ className?: string }>;
-  tone: string;
-}) {
-  return (
-    <a href={href} className="group h-full rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      <Card className="h-full border-0 shadow-sm transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-md">
-        <CardContent className="flex h-full flex-col gap-3 p-4 sm:p-5">
-          <span className={cn('flex h-10 w-10 items-center justify-center rounded-xl', tone)}>
-            <Icon className="h-5 w-5" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-2xl font-bold leading-none tabular-nums">{value}</p>
-            <p className="mt-1.5 text-xs text-muted-foreground sm:text-sm">{label}</p>
-          </div>
-        </CardContent>
-      </Card>
-    </a>
-  );
-}
 
 export default function TeacherDashboard() {
   const { user, check } = useAuth();
