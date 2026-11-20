@@ -446,6 +446,8 @@ class PublicSiteController extends Controller
             'slug' => $course->slug,
             'description' => $course->description,
             'short_description' => $course->short_description,
+            'thumbnail_url' => $course->thumbnail_url,
+            'cover_url' => $course->cover_url,
             'duration_hours' => $course->duration_hours,
             'duration_minutes' => $course->duration_minutes,
             'level' => $course->level,

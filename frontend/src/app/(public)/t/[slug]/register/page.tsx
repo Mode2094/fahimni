@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from '@/store/locale';
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { GraduationCap, Loader2, CheckCircle } from 'lucide-react';
+import { GraduationCap, Loader2, CheckCircle, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
 import { track } from '@/lib/analytics';
@@ -24,7 +24,16 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', confirm: '' });
   const [load, setLoad] = useState(false);
   const [done, setDone] = useState(false);
+  const [brand, setBrand] = useState<any>(null);
   const u = (f: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [f]: e.target.value });
+
+  // The teacher's own branding, so the sign-up continues the same experience.
+  useEffect(() => {
+    fetch(`${API}/public/${slug}`).then((r) => r.json()).then((d) => setBrand(d.site || null)).catch(() => {});
+  }, [slug]);
+
+  const primary = brand?.primary_color || '#0d9488';
+  const accent = brand?.accent_color || '#14b8a6';
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,11 +67,19 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 to-teal-50">
-      <div className="w-full max-w-md space-y-8 animate-in">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+      <div className="w-full max-w-md space-y-7 animate-in">
         <div className="text-center">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-500 shadow-xl"><GraduationCap className="h-8 w-8 text-white" /></div>
-          <h1 className="text-2xl font-bold">{locale === 'ar' ? 'سجل كطالب' : 'Register as Student'}</h1>
+          {brand?.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={brand.logo_url} alt="" className="mx-auto mb-5 h-16 w-16 rounded-2xl object-cover shadow-xl" />
+          ) : (
+            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl shadow-xl" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+              <GraduationCap className="h-8 w-8 text-white" />
+            </div>
+          )}
+          <h1 className="text-2xl font-bold">{t('سجل كطالب', 'Register as Student')}</h1>
+          {brand?.name && <p className="mt-1.5 text-sm text-slate-500">{brand.name}</p>}
         </div>
         <Card className="border-0 shadow-sm"><CardContent className="p-6 space-y-4">
           <div className="space-y-2"><Label htmlFor="name">{locale === 'ar' ? 'الاسم الكامل' : 'Full name'}</Label><Input id="name" value={form.name} onChange={u('name')} required className="h-11" /></div>
@@ -70,10 +87,20 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
           <div className="space-y-2"><Label htmlFor="phone">{locale === 'ar' ? 'الهاتف' : 'Phone'}</Label><Input id="phone" type="tel" value={form.phone} onChange={u('phone')} className="h-11" /></div>
           <div className="space-y-2"><Label htmlFor="password">{locale === 'ar' ? 'كلمة المرور' : 'Password'}</Label><Input id="password" type="password" value={form.password} onChange={u('password')} required className="h-11" /></div>
           <div className="space-y-2"><Label htmlFor="confirm">{locale === 'ar' ? 'تأكيد' : 'Confirm'}</Label><Input id="confirm" type="password" value={form.confirm} onChange={u('confirm')} required className="h-11" /></div>
-          <Button type="submit" onClick={submit} disabled={load} className="w-full h-12 rounded-xl text-white" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+          <Button type="submit" onClick={submit} disabled={load} className="h-12 w-full rounded-xl text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
             {load ? <Loader2 className="h-5 w-5 animate-spin" /> : (locale === 'ar' ? 'تسجيل' : 'Register')}
           </Button>
+          <p className="flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            {locale === 'ar' ? 'سنستخدم بياناتك لإنشاء حسابك في منصة معلمك فقط' : 'We only use your data to create your account on your teacher’s platform'}
+          </p>
         </CardContent></Card>
+        <p className="text-center text-sm text-slate-500">
+          {locale === 'ar' ? 'لديك حساب؟' : 'Have an account?'}{' '}
+          <a href={`/student/login?tenant_slug=${slug}`} className="font-medium underline" style={{ color: primary }}>
+            {locale === 'ar' ? 'سجل دخول' : 'Log in'}
+          </a>
+        </p>
       </div>
     </div>
   );
