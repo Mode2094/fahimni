@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Activity, Wallet, ChevronLeft, ChevronRight, Smartphone, Copy, Check, Construction, Ticket, CalendarDays, Sparkles } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Activity, Wallet, ChevronLeft, ChevronRight, Smartphone, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -37,7 +37,9 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const [studentApp, setStudentApp] = useState<any>(null);
   const [onboarding, setOnboarding] = useState<any>(null);
+  const [platform, setPlatform] = useState<{ url: string; slug: string; customDomain: string | null; verified: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -45,18 +47,29 @@ export default function TeacherDashboard() {
     return { 'X-Tenant-Id': tid || '', Accept: 'application/json' };
   };
 
+  /** The teacher's own platform address: the verified custom domain when set,
+   *  otherwise the free /t/{slug} page. Falls back to the tenant slug when the
+   *  domain endpoint is not available to this role. */
+  const buildPlatform = (d: any) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const url = (typeof d?.page_url === 'string' && d.page_url) || (d?.slug ? `${origin}/t/${d.slug}` : '');
+    if (!url) return null;
+    return { url, slug: d?.slug || '', customDomain: d?.domain || null, verified: !!d?.verified };
+  };
+
   const loadAll = async () => {
     setLoading(true);
     try {
       // Each request degrades on its own: one failing endpoint must never blank
       // the dashboard or leave it stuck on skeletons forever.
-      const [planR, anaR, lesR, bkR, appR, onbR] = await Promise.all([
+      const [planR, anaR, lesR, bkR, appR, onbR, domR] = await Promise.all([
         fetch(`${API}/teacher/plan`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/onboarding`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/domain`, { headers: headers() }).catch(() => null),
       ]);
 
       if (planR?.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
@@ -65,6 +78,21 @@ export default function TeacherDashboard() {
       if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
       if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
       if (onbR?.ok) { const d = await onbR.json(); setOnboarding(d || null); }
+
+      let platformInfo = domR?.ok ? buildPlatform(await domR.json()) : null;
+      if (!platformInfo) {
+        // The domain endpoint needs settings.manage; a plain teacher still gets
+        // their slug from the tenant list so the link card is never empty.
+        const tR = await fetch(`${API}/tenants`, { headers: { Accept: 'application/json' } }).catch(() => null);
+        if (tR?.ok) {
+          const d = await tR.json();
+          const list = Array.isArray(d?.tenants) ? d.tenants : [];
+          const tid = localStorage.getItem('tenant_id');
+          const tenant = list.find((x: any) => x.id === tid) || list[0];
+          platformInfo = buildPlatform({ slug: tenant?.slug });
+        }
+      }
+      setPlatform(platformInfo);
     } catch {
       // Malformed payloads etc. — render whatever we have instead of locking up.
     } finally {
@@ -87,6 +115,16 @@ export default function TeacherDashboard() {
   };
 
   const fmtNum = (key: string, v: number) => (key === 'storage' ? fmtBytes(v) : String(v));
+
+  const copyPlatformLink = async () => {
+    if (!platform?.url) return;
+    try {
+      await navigator.clipboard.writeText(platform.url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+      toast.success(t('تم نسخ رابط منصتك', 'Platform link copied'));
+    } catch { toast.error(t('تعذر النسخ', 'Copy failed')); }
+  };
 
   // الوقت الحالي للترحيب
   const nowH = new Date().getHours();
@@ -147,6 +185,42 @@ export default function TeacherDashboard() {
           <a href="/courses"><Button variant="outline" className="gap-2 rounded-full">{t('إدارة الكورسات', 'Manage courses')}</Button></a>
         </div>
       </div>
+
+      {/* ─── نشر المنصة: رابط منصتك بسرعة ────────────── */}
+      <Card className="border-0 shadow-sm overflow-hidden">
+        <CardContent className="p-5 flex flex-wrap items-center gap-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-teal-500/10">
+            <Globe className="h-6 w-6 text-teal-600" />
+          </span>
+          <div className="flex-1 min-w-[240px]">
+            <p className="font-bold flex items-center gap-2 flex-wrap">
+              {t('نشر المنصة', 'Publish your platform')}
+              {platform?.url && <Badge className="bg-green-100 text-green-700 border-0">{t('جاهزة للمشاركة', 'Ready to share')}</Badge>}
+            </p>
+            <p className="text-sm text-gray-500 mt-0.5">{t('هذا رابط منصتك — شاركه مع طلابك أو انسخه بضغطة واحدة.', 'This is your platform link — share it with your students or copy it in one click.')}</p>
+            {platform?.url ? (
+              <div className="mt-2 flex items-center gap-2 rounded-xl border border-teal-100 bg-teal-50/50 p-1.5 ps-3 max-w-lg">
+                <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">{platform.url.replace(/^https?:\/\//, '')}</span>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={copyPlatformLink} aria-label={t('نسخ رابط المنصة', 'Copy platform link')} title={t('نسخ رابط المنصة', 'Copy platform link')}>
+                  {linkCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-amber-600">{t('لم يُحدَّد رابط منصتك بعد — حدّده من إعدادات المنصة.', 'Your platform link is not set yet — set it from platform settings.')}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {platform?.url && (
+              <a href={platform.url} target="_blank" rel="noopener noreferrer">
+                <Button variant="outline" className="gap-2 rounded-full"><ExternalLink className="h-4 w-4" />{t('معاينة المنصة', 'Preview')}</Button>
+              </a>
+            )}
+            <a href="/teacher/settings">
+              <Button className="gap-2 rounded-full">{t('إعدادات المنصة', 'Platform settings')}{locale === 'ar' ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</Button>
+            </a>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ─── الإحصائيات الرئيسية (4 فقط) ────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
