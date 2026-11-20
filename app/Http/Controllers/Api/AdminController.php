@@ -29,6 +29,7 @@ use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
 use App\Plans\TeacherTrialProgram;
+use App\Services\EnrollmentService;
 use App\Services\PaymentCompletionService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
@@ -580,41 +581,44 @@ class AdminController extends Controller
         }
 
         $password = $validated['password'] ?? Str::random(12);
-        $user = User::create([
-            'id' => UuidV7::generate(),
-            'name' => $validated['name'],
-            'email' => strtolower($validated['email']),
-            'password' => Hash::make($password),
-            'is_active' => true,
-            'email_verified_at' => now(),
-            'locale' => 'ar',
-        ]);
-        $user->assignRole('Student');
 
-        // Attach to the chosen tenant (or the first active one).
-        $tenantId = $validated['tenant_id'] ?? Tenant::where('status', 'active')->first()?->id;
+        $user = DB::transaction(function () use ($request, $validated, $password) {
+            $tenantId = $validated['tenant_id'] ?? Tenant::where('status', 'active')->first()?->id;
 
-        if ($tenantId) {
-            TenantUser::firstOrCreate(
-                ['tenant_id' => $tenantId, 'user_id' => $user->id],
-                ['role' => 'student', 'status' => 'active', 'joined_at' => now(), 'metadata' => []]
-            );
-
-            if ($request->filled('course_id')) {
+            $course = null;
+            if ($tenantId && $request->filled('course_id')) {
                 $course = Course::where('tenant_id', $tenantId)->findOrFail($request->course_id);
-                Enrollment::firstOrCreate(
-                    ['course_id' => $course->id, 'user_id' => $user->id],
-                    [
-                        'id' => UuidV7::generate(),
-                        'tenant_id' => $tenantId,
-                        'status' => 'active',
-                        'enrolled_at' => now(),
-                        'source' => 'admin',
-                        'metadata' => [],
-                    ]
-                );
+                // Fail before the account is created if the teacher's seat
+                // limit is full — never leave an orphan student.
+                app(EnrollmentService::class)->assertNewSeatAvailable($tenantId);
             }
-        }
+
+            $user = User::create([
+                'id' => UuidV7::generate(),
+                'name' => $validated['name'],
+                'email' => strtolower($validated['email']),
+                'password' => Hash::make($password),
+                'is_active' => true,
+                'email_verified_at' => now(),
+                'locale' => 'ar',
+            ]);
+            $user->assignRole('Student');
+
+            if ($tenantId) {
+                TenantUser::firstOrCreate(
+                    ['tenant_id' => $tenantId, 'user_id' => $user->id],
+                    ['role' => 'student', 'status' => 'active', 'joined_at' => now(), 'metadata' => []]
+                );
+
+                if ($course) {
+                    // Seat limit, duplicate and per-course cap are enforced
+                    // centrally under the tenant lock.
+                    app(EnrollmentService::class)->enroll($course, $user, ['source' => 'admin']);
+                }
+            }
+
+            return $user;
+        });
 
         AuditLogger::log($request, 'admin.student_created', 'user', $user->id, ['email' => $user->email]);
 

@@ -56,7 +56,9 @@ class AnnouncementController extends Controller
                                 ->from('enrollments')
                                 ->whereColumn('enrollments.course_id', 'announcements.course_id')
                                 ->where('enrollments.user_id', $user->id)
-                                ->where('enrollments.tenant_id', $tenantId);
+                                ->where('enrollments.tenant_id', $tenantId)
+                                ->whereIn('enrollments.status', ['active', 'completed'])
+                                ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
                         });
                 });
 
@@ -109,7 +111,7 @@ class AnnouncementController extends Controller
             || (! in_array($role, ['student', 'parent'], true) && in_array($announcement->audience, ['teachers', 'admins'], true))
             || ($announcement->audience === 'course' && $user->enrollments()
                 ->where('course_id', $announcement->course_id)
-                ->whereIn('status', ['active', 'completed'])
+                ->effective()
                 ->exists());
 
         abort_unless($visible, 404, 'Announcement not found.');

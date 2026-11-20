@@ -27,6 +27,7 @@ export default function StudentsPage() {
 
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seats, setSeats] = useState<any>(null);
   const [search, setSearch] = useState('');
   const [profile, setProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -45,7 +46,14 @@ export default function StudentsPage() {
       .then(r => r.json()).then(d => setStudents(d.students || [])).catch(() => {})
       .finally(() => setLoading(false));
   };
+  const loadSeats = () => {
+    // Seats = distinct students with a currently-effective enrollment
+    // (active/completed, not expired, not archived). Server-owned value.
+    fetch(`${API}/teacher/plan`, { headers: headers() })
+      .then(r => r.json()).then(d => setSeats(d.usage?.students || null)).catch(() => {});
+  };
   useEffect(() => { if (check()) load(); }, [check()]);
+  useEffect(() => { if (check()) loadSeats(); }, [check()]);
 
   const openProfile = async (s: any) => {
     setProfileLoading(true);
@@ -119,6 +127,14 @@ export default function StudentsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold">{t('الطلاب', 'Students')}</h1>
           <p className="text-muted-foreground mt-1">{t('إدارة كاملة: الأداء، الأجهزة، الحدود، وإعادة التعيين', 'Full control: performance, devices, limits & resets')}</p>
         </div>
+        {seats && (
+          <div className="flex items-center gap-2 rounded-full bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-700 ms-auto">
+            <Users className="h-4 w-4" />
+            {seats.unlimited
+              ? t(`${seats.used} مقعد مستخدم (غير محدود)`, `${seats.used} seats used (unlimited)`)
+              : t(`${seats.used} / ${seats.limit} مقعد · متاح ${seats.remaining}`, `${seats.used} / ${seats.limit} seats · ${seats.remaining} available`)}
+          </div>
+        )}
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">

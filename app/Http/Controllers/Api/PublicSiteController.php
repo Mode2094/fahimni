@@ -164,7 +164,7 @@ class PublicSiteController extends Controller
             $user = $request->user() ?? auth('sanctum')->user();
             $enrolled = $user && $user->enrollments()
                 ->where('course_id', $courseId)
-                ->whereIn('status', ['active', 'completed'])
+                ->effective()
                 ->exists();
 
             if (! $course || ! $enrolled) {
@@ -191,7 +191,7 @@ class PublicSiteController extends Controller
 
             $enrollment = $user->enrollments()
                 ->where('course_id', $course->id)
-                ->whereIn('status', ['active', 'completed'])
+                ->effective()
                 ->first();
 
             $enrolled = $isOwner || $enrollment !== null;
@@ -281,7 +281,7 @@ class PublicSiteController extends Controller
 
             $enrolled = $user && $course && $user->enrollments()
                 ->where('course_id', $course->id)
-                ->whereIn('status', ['active', 'completed'])
+                ->effective()
                 ->exists();
 
             if (! $course || ! $enrolled) {
@@ -309,7 +309,7 @@ class PublicSiteController extends Controller
 
             $enrollment = $user->enrollments()
                 ->where('course_id', $course->id)
-                ->whereIn('status', ['active', 'completed'])
+                ->effective()
                 ->first();
         }
 

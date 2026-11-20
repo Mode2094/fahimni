@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
@@ -233,6 +234,22 @@ Route::prefix('v1')->group(function () {
             Route::get('enrollments/{enrollment}/progress', [LessonProgressController::class, 'index']);
             Route::put('enrollments/{enrollment}/progress/{lesson}', [LessonProgressController::class, 'update']);
             Route::post('enrollments/{enrollment}/progress/{lesson}/complete', [LessonProgressController::class, 'markCompleted']);
+
+            // ─── Academic Terms (الفصول الدراسية) ─────────
+            // Staff-only: teachers, owners and admins with the students
+            // permission manage terms and renew seats.
+            Route::middleware('role:teacher,owner,admin')->group(function () {
+                Route::get('terms', [AcademicTermController::class, 'index']);
+                Route::post('terms', [AcademicTermController::class, 'store']);
+                Route::get('terms/{term}', [AcademicTermController::class, 'show']);
+                Route::put('terms/{term}', [AcademicTermController::class, 'update']);
+                Route::delete('terms/{term}', [AcademicTermController::class, 'destroy']);
+                Route::post('terms/{term}/activate', [AcademicTermController::class, 'activate']);
+                Route::post('terms/{term}/students', [AcademicTermController::class, 'assignStudents']);
+                Route::get('terms/{term}/end-preview', [AcademicTermController::class, 'endPreview']);
+                Route::post('terms/{term}/end', [AcademicTermController::class, 'end']);
+                Route::post('terms/{term}/promote', [AcademicTermController::class, 'promote']);
+            });
 
             // ─── Assignments ──────────────────────────────
             Route::get('assignments', [AssignmentController::class, 'index']);

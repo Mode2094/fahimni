@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Traits\BelongsToTenant;
 use App\Traits\HasUuid;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,10 +14,17 @@ class Enrollment extends Model
 {
     use BelongsToTenant, HasFactory, HasUuid;
 
+    /**
+     * Enrollment states that grant access (and therefore consume a seat).
+     * `completed` deliberately stays effective: finishing a course does not
+     * remove access, so it keeps its seat until the term is ended/archived.
+     */
+    public const EFFECTIVE_STATUSES = ['active', 'completed'];
+
     protected $fillable = [
-        'tenant_id', 'course_id', 'user_id', 'status',
+        'tenant_id', 'course_id', 'academic_term_id', 'user_id', 'status',
         'progress_percent', 'enrolled_at', 'completed_at',
-        'expires_at', 'source', 'metadata',
+        'expires_at', 'archived_at', 'source', 'metadata',
     ];
 
     protected $casts = [
@@ -24,6 +32,7 @@ class Enrollment extends Model
         'enrolled_at' => 'datetime',
         'completed_at' => 'datetime',
         'expires_at' => 'datetime',
+        'archived_at' => 'datetime',
         'metadata' => 'array',
     ];
 
@@ -37,6 +46,11 @@ class Enrollment extends Model
         return $this->belongsTo(Course::class);
     }
 
+    public function academicTerm(): BelongsTo
+    {
+        return $this->belongsTo(AcademicTerm::class);
+    }
+
     public function student(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
@@ -45,5 +59,22 @@ class Enrollment extends Model
     public function progress(): HasMany
     {
         return $this->hasMany(LessonProgress::class);
+    }
+
+    /**
+     * Enrollments that confer access right now: an effective status AND not
+     * past its expiry. This is the single predicate every seat count and
+     * course-cap check must use.
+     */
+    public function scopeEffective(Builder $query): void
+    {
+        $query->whereIn('status', self::EFFECTIVE_STATUSES)
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()));
+    }
+
+    public function isEffective(): bool
+    {
+        return in_array($this->status, self::EFFECTIVE_STATUSES, true)
+            && (! $this->expires_at || $this->expires_at->isFuture());
     }
 }

@@ -8,15 +8,11 @@ use App\Http\Resources\EnrollmentResource;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\User;
-use App\Plans\QuotaService;
-use App\Services\FeatureService;
+use App\Services\EnrollmentService;
 use App\Services\IntegrationService;
 use App\Services\StudentGamificationService;
-use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Symfony\Component\Uid\UuidV7;
 
 class EnrollmentController extends Controller
 {
@@ -27,7 +23,7 @@ class EnrollmentController extends Controller
         $user = $request->user();
         $tenantId = $request->header('X-Tenant-Id');
 
-        $enrollments = Enrollment::with(['course', 'student.roles'])
+        $enrollments = Enrollment::with(['course', 'student.roles', 'academicTerm'])
             ->when(
                 ! $user->is_super_admin,
                 fn ($q) => $q->where(function ($q) use ($tenantId) {
@@ -35,6 +31,7 @@ class EnrollmentController extends Controller
                 })
             )
             ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->course_id))
+            ->when($request->filled('academic_term_id'), fn ($q) => $q->where('academic_term_id', $request->academic_term_id))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
             ->orderByDesc('enrolled_at')
             ->get();
@@ -48,7 +45,7 @@ class EnrollmentController extends Controller
     {
         $user = $request->user();
 
-        $enrollments = Enrollment::with(['course.sections.lessons'])
+        $enrollments = Enrollment::with(['course.sections.lessons', 'academicTerm'])
             ->where('user_id', $user->id)
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
             ->orderByDesc('enrolled_at')
@@ -99,50 +96,14 @@ class EnrollmentController extends Controller
             }
         }
 
-        $features = app(FeatureService::class);
-
-        $enrollment = DB::transaction(function () use ($request, $course, $student, $tenantId, $features) {
-            // Serialize on the course row: two concurrent enrollments can
-            // never exceed the per-course cap.
-            Course::whereKey($course->id)->lockForUpdate()->first();
-
-            // A cancelled/expired enrollment can be re-created; only an
-            // active/complete one blocks a duplicate.
-            $exists = Enrollment::where('course_id', $course->id)
-                ->where('user_id', $student->id)
-                ->whereIn('status', ['active', 'completed'])
-                ->exists();
-
-            if ($exists) {
-                throw new HttpResponseException(
-                    response()->json(['message' => 'Student is already enrolled in this course.'], 409)
-                );
-            }
-
-            // Plan enforcement: students limit (dynamic from DB).
-            app(QuotaService::class)->assertCan($tenantId, 'students');
-
-            // Per-course cap (dynamic plan feature) — checked under the
-            // course row lock so concurrent requests cannot overshoot.
-            $maxPerCourse = $features->getIntFeature('max_students_per_course');
-            $usedInCourse = Enrollment::where('course_id', $course->id)->count();
-            if ($maxPerCourse > 0 && $usedInCourse >= $maxPerCourse) {
-                throw new HttpResponseException(
-                    response()->json(['message' => "Course limit reached: this course allows {$maxPerCourse} students."], 403)
-                );
-            }
-
-            return Enrollment::create([
-                'id' => UuidV7::generate(),
-                'course_id' => $course->id,
-                'user_id' => $student->id,
-                'status' => 'active',
-                'enrolled_at' => now(),
-                'expires_at' => $request->input('expires_at'),
-                'source' => $request->input('source', 'manual'),
-                'metadata' => $request->input('metadata', []),
-            ]);
-        });
+        // Seat-limit, duplicate and per-course-cap enforcement all live in the
+        // service, under a tenant-level lock (see EnrollmentService).
+        $enrollment = app(EnrollmentService::class)->enroll($course, $student, [
+            'academic_term_id' => $request->input('academic_term_id'),
+            'expires_at' => $request->input('expires_at'),
+            'source' => $request->input('source', 'manual'),
+            'metadata' => $request->input('metadata', []),
+        ]);
 
         app(StudentGamificationService::class)->logActivity(
             $student,
@@ -168,7 +129,7 @@ class EnrollmentController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $enrollment = Enrollment::with(['course', 'student'])->findOrFail($id);
+        $enrollment = Enrollment::with(['course', 'student', 'academicTerm'])->findOrFail($id);
 
         $this->authorize('view', $enrollment);
 

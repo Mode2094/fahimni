@@ -29,6 +29,10 @@ class UsageService
 {
     private const CACHE_TTL = 30;
 
+    public function __construct(
+        private readonly \App\Services\StudentSeatService $seats,
+    ) {}
+
     /**
      * Registry of countable resources.
      * gate = feature key that must be enabled, limit = limit feature key.
@@ -62,7 +66,10 @@ class UsageService
     public function usageOf(string $tenantId, string $resource): int|float
     {
         return match ($resource) {
-            'students' => Enrollment::withoutTenant()->where('tenant_id', $tenantId)->distinct('user_id')->count('user_id'),
+            // Seats are held only by students with a currently-effective
+            // enrollment (active/completed + not expired). Archived term
+            // history releases its seat — see StudentSeatService.
+            'students' => $this->seats->count($tenantId),
             'courses' => Course::withoutTenant()->where('tenant_id', $tenantId)->count(),
             'videos' => VideoContent::withoutTenant()->where('tenant_id', $tenantId)->count(),
             'files' => FileContent::withoutTenant()->where('tenant_id', $tenantId)->count(),
