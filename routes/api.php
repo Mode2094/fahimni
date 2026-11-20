@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\CommunityThreadController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\ConversationMessageController;
 use App\Http\Controllers\Api\CourseController;
+use App\Http\Controllers\Api\CourseGroupController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\EnrollmentController;
 use App\Http\Controllers\Api\ExamAttemptController;
@@ -83,6 +84,7 @@ use App\Http\Controllers\Api\TenantSettingController;
 use App\Http\Controllers\Api\TenantSubscriptionController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UserPreferenceController;
 use App\Http\Controllers\Api\VideoStreamController;
 use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
@@ -218,6 +220,18 @@ Route::prefix('v1')->group(function () {
             Route::put('lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('lessons/{lesson}', [LessonController::class, 'destroy']);
 
+            // ─── Course groups (مجموعات الطلاب داخل الكورس) ───────────
+            // Separate from community/forum groups and from academic terms.
+            Route::get('courses/{course}/groups', [CourseGroupController::class, 'index']);
+            Route::post('courses/{course}/groups', [CourseGroupController::class, 'store']);
+            Route::get('course-groups/{group}', [CourseGroupController::class, 'show']);
+            Route::put('course-groups/{group}', [CourseGroupController::class, 'update']);
+            Route::delete('course-groups/{group}', [CourseGroupController::class, 'destroy']);
+            Route::put('course-groups/{group}/members', [CourseGroupController::class, 'syncMembers']);
+            Route::put('course-groups/{group}/lessons', [CourseGroupController::class, 'syncLessons']);
+            Route::put('course-groups/{group}/exams', [CourseGroupController::class, 'syncExams']);
+            Route::get('course-groups/{group}/results', [CourseGroupController::class, 'results']);
+
             // Lesson Contents
             Route::get('lessons/{lesson}/contents', [LessonContentController::class, 'index']);
             Route::post('lesson-contents', [LessonContentController::class, 'store']);
@@ -302,7 +316,13 @@ Route::prefix('v1')->group(function () {
             Route::get('exams/{exam}/attempts', [ExamAttemptController::class, 'index']);
             Route::get('exams/{exam}/questions', [ExamController::class, 'questions']);
             Route::post('exams/{exam}/attempt', [ExamAttemptController::class, 'start']);
+            // Teacher preview: same student payload, no attempt/score recorded.
+            Route::post('exams/{exam}/preview', [ExamAttemptController::class, 'preview']);
+            Route::post('exams/{exam}/preview/grade', [ExamAttemptController::class, 'previewGrade']);
             Route::post('exams/{exam}/attempts/{attempt}/submit', [ExamAttemptController::class, 'submit']);
+            // Autosave: persist in-progress answers so a reload/reconnect can
+            // resume the same attempt without losing answers or a slot.
+            Route::post('exams/{exam}/attempts/{attempt}/autosave', [ExamAttemptController::class, 'autosave']);
             Route::post('exams/{exam}/attempts/{attempt}/grade', [ExamAttemptController::class, 'grade'])->middleware('role:teacher,owner,admin,permission:exams.manage');
             Route::get('exam-attempts/{attempt}', [ExamAttemptController::class, 'show']);
 
@@ -496,6 +516,11 @@ Route::prefix('v1')->group(function () {
             // ─── Tenant Settings ──────────────────────────
             Route::get('settings', [TenantSettingController::class, 'show']);
             Route::put('settings', [TenantSettingController::class, 'update']);
+
+            // ─── Per-user UI preferences (per teacher, per tenant) ──
+            // Stores only allowlisted, non-secret editor settings on the user row.
+            Route::get('me/preferences', [UserPreferenceController::class, 'show']);
+            Route::put('me/preferences', [UserPreferenceController::class, 'update'])->middleware('role:teacher,owner,admin');
 
             // ─── Notifications ───────────────────────────
             Route::prefix('notifications')->group(function () {

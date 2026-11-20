@@ -19,15 +19,17 @@ import {
   ArrowLeft, ArrowRight, Plus, Trash2, Video, FileText, Lock, Unlock, ChevronDown, ChevronUp, Loader2,
   Pencil, Layers, BookOpen, ClipboardList, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
   Upload, FileAudio, FileVideo, FileImage, FileArchive, File, ClipboardCheck, CalendarClock, Star, MessageSquare, Send,
-  UploadCloud, Radio, ExternalLink, Link2, Copy, Info } from 'lucide-react';
+  UploadCloud, Radio, ExternalLink, Link2, Copy, Info, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
+import VideoUploadQueue from '@/components/media/video-upload-queue';
+import CourseGroupsManager from '@/components/course/course-groups';
 import { getDeviceId } from '@/lib/device';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson' };
+const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson', exercise_exam_id: '', exercise_position: 'after_video' };
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -56,6 +58,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [videoUploadProgress, setVideoUploadProgress] = useState(0);
   const [videoUploadError, setVideoUploadError] = useState('');
   const [videoUploadName, setVideoUploadName] = useState('');
+  const [videoQueueOpen, setVideoQueueOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
@@ -166,7 +170,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const openLesAdd = (sid: string) => { setLesTarget(null); setLesSection(sid); setLes({ ...EMPTY_LESSON }); setLesOpen(true); };
   const openLesEdit = (l: any) => {
     setLesTarget(l); setLesSection(l.section_id);
-    setLes({ title: l.title || '', is_free_preview: !!l.is_free_preview, kind: 'lesson' });
+    setLes({
+      title: l.title || '', is_free_preview: !!l.is_free_preview, kind: 'lesson',
+      exercise_exam_id: l.metadata?.exercise_exam_id || '',
+      exercise_position: l.metadata?.exercise_position || 'after_video',
+    });
     setLesOpen(true);
     resetContentForm();
     loadLesContents(l.id);
@@ -174,7 +182,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const saveLesson = async () => {
     if (!les.title.trim()) { toast.error(t('أدخل عنوان الدرس', 'Enter lesson title')); return; }
     try {
-      const body = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview, sort_order: lesTarget ? lesTarget.sort_order : undefined };
+      const body: any = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview, sort_order: lesTarget ? lesTarget.sort_order : undefined };
+      // Only a video lesson can carry an attached exercise; the id is the SAME
+      // exam engine used everywhere else, so no separate grading system exists.
+      if (lesTarget && isVideoLesson(lesTarget)) {
+        body.metadata = {
+          exercise_exam_id: les.exercise_exam_id || null,
+          exercise_position: les.exercise_position || 'after_video',
+        };
+      }
       const res = await fetch(`${API}/lessons${lesTarget ? `/${lesTarget.id}` : ''}`, { method: lesTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
       toast.success(lesTarget ? t('تم تحديث الدرس', 'Lesson updated') : t('تم إضافة الدرس', 'Lesson added'));
@@ -578,6 +594,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch { /* */ }
   };
   const isLiveLesson = (l: any) => (l.contents || []).some((c: any) => c.content_type === 'live');
+  const isVideoLesson = (l: any) => l.lesson_type === 'video' || (l.contents || []).some((c: any) => c.content_type === 'video');
 
   // ─── محرر الاختبار المفتوح (إعدادات + أسئلة كيان واحد) ───
   const [viewerExam, setViewerExam] = useState<any>(null);
@@ -605,6 +622,12 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           {course?.description && <p className="text-gray-500 text-sm mt-1 max-w-xl">{course.description}</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" className="gap-2 rounded-full" onClick={() => setVideoQueueOpen(true)} title={t('رفع عدة ملفات فيديو مرة واحدة', 'Upload several video files at once')}>
+            <UploadCloud className="h-4 w-4" />{t('رفع فيديوهات متعددة', 'Upload multiple videos')}
+          </Button>
+          <Button variant="outline" className="gap-2 rounded-full" onClick={() => setGroupsOpen(true)} title={t('مجموعات الطلاب داخل الكورس', 'In-course student groups')}>
+            <Users className="h-4 w-4" />{t('مجموعات الطلاب', 'Student groups')}
+          </Button>
           <a href={`/course/${id}/learn`} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full"><Eye className="h-4 w-4" />{t('معاينة', 'Preview')}</Button></a>
           {course && (
             <Button variant={course.is_published ? 'outline' : 'default'} className="gap-2 rounded-full" onClick={() => {
@@ -661,9 +684,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Button size="sm" variant="ghost" onClick={() => openSecEdit(s)} className="gap-1 rounded-full text-xs"><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, -1)} disabled={si === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, 1)} disabled={si === sections.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeSection(s.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, -1)} disabled={si === 0} aria-label={t('تحريك الوحدة لأعلى', 'Move unit up')} title={t('تحريك الوحدة لأعلى', 'Move unit up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, 1)} disabled={si === sections.length - 1} aria-label={t('تحريك الوحدة لأسفل', 'Move unit down')} title={t('تحريك الوحدة لأسفل', 'Move unit down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeSection(s.id)} aria-label={t('حذف الوحدة', 'Delete unit')} title={t('حذف الوحدة', 'Delete unit')}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                   </div>
 
@@ -693,7 +716,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                                 </p>
                               </div>
                               <a href="/teacher/live"><Button size="sm" className="gap-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white"><Radio className="h-3.5 w-3.5" />{t('إدارة الحصة', 'Manage session')}</Button></a>
-                              <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
                             <div className="flex items-center gap-2">
                               <Input type="datetime-local" className="h-9 w-auto text-xs" dir="ltr"
@@ -725,9 +748,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <Button size="sm" className="gap-1 rounded-full text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={() => openLesEdit(l)}>
                             {hasContent ? <><Pencil className="h-3.5 w-3.5" />{t('إدارة المحتوى', 'Manage content')}</> : <><Plus className="h-3.5 w-3.5" />{t('إضافة محتوى', 'Add content')}</>}
                           </Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       );
                     })}
@@ -882,6 +905,38 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
             ) : (
               <p className="text-xs text-gray-400 bg-slate-50 rounded-xl p-3">{t('احفظ الدرس أولاً ثم افتحه لإضافة المحتوى (فيديو، PDF، صوت، نص، ملفات)', 'Save the lesson first, then open it to add content (video, PDF, audio, text, files)')}</p>
             )}
+
+            {/* ربط تمرين بدرس الفيديو — نفس محرك الاختبارات بلا درجات مكررة */}
+            {lesTarget && isVideoLesson(lesTarget) && (
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="h-4 w-4 text-violet-600" />
+                  <p className="text-sm font-bold">{t('تمرين مرتبط بالدرس', 'Exercise attached to lesson')}</p>
+                </div>
+                <p className="text-[11px] text-gray-400">{t('اربط اختباراً ليتدرّب الطالب بعد مشاهدة الفيديو. يُستخدم نفس نظام المحاولات والتصحيح — بلا نظام درجات مكرر.', 'Attach an exam so the student practises after the video. The same attempt & grading engine is used — no duplicated scores.')}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t('الاختبار', 'Exam')}</Label>
+                    <select value={les.exercise_exam_id || ''} onChange={(e) => setLes({ ...les, exercise_exam_id: e.target.value })} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                      <option value="">{t('بدون تمرين', 'No exercise')}</option>
+                      {exams.map((e: any) => <option key={e.id} value={e.id}>{e.title}{e.is_published ? '' : ` (${t('مسودة', 'draft')})`}</option>)}
+                    </select>
+                  </div>
+                  {les.exercise_exam_id && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t('الموضع', 'Position')}</Label>
+                      <select value={les.exercise_position} onChange={(e) => setLes({ ...les, exercise_position: e.target.value })} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                        <option value="after_video">{t('أسفل الفيديو مباشرة', 'Right below the video')}</option>
+                        <option value="after_content">{t('بعد كل محتوى الدرس', 'After all lesson content')}</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+                {les.exercise_exam_id && !exams.find((e: any) => e.id === les.exercise_exam_id)?.is_published && (
+                  <p className="text-[11px] text-amber-600">{t('الاختبار مسودة — لن يظهر للطالب حتى تنشره.', 'The exam is a draft — students will not see it until you publish it.')}</p>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setLesOpen(false); setLesTarget(null); setLesSection(''); setLes({ ...EMPTY_LESSON }); setLesContents([]); resetContentForm(); }}>{t('إلغاء', 'Cancel')}</Button>
@@ -1013,6 +1068,16 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
       )}
+
+      <VideoUploadQueue
+        open={videoQueueOpen}
+        onOpenChange={setVideoQueueOpen}
+        sections={sections.map((s: any) => ({ id: s.id, title: s.title }))}
+        lessons={sections.flatMap((s: any) => (s.lessons || []).map((l: any) => ({ id: l.id, title: l.title, section_id: s.id })))}
+        onUploaded={load}
+      />
+
+      <CourseGroupsManager open={groupsOpen} onOpenChange={setGroupsOpen} courseId={id} />
     </div>
   );
 }

@@ -12,7 +12,7 @@ import { QuestionBuilder, type QuestionDraft } from './question-builder';
 const EMPTY: QuestionDraft = {
   question_text: '', question_type: 'multiple_choice', points: '1', exam_id: '', section_id: '',
   options: [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }],
-  image_url: '', pairs: [], items: [], answers: [''], keywords: '',
+  image_url: '', pairs: [], items: [], answers: [''], keywords: '', skills: '',
   interactive_html: '', interactive_css: '', interactive_js: '', interactive_height: '360',
   interactive_auto_capture: true, grading_mode: 'manual', grading_rule: 'single_choice', grading_key: '', grading_tolerance: '',
 };

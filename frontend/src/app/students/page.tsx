@@ -144,6 +144,15 @@ export default function StudentsPage() {
         </a>
       </div>
 
+      {seats && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground -mt-1">
+          {t(
+            'المقعد يُحسب لكل طالب عندك مرة واحدة مهما التحق بعدة كورسات. إنهاء الدروس لا يحرّر المقعد؛ يتحرّر فقط عندما لا يبقى له أي تسجيل ساري (كأن تُنهي الفصل أو تؤرشف تسجيلاته).',
+            'A seat is counted once per student in your platform however many courses they join. Finishing lessons does not free the seat; it is freed only when they have no active enrolment left (e.g. you end the term or archive their enrolments).',
+          )}
+        </p>
+      )}
+
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((s, i) => (
           <Card key={i} className="group border-0 shadow-sm card-hover overflow-hidden relative">

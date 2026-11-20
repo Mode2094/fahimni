@@ -319,7 +319,7 @@ export default function PageBuilder({ onSaved }: { onSaved?: () => void }) {
       <div className="flex items-center gap-2">
         {url ? <img src={url} className="h-12 w-20 rounded-lg border object-cover" alt="" /> : <div className="flex h-12 w-20 items-center justify-center rounded-lg bg-gray-100 border-2 border-dashed"><ImageIcon className="h-5 w-5 text-gray-300" /></div>}
         <Button variant="outline" size="sm" onClick={onUpload} disabled={uploading} className="gap-1.5 rounded-full text-xs">{uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{t('رفع', 'Upload')}</Button>
-        {url && <Button variant="ghost" size="sm" className="text-red-400" onClick={onClear}><X className="h-3.5 w-3.5" /></Button>}
+        {url && <Button variant="ghost" size="sm" className="text-red-400" onClick={onClear} aria-label={t('إزالة الصورة', 'Remove image')} title={t('إزالة الصورة', 'Remove image')}><X className="h-3.5 w-3.5" /></Button>}
       </div>
     </div>
   );

@@ -37,6 +37,9 @@ class ExamController extends Controller
                 ! $this->isTenantStaff($request),
                 fn ($q) => $q
                     ->where('is_published', true)
+                    // Exams shared to specific course groups are hidden from
+                    // students who are not members of those groups.
+                    ->visibleToStudent($request->user()->id)
                     ->whereHas('course.enrollments', function ($q) use ($request) {
                         $q->where('user_id', $request->user()->id)
                             ->effective()

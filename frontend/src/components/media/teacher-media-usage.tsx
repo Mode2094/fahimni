@@ -123,6 +123,14 @@ export default function TeacherMediaUsage() {
           })}
         </div>
 
+        {/* يوضّح أن حد الفيديوهات لمنصتك كاملة (كل الكورسات) وأن العدد يختلف عن المساحة. */}
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          {t(
+            'عدد الفيديوهات يُحسب لمنصتك كاملة (كل الكورسات معًا)، وليس لكل كورس. وهو منفصل تمامًا عن مساحة التخزين: قد يكون لديك عدد فيديوهات صغير وحجم كبير، أو العكس.',
+            'The video count applies to your whole platform (all courses together), not per course. It is separate from storage space: you may have few videos that are large, or many that are small.',
+          )}
+        </p>
+
         {usage.storage.exceeded && (
           <button
             onClick={() => router.push('/pricing')}

@@ -149,7 +149,7 @@ describe('ExamEditor', () => {
     fireEvent.click(screen.getByText('سؤال جديد'));
 
     // The HTML option is independent from the interactive one.
-    fireEvent.click(screen.getByText('سؤال HTML'));
+    fireEvent.click(await screen.findByText('سؤال HTML'));
 
     // Question text (first textarea) + the HTML/CSS/JS code area.
     fireEvent.change(container.querySelector('textarea') as HTMLTextAreaElement, { target: { value: 'اكتب مستند HTML' } });
@@ -167,7 +167,7 @@ describe('ExamEditor', () => {
   it('still creates an interactive question with its original type (interactive_html)', async () => {
     const { container } = renderEditor();
     fireEvent.click(screen.getByText('سؤال جديد'));
-    fireEvent.click(screen.getByText('سؤال تفاعلي'));
+    fireEvent.click(await screen.findByText('سؤال تفاعلي'));
 
     fireEvent.change(container.querySelector('textarea') as HTMLTextAreaElement, { target: { value: 'عنصر تفاعلي' } });
     fireEvent.change(screen.getByPlaceholderText('الصق وسم HTML هنا…'), { target: { value: '<button>x</button>' } });

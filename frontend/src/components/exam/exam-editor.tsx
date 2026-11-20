@@ -10,11 +10,12 @@ import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
 import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
 import { gradingKeyToText, parseGradingKey } from '@/lib/interactive-question';
+import { fetchHtmlEditorPrefs, saveHtmlEditorPrefs } from '@/lib/html-editor-prefs';
 import { useLocale } from '@/store/locale';
 import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, ArrowUp, ArrowDown, Loader2, ClipboardList,
-  CheckCircle2, XCircle, Search, HelpCircle, ArrowRight, ArrowLeft,
+  CheckCircle2, XCircle, Search, HelpCircle, ArrowRight, ArrowLeft, Eye, Copy,
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -36,7 +37,7 @@ export const QUESTION_TYPE_META: Record<string, { ar: string; en: string; icon: 
 const EMPTY_QUESTION: QuestionDraft = {
   question_text: '', question_type: 'multiple_choice', points: '1', exam_id: '', section_id: '',
   options: [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }],
-  image_url: '', pairs: [], items: [], answers: [''], keywords: '',
+  image_url: '', pairs: [], items: [], answers: [''], keywords: '', skills: '',
   interactive_html: '', interactive_css: '', interactive_js: '', interactive_height: '360',
   interactive_auto_capture: true, grading_mode: 'manual', grading_rule: 'single_choice', grading_key: '', grading_tolerance: '',
 };
@@ -217,38 +218,73 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
   };
 
   // ── question authoring ──────────────────────────────────────
-  const openAdd = () => {
+  const openAdd = async () => {
     setDraftTarget(null);
-    setDraft({ ...EMPTY_QUESTION, exam_id: exam.id, section_id: exam.section_id || '' });
     setPickerOpen(false);
+    // Seed a NEW question with this teacher's own last HTML-editor settings
+    // (per teacher, never per device). Editing an existing question ignores
+    // these and uses the question's own saved values.
+    const prefs = await fetchHtmlEditorPrefs();
+    setDraft({
+      ...EMPTY_QUESTION,
+      exam_id: exam.id,
+      section_id: exam.section_id || '',
+      ...(prefs ? {
+        interactive_height: prefs.height,
+        grading_mode: prefs.grading_mode,
+        grading_rule: prefs.grading_rule,
+        interactive_auto_capture: prefs.auto_capture,
+      } : {}),
+    });
   };
 
   const openEdit = (q: any) => {
     setDraftTarget(q);
+    setDraft(draftFromQuestion(q));
+  };
+
+  /**
+   * "Copy question": open the builder pre-filled with a copy of `q` so the
+   * teacher reviews/edits before saving. Nothing is sent to the server here, so
+   * a double click can never create duplicates, and no attempts/answers/results
+   * are ever copied (those live on the attempt, not the question). Plan limits
+   * are enforced by the normal create request on save.
+   */
+  const copyQuestion = (q: any) => {
+    setDraftTarget(null);
+    setPickerOpen(false);
     setDraft({
-      question_text: q.question_text || '',
-      question_type: q.question_type || 'multiple_choice',
-      points: String(q.points ?? '1'),
+      ...draftFromQuestion(q),
+      question_text: `${q.question_text} (${t('نسخة', 'copy')})`,
       exam_id: exam.id,
-      section_id: q.section_id || '',
-      options: (q.options && q.options.length ? q.options : [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }])
-        .map((o: any) => ({ option_text: o.option_text || '', is_correct: !!o.is_correct })),
-      image_url: q.metadata?.image_url || '',
-      pairs: (q.metadata?.pairs || []).map((p: any) => ({ left: p.left || '', right: p.right || '' })),
-      items: (q.metadata?.items || []).map((i: any) => (typeof i === 'string' ? i : i.text || '')),
-      answers: (q.metadata?.answers || ['']).map((a: any) => String(a)),
-      keywords: (q.metadata?.keywords || []).join(', '),
-      interactive_html: q.metadata?.interactive?.html || '',
-      interactive_css: q.metadata?.interactive?.css || '',
-      interactive_js: q.metadata?.interactive?.js || '',
-      interactive_height: String(q.metadata?.interactive?.height ?? 360),
-      interactive_auto_capture: q.metadata?.interactive?.auto_capture !== false,
-      grading_mode: q.metadata?.grading?.mode === 'auto' ? 'auto' : 'manual',
-      grading_rule: q.metadata?.grading?.rule || 'single_choice',
-      grading_key: gradingKeyToText(q.metadata?.grading?.key),
-      grading_tolerance: q.metadata?.grading?.tolerance != null ? String(q.metadata.grading.tolerance) : '',
     });
   };
+
+  /** Map a saved question into the flat draft shape shared with QuestionBuilder. */
+  const draftFromQuestion = (q: any): QuestionDraft => ({
+    question_text: q.question_text || '',
+    question_type: q.question_type || 'multiple_choice',
+    points: String(q.points ?? '1'),
+    exam_id: exam.id,
+    section_id: q.section_id || '',
+    options: (q.options && q.options.length ? q.options : [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }])
+      .map((o: any) => ({ option_text: o.option_text || '', is_correct: !!o.is_correct })),
+    image_url: q.metadata?.image_url || '',
+    pairs: (q.metadata?.pairs || []).map((p: any) => ({ left: p.left || '', right: p.right || '' })),
+    items: (q.metadata?.items || []).map((i: any) => (typeof i === 'string' ? i : i.text || '')),
+    answers: (q.metadata?.answers || ['']).map((a: any) => String(a)),
+    keywords: (q.metadata?.keywords || []).join(', '),
+    skills: (q.metadata?.skills || []).join(', '),
+    interactive_html: q.metadata?.interactive?.html || '',
+    interactive_css: q.metadata?.interactive?.css || '',
+    interactive_js: q.metadata?.interactive?.js || '',
+    interactive_height: String(q.metadata?.interactive?.height ?? 360),
+    interactive_auto_capture: q.metadata?.interactive?.auto_capture !== false,
+    grading_mode: q.metadata?.grading?.mode === 'auto' ? 'auto' : 'manual',
+    grading_rule: q.metadata?.grading?.rule || 'single_choice',
+    grading_key: gradingKeyToText(q.metadata?.grading?.key),
+    grading_tolerance: q.metadata?.grading?.tolerance != null ? String(q.metadata.grading.tolerance) : '',
+  });
 
   const closeDraft = () => { setDraft(null); setDraftTarget(null); };
 
@@ -259,6 +295,8 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
     try {
       const meta: any = {};
       if (draft.image_url) meta.image_url = draft.image_url;
+      const skills = draft.skills.split(',').map((s) => s.trim()).filter(Boolean);
+      if (skills.length) meta.skills = skills;
       if (draft.question_type === 'drag_drop' || draft.question_type === 'matching') meta.pairs = draft.pairs.filter((p) => p.left.trim() && p.right.trim());
       if (draft.question_type === 'ordering') meta.items = draft.items.filter((i) => String(i).trim());
       if (draft.question_type === 'fill_blank') meta.answers = draft.answers.filter((a) => String(a).trim());
@@ -306,6 +344,16 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
         body: JSON.stringify(payload),
       });
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذّر حفظ السؤال', 'Could not save question')); return; }
+      // Remember this teacher's HTML-editor setup for their next new question
+      // (never for editing an existing one, which keeps its own values).
+      if (draft.question_type === 'interactive_html' || draft.question_type === 'custom_html') {
+        void saveHtmlEditorPrefs({
+          height: draft.interactive_height,
+          grading_mode: draft.grading_mode,
+          grading_rule: draft.grading_rule,
+          auto_capture: draft.interactive_auto_capture,
+        });
+      }
       toast.success(draftTarget ? t('تم تحديث السؤال', 'Question updated') : t('تمت إضافة السؤال', 'Question added'));
       closeDraft();
       onChanged();
@@ -334,6 +382,15 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
         <Badge className={exam.is_published ? 'border-0 bg-green-50 text-green-600' : 'border-0 bg-gray-100 text-gray-500'}>
           {exam.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}
         </Badge>
+        <Button
+          variant="outline"
+          className="gap-2 rounded-full"
+          onClick={() => window.open(`/exam/${exam.id}?preview=1`, '_blank', 'noopener')}
+          title={t('افتح المعاينة في تبويب جديد', 'Open preview in a new tab')}
+        >
+          <Eye className="h-4 w-4" />
+          {t('معاينة الاختبار كطالب', 'Preview as student')}
+        </Button>
       </div>
 
       {/* Tab bar */}
@@ -425,8 +482,9 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                                 {busyId === q.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}{t('إضافة', 'Add')}
                               </Button>
                             )}
-                            <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => openEdit(q)} title={t('تعديل السؤال', 'Edit')}><Pencil className="h-3.5 w-3.5" /></Button>
-                            {inBank && <Button size="sm" variant="ghost" className="rounded-full text-red-500" onClick={() => deleteFromBank(q)} title={t('حذف نهائي', 'Delete')}><Trash2 className="h-3.5 w-3.5" /></Button>}
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => openEdit(q)} title={t('تعديل السؤال', 'Edit')} aria-label={t('تعديل السؤال', 'Edit')}><Pencil className="h-3.5 w-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-slate-600" onClick={() => copyQuestion(q)} title={t('نسخ سؤال', 'Copy question')} aria-label={t('نسخ سؤال', 'Copy question')}><Copy className="h-3.5 w-3.5" /></Button>
+                            {inBank && <Button size="sm" variant="ghost" className="rounded-full text-red-500" onClick={() => deleteFromBank(q)} aria-label={t('حذف نهائي', 'Delete')} title={t('حذف نهائي', 'Delete')}><Trash2 className="h-3.5 w-3.5" /></Button>}
                           </div>
                         );
                       })}
@@ -459,8 +517,9 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                           <div className="flex shrink-0 items-center gap-1">
                             <Button size="sm" variant="ghost" className="h-8 w-8" disabled={i === 0 || ordering} onClick={() => move(i, -1)} aria-label={t('أعلى', 'Up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
                             <Button size="sm" variant="ghost" className="h-8 w-8" disabled={i === examQuestions.length - 1 || ordering} onClick={() => move(i, 1)} aria-label={t('أسفل', 'Down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                            <Button size="sm" variant="ghost" className="h-8 w-8 text-violet-700" onClick={() => openEdit(q)} aria-label={t('تعديل', 'Edit')}><Pencil className="h-3.5 w-3.5" /></Button>
-                            <Button size="sm" variant="ghost" className="h-8 w-8 text-red-500" disabled={busyId === q.id} onClick={() => detach(q.id)} aria-label={t('إزالة من الاختبار', 'Remove from exam')}><Trash2 className="h-3.5 w-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="h-8 w-8 text-violet-700" onClick={() => openEdit(q)} aria-label={t('تعديل', 'Edit')} title={t('تعديل', 'Edit')}><Pencil className="h-3.5 w-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="h-8 w-8 text-slate-600" onClick={() => copyQuestion(q)} aria-label={t('نسخ سؤال', 'Copy question')} title={t('نسخ سؤال', 'Copy question')}><Copy className="h-3.5 w-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="h-8 w-8 text-red-500" disabled={busyId === q.id} onClick={() => detach(q.id)} aria-label={t('إزالة من الاختبار', 'Remove from exam')} title={t('إزالة من الاختبار', 'Remove from exam')}><Trash2 className="h-3.5 w-3.5" /></Button>
                           </div>
                         </div>
                       </div>
@@ -479,7 +538,9 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-2"><Label>{t('المدة (دقائق)', 'Duration (min)')}</Label><Input type="number" value={exam.duration_minutes} onChange={(e) => setExam({ ...exam, duration_minutes: e.target.value })} className="h-11" /></div>
                 <div className="space-y-2"><Label>{t('درجة النجاح %', 'Pass mark %')}</Label><Input type="number" value={exam.pass_mark_percent} onChange={(e) => setExam({ ...exam, pass_mark_percent: e.target.value })} className="h-11" /></div>
-                <div className="space-y-2"><Label>{t('عدد المحاولات', 'Max attempts')}</Label><Input type="number" value={exam.max_attempts} onChange={(e) => setExam({ ...exam, max_attempts: e.target.value })} className="h-11" /></div>
+                <div className="space-y-2"><Label>{t('عدد المحاولات', 'Max attempts')}</Label><Input type="number" value={exam.max_attempts} onChange={(e) => setExam({ ...exam, max_attempts: e.target.value })} className="h-11" />
+                  <p className="text-[11px] text-muted-foreground">{t('0 = بلا حد. تُحتسب المحاولة عند التسليم فقط؛ إعادة التحميل أو انقطاع الاتصال تستأنف نفس المحاولة.', '0 = unlimited. An attempt is counted only on submit; a reload or a dropped connection resumes the same attempt.')}</p>
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>{t('الوصف', 'Description')}</Label>

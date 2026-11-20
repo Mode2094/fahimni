@@ -1,16 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '@/store/locale';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Monitor, Smartphone, Sparkles, AlertTriangle, Eye } from 'lucide-react';
+import { Monitor, Smartphone, Sparkles, AlertTriangle, Eye, Upload, RotateCcw } from 'lucide-react';
 import { CodeEditor, type CodeLanguage } from '@/components/exam/code-editor';
 import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-question';
 import { IQ_LIMITS, splitFullDocument } from '@/lib/interactive-question';
 import { INTERACTIVE_EXAMPLES } from '@/lib/interactive-examples';
+import { HTML_EDITOR_DEFAULTS, saveHtmlEditorPrefs } from '@/lib/html-editor-prefs';
+
+/** Hard cap on a single uploaded .html file (the split parts are still checked). */
+const MAX_HTML_FILE_BYTES = 600_000;
 
 /** Flat draft fields the interactive editor owns (see `QuestionDraft`). */
 export interface InteractiveHtmlDraft {
@@ -69,6 +73,9 @@ export function InteractiveHtmlEditor({ value, onChange }: {
   const [previewValue, setPreviewValue] = useState('');
   const [showPreview, setShowPreview] = useState(true);
   const [pasteNotice, setPasteNotice] = useState(false);
+  const [fileNotice, setFileNotice] = useState('');
+  const [fileError, setFileError] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const codeKey = useDebounced(
     `${value.interactive_html}\u0000${value.interactive_css}\u0000${value.interactive_js}\u0000${value.interactive_height}\u0000${value.interactive_auto_capture}`,
@@ -121,6 +128,67 @@ export function InteractiveHtmlEditor({ value, onChange }: {
     return true;
   };
 
+  // Read a .html/.htm file entirely in the browser — it is never uploaded to
+  // the server (so the deliberate no-HTML-upload rule and the CSP stay intact),
+  // is split into the HTML/CSS/JS tabs, and stays editable before saving.
+  const handleHtmlFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    setFileNotice('');
+    setFileError('');
+    if (!file) return;
+
+    const name = file.name.toLowerCase();
+    if (!name.endsWith('.html') && !name.endsWith('.htm')) {
+      setFileError(t('يُقبل ملفات ‎.html‎ أو ‎.htm‎ فقط.', 'Only .html or .htm files are accepted.'));
+      return;
+    }
+    if (file.size > MAX_HTML_FILE_BYTES) {
+      setFileError(t(
+        `حجم الملف كبير جداً (الحد ${Math.round(MAX_HTML_FILE_BYTES / 1000)} كيلوبايت).`,
+        `File is too large (limit ${Math.round(MAX_HTML_FILE_BYTES / 1000)} KB).`,
+      ));
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      if (!text.trim()) { setFileError(t('الملف فارغ.', 'The file is empty.')); return; }
+
+      const split = splitFullDocument(text);
+      if (split.detected) {
+        const patch: Partial<InteractiveHtmlDraft> = { interactive_html: split.html };
+        if (split.extractedCss) patch.interactive_css = split.css;
+        if (split.extractedJs) patch.interactive_js = split.js;
+        onChange(patch);
+      } else {
+        onChange({ interactive_html: text });
+      }
+
+      setPasteNotice(false);
+      setFileNotice(t(
+        `تم استيراد «${file.name}» وفصل HTML/CSS/JavaScript إلى تبويباتها. راجعه ثم احفظ.`,
+        `Imported "${file.name}" and split HTML/CSS/JavaScript into their tabs. Review, then save.`,
+      ));
+    } catch {
+      setFileError(t('تعذّر قراءة الملف.', 'Could not read the file.'));
+    }
+  };
+
+  // Reset a NEW question's HTML-editor settings to the built-in defaults and
+  // forget any saved preference for this teacher.
+  const restoreDefaults = () => {
+    onChange({
+      interactive_height: HTML_EDITOR_DEFAULTS.height,
+      grading_mode: HTML_EDITOR_DEFAULTS.grading_mode,
+      grading_rule: HTML_EDITOR_DEFAULTS.grading_rule,
+      interactive_auto_capture: HTML_EDITOR_DEFAULTS.auto_capture,
+    });
+    void saveHtmlEditorPrefs(HTML_EDITOR_DEFAULTS);
+    setFileError('');
+    setFileNotice(t('تمت استعادة الإعدادات الافتراضية.', 'Defaults restored.'));
+  };
+
   return (
     <div className="space-y-4">
       {/* Examples */}
@@ -145,19 +213,35 @@ export function InteractiveHtmlEditor({ value, onChange }: {
 
       {/* Code editors */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Label>{t('كود السؤال', 'Question code')}</Label>
-          <div className="flex gap-1.5">
-            {renderTabsFor().map((tb) => (
-              <button
-                key={tb.id}
-                type="button"
-                onClick={() => setTab(tb.id)}
-                className={`px-3 py-1 rounded-full text-xs font-medium ${tab === tb.id ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-500'}`}
-              >
-                {locale === 'ar' ? tb.ar : tb.en}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".html,.htm,text/html"
+              className="hidden"
+              onChange={handleHtmlFile}
+              aria-label={t('رفع ملف HTML', 'Upload HTML file')}
+            />
+            <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="gap-1.5 rounded-full">
+              <Upload className="h-3.5 w-3.5" />{t('رفع ملف HTML', 'Upload HTML file')}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={restoreDefaults} className="gap-1.5 rounded-full text-gray-500" title={t('استعادة الإعدادات الافتراضية', 'Restore default settings')}>
+              <RotateCcw className="h-3.5 w-3.5" />{t('استعادة الافتراضي', 'Restore defaults')}
+            </Button>
+            <div className="flex gap-1.5">
+              {renderTabsFor().map((tb) => (
+                <button
+                  key={tb.id}
+                  type="button"
+                  onClick={() => setTab(tb.id)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium ${tab === tb.id ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-500'}`}
+                >
+                  {locale === 'ar' ? tb.ar : tb.en}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <CodeEditor
@@ -177,6 +261,12 @@ export function InteractiveHtmlEditor({ value, onChange }: {
               'Extracted CSS/JavaScript from the pasted document into their tabs.',
             )}
           </p>
+        )}
+        {fileNotice && (
+          <p className="flex items-center gap-1.5 text-[11px] text-teal-700"><Sparkles className="h-3.5 w-3.5" />{fileNotice}</p>
+        )}
+        {fileError && (
+          <p className="flex items-center gap-1.5 text-[11px] text-red-600"><AlertTriangle className="h-3.5 w-3.5" />{fileError}</p>
         )}
         <p className="text-[11px] text-gray-400">
           {t(

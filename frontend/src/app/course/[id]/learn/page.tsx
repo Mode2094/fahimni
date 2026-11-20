@@ -79,6 +79,53 @@ function LiveLessonView({ live }: { live: any }) {
 }
 
 
+/** Exercise attached below a video lesson — links to the SAME exam engine. */
+function ExerciseCard({ exercise }: { exercise: any }) {
+  const { locale } = useLocale();
+  const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  if (!exercise) return null;
+  const left = exercise.attempts_left;
+  const exhausted = left === 0;
+  const done = exercise.attempts_used > 0;
+
+  return (
+    <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-5 space-y-3">
+      <div className="flex items-start gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 shrink-0"><ClipboardList className="h-5 w-5 text-violet-600" /></span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-semibold text-violet-600 uppercase tracking-wide">{t('تمرين الدرس', 'Lesson exercise')}</p>
+          <h3 className="font-bold text-lg">{exercise.title}</h3>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
+            <span>{exercise.questions_count} {t('سؤال', 'questions')}</span>
+            {exercise.duration_minutes > 0 && <span>{exercise.duration_minutes} {t('دقيقة', 'min')}</span>}
+            <span>{t('نجاح', 'pass')} {exercise.pass_mark_percent}%</span>
+            {left >= 0 ? (
+              <span className={exhausted ? 'text-rose-600 font-medium' : ''}>
+                {t('المحاولات المتبقية', 'Attempts left')}: {left}
+              </span>
+            ) : (
+              <span>{t('محاولات غير محدودة', 'Unlimited attempts')}</span>
+            )}
+          </div>
+          {exercise.last && (
+            <p className={`text-xs mt-1 font-medium ${exercise.last.passed ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {t('آخر نتيجة', 'Last result')}: {exercise.last.percentage}% · {exercise.last.passed ? t('ناجح', 'Passed') : t('لم ينجح بعد', 'Not passed yet')}
+              {exercise.best_percentage !== null && <span className="text-gray-400"> · {t('الأفضل', 'Best')}: {exercise.best_percentage}%</span>}
+            </p>
+          )}
+        </div>
+      </div>
+      <Link href={`/exam/${exercise.exam_id}`}>
+        <Button className="rounded-full gap-2" style={{ background: '#7c3aed' }} disabled={exhausted}>
+          <ClipboardList className="h-4 w-4" />
+          {exhausted ? t('انتهت المحاولات', 'No attempts left') : done ? t('إعادة التمرين', 'Retake exercise') : t('ابدأ التمرين', 'Start exercise')}
+        </Button>
+      </Link>
+      {exercise.description && <p className="text-sm text-gray-600 whitespace-pre-wrap">{exercise.description}</p>}
+    </div>
+  );
+}
+
 export default function LearnPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { locale } = useLocale();
@@ -243,6 +290,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const liveContent = content?.contents?.find((c: any) => c.content_type === 'live');
   const textContent = content?.contents?.find((c: any) => c.content_type === 'text');
   const fileContent = content?.contents?.find((c: any) => c.content_type === 'file');
+  const exercise = content?.exercise;
 
   const openFile = async (mode: 'download' | 'preview') => {
     if (!fileContent?.file?.url || fileBusy) return;
@@ -605,6 +653,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                   ) : (
                     <div className="flex items-center gap-3 p-4 rounded-xl bg-white border"><FileText className="h-6 w-6 text-green-500" /><span className="font-medium">{locale === 'ar' ? 'درس نصي' : 'Text lesson'}</span></div>
                   )}
+                  {exercise && exercise.position !== 'after_content' && (
+                    pageBlurred ? null : <ExerciseCard exercise={exercise} />
+                  )}
                   {textContent?.text?.body && (
                     <div className={`bg-white border rounded-2xl leading-relaxed whitespace-pre-wrap select-none ${contentFs ? 'max-w-3xl w-full mx-auto p-6 sm:p-10 text-lg' : 'p-6 sm:p-8'}`} onCopy={(e) => e.preventDefault()}>{textContent.text.body}</div>
                   )}
@@ -625,6 +676,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                         <span className="flex items-center gap-1.5 text-xs text-amber-600 p-3 rounded-xl bg-amber-50 border border-amber-100"><Ban className="h-4 w-4" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم — هذا النوع من الملفات لا يمكن معاينته' : 'Downloads disabled by your teacher — this file type cannot be previewed'} ({fileContent.file.name})</span>
                       )}
                     </div>
+                  )}
+                  {exercise && exercise.position === 'after_content' && (
+                    pageBlurred ? null : <ExerciseCard exercise={exercise} />
                   )}
                 </>
               )}

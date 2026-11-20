@@ -12,6 +12,7 @@ use App\Models\LiveSession;
 use App\Models\Section;
 use App\Models\TextContent;
 use App\Models\VideoContent;
+use App\Rules\TenantScopedExists;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -102,7 +103,15 @@ class LessonController extends Controller
             'is_free_preview' => 'nullable|boolean',
             'lesson_type' => 'nullable|string|max:20',
             'metadata' => 'nullable|array',
+            'metadata.exercise_exam_id' => ['nullable', 'string', new TenantScopedExists('exams')],
+            'metadata.exercise_position' => 'nullable|string|in:after_video,after_content',
         ]);
+
+        // Merge metadata instead of replacing it so attaching an exercise never
+        // silently wipes any other key already stored on the lesson.
+        if (array_key_exists('metadata', $validated) && is_array($validated['metadata'])) {
+            $validated['metadata'] = array_merge($lesson->metadata ?? [], $validated['metadata']);
+        }
 
         $lesson->update($validated);
 

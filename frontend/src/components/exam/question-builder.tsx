@@ -24,6 +24,8 @@ export type QuestionDraft = InteractiveHtmlDraft & {
   items: string[];
   answers: string[];
   keywords: string;
+  /** One or more skills (comma separated) the teacher links to this question. */
+  skills: string;
 };
 
 const QUESTION_TYPES = [
@@ -224,8 +226,8 @@ export function QuestionBuilder({ value, onChange, sections, exams, lockExam = f
           {value.items.map((it, i) => (
             <div key={i} className="flex items-center gap-2">
               <Input value={it} onChange={(e) => set({ items: value.items.map((x, j) => j === i ? e.target.value : x) })} className="h-10" placeholder={`${t('عنصر', 'Item')} ${i + 1}`} />
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i > 0) { [a[i], a[i - 1]] = [a[i - 1], a[i]]; set({ items: a }); } }} disabled={i === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; set({ items: a }); } }} disabled={i === value.items.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i > 0) { [a[i], a[i - 1]] = [a[i - 1], a[i]]; set({ items: a }); } }} disabled={i === 0} aria-label={t('تحريك العنصر لأعلى', 'Move item up')} title={t('تحريك العنصر لأعلى', 'Move item up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; set({ items: a }); } }} disabled={i === value.items.length - 1} aria-label={t('تحريك العنصر لأسفل', 'Move item down')} title={t('تحريك العنصر لأسفل', 'Move item down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
             </div>
           ))}
         </div>
@@ -294,9 +296,16 @@ export function QuestionBuilder({ value, onChange, sections, exams, lockExam = f
         )}
       </div>
 
-      <div className="space-y-2 max-w-[140px]">
-        <Label>{t('النقاط', 'Points')}</Label>
-        <Input type="number" value={value.points} onChange={(e) => set({ points: e.target.value })} className="h-10" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-2 max-w-[160px]">
+          <Label>{t('النقاط', 'Points')}</Label>
+          <Input type="number" value={value.points} onChange={(e) => set({ points: e.target.value })} className="h-10" />
+        </div>
+        <div className="space-y-2">
+          <Label>{t('المهارات (اختياري، مفصولة بفاصلة)', 'Skills (optional, comma separated)')}</Label>
+          <Input value={value.skills} onChange={(e) => set({ skills: e.target.value })} className="h-10" placeholder={t('مثال: الكثافة، قراءة الرسم البياني', 'e.g. Density, Graph reading')} />
+          <p className="text-[11px] text-gray-400">{t('تُبنى تقارير أداء الطلاب لكل مهارة من نتائج الأسئلة المرتبطة بها فعلياً.', 'Per-student skill reports are built from the real results of the linked questions.')}</p>
+        </div>
       </div>
     </div>
   );
