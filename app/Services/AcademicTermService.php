@@ -130,6 +130,11 @@ class AcademicTermService
         $linked = DB::transaction(function () use ($term, $tenantId, $valid, $courseId) {
             $this->seats->lockTenant($tenantId);
 
+            // Re-read the term UNDER the tenant lock. A concurrent end may have
+            // archived it since the pre-check, and linking active enrollments
+            // into an archived term must never be allowed.
+            $this->lockEnrollableTerm($tenantId, (string) $term->id);
+
             return Enrollment::withoutTenant()
                 ->where('tenant_id', $tenantId)
                 ->whereNull('academic_term_id')
@@ -208,8 +213,36 @@ class AcademicTermService
             (string) optional($term->updated_at)->getTimestamp(),
             (string) ($preview['seats_before'] ?? ''),
             (string) ($preview['seats_freed'] ?? ''),
+            // Identity + status of every row this end will touch. Totals alone
+            // are not enough: swapping one student's enrollment for another
+            // keeps the counts equal while executing a different outcome.
+            $this->affectedFingerprint($term),
             implode(',', $continue),
         ]));
+    }
+
+    /**
+     * Sorted fingerprint of the enrollment rows that ending this term will
+     * archive (identity, owner, course, status, expiry). Any membership change
+     * — even one that preserves the seat totals — changes this string, so a
+     * stale preview token can never confirm a different set of students.
+     */
+    private function affectedFingerprint(AcademicTerm $term): string
+    {
+        return Enrollment::withoutTenant()
+            ->where('tenant_id', $term->tenant_id)
+            ->where('academic_term_id', $term->id)
+            ->whereIn('status', Enrollment::EFFECTIVE_STATUSES)
+            ->orderBy('id')
+            ->get(['id', 'user_id', 'course_id', 'status', 'expires_at'])
+            ->map(fn (Enrollment $e) => implode(':', [
+                (string) $e->id,
+                (string) $e->user_id,
+                (string) $e->course_id,
+                (string) $e->status,
+                $e->expires_at ? (string) $e->expires_at->getTimestamp() : 'null',
+            ]))
+            ->implode(';');
     }
 
     /**
@@ -274,6 +307,20 @@ class AcademicTermService
                 ->whereIn('status', Enrollment::EFFECTIVE_STATUSES)
                 ->get();
 
+            // Every student that will actually be renewed must STILL be an
+            // active student of this tenant. A membership removed since the
+            // preview must never be silently renewed back into an effective
+            // enrollment. This runs before any mutation, so an ineligible
+            // selection aborts cleanly. It covers expired-but-active rows too,
+            // since those are renewed from `$rows` below.
+            $renewUserIds = $rows->pluck('user_id')->unique()
+                ->filter(fn ($id) => $continueIds->contains((string) $id))
+                ->values();
+
+            foreach ($renewUserIds as $renewUserId) {
+                $this->enrollments->assertTenantStudent($tenantId, User::findOrFail($renewUserId));
+            }
+
             foreach ($rows as $enrollment) {
                 $userId = (string) $enrollment->user_id;
                 $continues = $continueIds->contains($userId);
@@ -285,7 +332,16 @@ class AcademicTermService
                 ]);
 
                 if ($continues && $nextTerm) {
-                    $this->enrollments->closeGuardedRows($tenantId, (string) $enrollment->course_id, (string) $enrollment->user_id);
+                    $this->enrollments->closeGuardedRows($tenantId, (string) $enrollment->course_id, $userId);
+
+                    // Renewing must respect the plan seat limit and the course
+                    // ceiling exactly like any other enrollment. A row that was
+                    // already effective keeps the seat it held (assertSeatAvailable
+                    // returns early while the student still holds one); renewing an
+                    // EXPIRED row — which held neither a seat nor a course place —
+                    // must not smuggle in an effective enrollment past the limits.
+                    $this->enrollments->assertSeatAvailable($tenantId, $userId);
+                    $this->enrollments->assertCourseCapacity($tenantId, (string) $enrollment->course_id);
 
                     Enrollment::create([
                         'id' => UuidV7::generate(),
@@ -361,6 +417,24 @@ class AcademicTermService
 
         return DB::transaction(function () use ($from, $to, $userIds, $tenantId) {
             $this->seats->lockTenant($tenantId);
+
+            // Re-validate BOTH terms under the lock. A concurrent end could have
+            // archived the source or the destination since the pre-checks:
+            // promoting active enrollments into (or out of) an archived term
+            // must never be allowed. Lock order is tenant → destination → source.
+            $this->lockEnrollableTerm($tenantId, (string) $to->id);
+
+            $lockedFrom = AcademicTerm::withoutTenant()
+                ->where('tenant_id', $tenantId)
+                ->whereKey($from->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedFrom->status === AcademicTerm::STATUS_ARCHIVED) {
+                throw new HttpResponseException(
+                    response()->json(['message' => 'This term has already been ended.', 'code' => 'term_archived'], 409)
+                );
+            }
 
             $rows = $this->seats->effectiveQuery($tenantId)
                 ->where('academic_term_id', $from->id)
@@ -444,6 +518,28 @@ class AcademicTermService
         }
 
         return ['created' => $created, 'failed' => $failed];
+    }
+
+    /**
+     * Lock a term row for update and assert it still accepts enrollments.
+     * Called inside a transaction after the tenant lock so a term archived by
+     * a concurrent request can never receive new/active enrollments.
+     */
+    private function lockEnrollableTerm(string $tenantId, string $termId): AcademicTerm
+    {
+        $locked = AcademicTerm::withoutTenant()
+            ->where('tenant_id', $tenantId)
+            ->whereKey($termId)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $locked || ! in_array($locked->status, EnrollmentService::ENROLLABLE_TERM_STATUSES, true)) {
+            throw new HttpResponseException(
+                response()->json(['message' => 'Term is closed for enrollment.', 'code' => 'term_closed'], 422)
+            );
+        }
+
+        return $locked;
     }
 
     /**

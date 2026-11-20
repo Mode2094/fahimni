@@ -45,6 +45,19 @@ class AcademicTermHardeningTest extends TenantTestCase
         Cache::forget('plan:usage:'.$tenant->id);
     }
 
+    private function setCourseCap(Tenant $tenant, int $cap): void
+    {
+        $sub = TenantSubscription::where('tenant_id', $tenant->id)->firstOrFail();
+
+        PlanFeature::updateOrCreate(
+            ['plan_id' => $sub->plan_id, 'feature_key' => 'max_students_per_course'],
+            ['feature_value' => (string) $cap, 'feature_type' => 'string', 'sort_order' => 0],
+        );
+
+        PlanEngine::bumpVersion();
+        Cache::forget('plan:usage:'.$tenant->id);
+    }
+
     private function course(Tenant $tenant, string $title = 'Course'): Course
     {
         return Course::create([
@@ -508,13 +521,22 @@ class AcademicTermHardeningTest extends TenantTestCase
         $this->enroll($course, $this->student($tenant), ['academic_term_id' => $term->id]);
 
         $headers = $this->authHeaders($teacher, $tenant);
-        $payload = ['create_next' => ['name' => 'T2']];
+
+        // A preview token is now mandatory on the HTTP end request.
+        $token = $this->withHeaders($headers)
+            ->getJson("/api/v1/terms/{$term->id}/end-preview")
+            ->assertOk()
+            ->json('signature');
+
+        $payload = ['create_next' => ['name' => 'T2'], 'preview_token' => $token];
 
         $first = $this->withHeaders($headers)
             ->postJson("/api/v1/terms/{$term->id}/end", $payload)
             ->assertOk()
             ->json('summary');
 
+        // Retrying after success is still 200 (idempotent); the token is not
+        // re-validated because the term is already archived.
         $second = $this->withHeaders($headers)
             ->postJson("/api/v1/terms/{$term->id}/end", $payload)
             ->assertOk()
@@ -724,5 +746,288 @@ class AcademicTermHardeningTest extends TenantTestCase
             ->assertJsonPath('code', 'force_delete_forbidden');
 
         $this->assertDatabaseHas('enrollments', ['id' => $enrollment->id]);
+    }
+
+    // ─────────────── follow-up hardening (preview signature / renewal limits /
+    //                 in-transaction term re-validation) ───────────────
+
+    /**
+     * (1) A preview must be sensitive to WHICH enrollments will be affected,
+     * not just how many. Replacing one student's enrollment with another's
+     * keeps every total equal but must still invalidate the token.
+     */
+    public function test_end_preview_signature_tracks_enrollment_identity_with_stable_totals(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $teacher = $this->teacher($tenant);
+        $course = $this->course($tenant);
+        $term = $this->term($tenant, 'T1');
+
+        $a = $this->student($tenant);
+        $b = $this->student($tenant);
+        $this->enroll($course, $a, ['academic_term_id' => $term->id]);
+        $this->enroll($course, $b, ['academic_term_id' => $term->id]);
+
+        $headers = $this->authHeaders($teacher, $tenant);
+
+        $first = $this->withHeaders($headers)
+            ->getJson("/api/v1/terms/{$term->id}/end-preview")
+            ->assertOk();
+        $this->assertSame(2, $first->json('preview.seats_before'));
+        $this->assertSame(2, $first->json('preview.seats_freed'));
+        $token = $first->json('signature');
+
+        // Swap A's enrollment for a brand new student C — same row shape, same
+        // status, same course; only the identity changes.
+        $c = $this->student($tenant);
+        Enrollment::withoutTenant()
+            ->where('tenant_id', $tenant->id)
+            ->where('course_id', $course->id)
+            ->where('user_id', $a->id)
+            ->update(['user_id' => $c->id]);
+
+        $second = $this->withHeaders($headers)
+            ->getJson("/api/v1/terms/{$term->id}/end-preview")
+            ->assertOk();
+        // Totals are identical...
+        $this->assertSame(2, $second->json('preview.seats_before'));
+        $this->assertSame(2, $second->json('preview.seats_freed'));
+        // ...but the enrollment set changed, so the token must differ.
+        $this->assertNotSame($token, $second->json('signature'));
+
+        // preview_token is now mandatory over HTTP.
+        $this->withHeaders($headers)
+            ->postJson("/api/v1/terms/{$term->id}/end", ['create_next' => ['name' => 'T2']])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('preview_token');
+
+        // Confirming with the old token is rejected and changes nothing.
+        $this->withHeaders($headers)
+            ->postJson("/api/v1/terms/{$term->id}/end", [
+                'preview_token' => $token,
+                'create_next' => ['name' => 'T2'],
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('code', 'stale_preview');
+
+        $this->assertSame(AcademicTerm::STATUS_ACTIVE, $term->fresh()->status);
+        $this->assertSame(2, $this->seats($tenant));
+    }
+
+    /**
+     * (2a) Renewing an EXPIRED enrollment turns it back into an effective one.
+     * It held no seat, so this must pass through the plan seat limit — a full
+     * plan must reject it instead of silently over-filling.
+     */
+    public function test_renewing_an_expired_enrollment_cannot_exceed_students_limit(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $this->setStudentsLimit($tenant, 1);
+
+        $course = $this->course($tenant);
+        $term = $this->term($tenant, 'T1');
+
+        // An EXPIRED term enrollment — inserted directly so the setup is not
+        // itself blocked by the limit under test. It holds no seat.
+        $expired = $this->student($tenant);
+        Enrollment::create([
+            'id' => UuidV7::generate(), 'tenant_id' => $tenant->id, 'course_id' => $course->id,
+            'user_id' => $expired->id, 'academic_term_id' => $term->id, 'status' => 'active',
+            'expires_at' => now()->subDay(), 'enrolled_at' => now(), 'source' => 'manual',
+        ]);
+
+        // Another student already occupies the single seat OUTSIDE this term.
+        $holder = $this->student($tenant);
+        $this->enroll($course, $holder);
+
+        $this->assertSame(1, $this->seats($tenant));
+
+        try {
+            app(AcademicTermService::class)->end($term, [$expired->id], ['create' => ['name' => 'T2']]);
+            $this->fail('Expected the seat limit to reject renewing an expired enrollment.');
+        } catch (QuotaExceededException $e) {
+            // expected
+        }
+
+        // Fully rolled back: no partial archive, no renewal row, term intact.
+        $this->assertSame(AcademicTerm::STATUS_ACTIVE, $term->fresh()->status);
+        $this->assertSame(1, $this->seats($tenant));
+        $this->assertSame(0, Enrollment::withoutTenant()
+            ->where('tenant_id', $tenant->id)->where('source', 'term_renewal')->count());
+    }
+
+    /**
+     * (2b) The same renewal must respect the per-course ceiling: an expired
+     * enrollment held no place in a full course, so renewing it must fail.
+     */
+    public function test_renewing_an_expired_enrollment_cannot_exceed_course_cap(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $this->setStudentsLimit($tenant, 50);
+        $this->setCourseCap($tenant, 1);
+
+        $course = $this->course($tenant);
+        $term = $this->term($tenant, 'T1');
+
+        $holder = $this->student($tenant);
+        $this->enroll($course, $holder);
+
+        $expired = $this->student($tenant);
+        Enrollment::create([
+            'id' => UuidV7::generate(), 'tenant_id' => $tenant->id, 'course_id' => $course->id,
+            'user_id' => $expired->id, 'academic_term_id' => $term->id, 'status' => 'active',
+            'expires_at' => now()->subDay(), 'enrolled_at' => now(), 'source' => 'manual',
+        ]);
+
+        // The course already has exactly one effective student (the cap).
+        $this->assertSame(1, app(StudentSeatService::class)
+            ->effectiveQuery($tenant->id)->where('course_id', $course->id)->distinct()->count('user_id'));
+
+        try {
+            app(AcademicTermService::class)->end($term, [$expired->id], ['create' => ['name' => 'T2']]);
+            $this->fail('Expected the course cap to reject renewing an expired enrollment.');
+        } catch (HttpResponseException $e) {
+            $this->assertSame(403, $e->getResponse()->getStatusCode());
+        }
+
+        $this->assertSame(AcademicTerm::STATUS_ACTIVE, $term->fresh()->status);
+        $this->assertSame(0, Enrollment::withoutTenant()
+            ->where('tenant_id', $tenant->id)->where('source', 'term_renewal')->count());
+    }
+
+    /**
+     * (2c) A continuing student whose tenant membership was removed must not be
+     * silently renewed back into an effective enrollment.
+     */
+    public function test_end_rejects_continuing_student_whose_membership_was_removed(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $course = $this->course($tenant);
+        $term = $this->term($tenant, 'T1');
+
+        $student = $this->student($tenant);
+        $this->enroll($course, $student, ['academic_term_id' => $term->id]);
+
+        // Membership revoked between preview and end.
+        \App\Models\TenantUser::where('tenant_id', $tenant->id)
+            ->where('user_id', $student->id)
+            ->update(['status' => 'removed']);
+
+        try {
+            app(AcademicTermService::class)->end($term, [$student->id], ['create' => ['name' => 'T2']]);
+            $this->fail('Expected the ineligible continuing student to be rejected.');
+        } catch (HttpResponseException $e) {
+            $this->assertSame(403, $e->getResponse()->getStatusCode());
+        }
+
+        $this->assertSame(AcademicTerm::STATUS_ACTIVE, $term->fresh()->status);
+        $this->assertSame(1, $this->seats($tenant));
+    }
+
+    /**
+     * (3a) linkEnrollments() re-checks the term INSIDE the transaction after
+     * the tenant lock: a term archived after the pre-check must not receive
+     * the active enrollments.
+     */
+    public function test_link_enrollments_rejects_a_term_archived_after_the_precheck(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $course = $this->course($tenant);
+        $term = $this->term($tenant, 'T1');
+        $student = $this->student($tenant);
+        $this->enroll($course, $student); // pre-migration row, no term
+
+        // Simulate a concurrent end(): the term is archived right after the
+        // pre-check. The first User hydration inside the validation loop is
+        // the hook — it happens only after the pre-check has passed.
+        $fired = false;
+        User::retrieved(function (User $u) use (&$fired, $term) {
+            if ($fired) {
+                return;
+            }
+            $fired = true;
+            AcademicTerm::withoutTenant()
+                ->whereKey($term->id)
+                ->update(['status' => AcademicTerm::STATUS_ARCHIVED]);
+        });
+
+        try {
+            app(AcademicTermService::class)->linkEnrollments($term, [$student->id]);
+            $this->fail('Expected term_closed rejection.');
+        } catch (HttpResponseException $e) {
+            $this->assertSame(422, $e->getResponse()->getStatusCode());
+        }
+
+        $this->assertTrue($fired, 'the pre-check must have run before the term was archived');
+        // Nothing was linked to the concurrently-archived term.
+        $this->assertNull(Enrollment::withoutTenant()
+            ->where('tenant_id', $tenant->id)->where('user_id', $student->id)
+            ->value('academic_term_id'));
+    }
+
+    /**
+     * (3b) promote() re-checks the DESTINATION term inside the transaction. A
+     * stale in-memory copy that still reads "upcoming" must not be trusted.
+     */
+    public function test_promote_rejects_a_destination_term_archived_after_the_precheck(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $course = $this->course($tenant);
+        $from = $this->term($tenant, 'T1');
+        $to = $this->term($tenant, 'T2', AcademicTerm::STATUS_UPCOMING);
+        $student = $this->student($tenant);
+        $this->enroll($course, $student, ['academic_term_id' => $from->id]);
+
+        // Concurrently archived in the DB, but $to in memory still says upcoming
+        // (so the pre-check passes and only the in-transaction re-read catches it).
+        AcademicTerm::withoutTenant()->whereKey($to->id)->update(['status' => AcademicTerm::STATUS_ARCHIVED]);
+        $this->assertSame(AcademicTerm::STATUS_UPCOMING, $to->status);
+
+        try {
+            app(AcademicTermService::class)->promote($from, $to, [$student->id]);
+            $this->fail('Expected term_closed rejection.');
+        } catch (HttpResponseException $e) {
+            $this->assertSame(422, $e->getResponse()->getStatusCode());
+        }
+
+        $this->assertSame($from->id, Enrollment::withoutTenant()
+            ->where('user_id', $student->id)->value('academic_term_id'));
+        $this->assertSame(0, Enrollment::withoutTenant()
+            ->where('tenant_id', $tenant->id)->where('academic_term_id', $to->id)->count());
+    }
+
+    /**
+     * (3c) promote() also re-checks the SOURCE term inside the transaction: a
+     * term ended concurrently must not be able to export its students.
+     */
+    public function test_promote_rejects_a_source_term_archived_after_the_precheck(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $course = $this->course($tenant);
+        $from = $this->term($tenant, 'T1');
+        $to = $this->term($tenant, 'T2', AcademicTerm::STATUS_UPCOMING);
+        $student = $this->student($tenant);
+        $this->enroll($course, $student, ['academic_term_id' => $from->id]);
+
+        AcademicTerm::withoutTenant()->whereKey($from->id)->update(['status' => AcademicTerm::STATUS_ARCHIVED]);
+        $this->assertSame(AcademicTerm::STATUS_ACTIVE, $from->status);
+
+        try {
+            app(AcademicTermService::class)->promote($from, $to, [$student->id]);
+            $this->fail('Expected term_archived rejection.');
+        } catch (HttpResponseException $e) {
+            $this->assertSame(409, $e->getResponse()->getStatusCode());
+        }
+
+        // Student was not moved into the destination term.
+        $this->assertSame(0, Enrollment::withoutTenant()
+            ->where('tenant_id', $tenant->id)->where('academic_term_id', $to->id)->count());
     }
 }

@@ -273,7 +273,10 @@ class AcademicTermController extends Controller
             'create_next.name' => 'nullable|string|max:255',
             'create_next.starts_at' => 'nullable|date',
             'create_next.ends_at' => 'nullable|date|after_or_equal:create_next.starts_at',
-            'preview_token' => 'nullable|string',
+            // The client must echo the signature of a preview it was shown, so
+            // a stale selection can never end the term with a different set of
+            // students. Internal (non-HTTP) callers may omit it.
+            'preview_token' => 'required|string',
         ]);
 
         $tenantId = (string) $term->tenant_id;

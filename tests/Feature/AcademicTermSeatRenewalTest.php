@@ -315,16 +315,18 @@ class AcademicTermSeatRenewalTest extends TenantTestCase
             $this->enroll($tenant, $course, $student, ['academic_term_id' => $termId]);
         }
 
-        $preview = $this->withHeaders($headers)
+        $previewResponse = $this->withHeaders($headers)
             ->getJson("/api/v1/terms/{$termId}/end-preview")
-            ->assertOk()
-            ->json('preview');
+            ->assertOk();
+
+        $preview = $previewResponse->json('preview');
+        $token = $previewResponse->json('signature');
 
         $this->assertSame(2, $preview['seats_freed']);
         $this->assertSame(0, $preview['seats_after']);
 
         $response = $this->withHeaders($headers)
-            ->postJson("/api/v1/terms/{$termId}/end", [])
+            ->postJson("/api/v1/terms/{$termId}/end", ['preview_token' => $token])
             ->assertOk()
             ->json();
 
