@@ -526,7 +526,7 @@ export function StorefrontHeader({
               logoUrl={site?.logo_url}
               primary={primary}
               accent={accent}
-              className="hidden md:inline-flex"
+              className="min-h-[40px]"
             />
           )}
           {!loggedIn && (
@@ -581,11 +581,6 @@ export function StorefrontHeader({
                 {l.label}
               </a>
             ))}
-            {showInstall && (
-              <div className="pt-1">
-                <InstallButton variant="nav" name={site?.name || ''} logoUrl={site?.logo_url} primary={primary} accent={accent} className="min-h-[44px] w-full" />
-              </div>
-            )}
             <div className="flex gap-2 pt-2">
               {loggedIn ? (
                 <Link href="/my-learning" onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl text-sm font-semibold text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
@@ -669,7 +664,6 @@ export function StorefrontFooter({
                 <contact.icon className="h-4 w-4" /> {contact.label}
               </a>
             )}
-            <InstallButton variant="nav" name={site?.name || ''} logoUrl={site?.logo_url} primary={primary} accent={accent} className="!text-white !border-white/20 !bg-white/5" />
           </div>
         </div>
       </div>
