@@ -350,7 +350,7 @@ class ExamAttemptController extends Controller
         // exam's course decides which term's attempt budget applies.
         $termId = $this->currentTermId((string) $exam->tenant_id, (string) $exam->course_id, (string) $user->id);
 
-        $attempt = DB::transaction(function () use ($exam, $user, $maxAttempts, $termId) {
+        [$attempt, $resumed] = DB::transaction(function () use ($exam, $user, $maxAttempts, $termId) {
             Exam::whereKey($exam->id)->lockForUpdate()->first();
 
             // An in-progress attempt that has outlived its duration is a
@@ -369,6 +369,21 @@ class ExamAttemptController extends Controller
                 $this->autoSubmit($staleAttempt);
             }
 
+            // Resume a still-live attempt instead of opening another one: a
+            // page reload, a flaky connection or a double click must continue
+            // the SAME attempt with the SAME clock, never consume an extra
+            // attempt slot or reset the timer.
+            $live = $this->scopeToTerm(
+                ExamAttempt::where('exam_id', $exam->id)
+                    ->where('user_id', $user->id)
+                    ->where('status', 'in_progress'),
+                $termId
+            )->orderByDesc('started_at')->first();
+
+            if ($live) {
+                return [$live, true];
+            }
+
             // Attempts are counted PER TERM against the exam's limit, so a
             // re-enrolled student starts a fresh budget without mixing results.
             $usedInTerm = $this->scopeToTerm(
@@ -377,7 +392,7 @@ class ExamAttemptController extends Controller
             )->count();
 
             if ($usedInTerm >= $maxAttempts) {
-                return null;
+                return [null, false];
             }
 
             // Numbering stays globally monotonic, respecting the unique key
@@ -386,7 +401,7 @@ class ExamAttemptController extends Controller
                 ->where('user_id', $user->id)
                 ->max('attempt_number') + 1;
 
-            return ExamAttempt::create([
+            return [ExamAttempt::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $exam->tenant_id,
                 'exam_id' => $exam->id,
@@ -395,7 +410,7 @@ class ExamAttemptController extends Controller
                 'attempt_number' => $attemptNumber,
                 'status' => 'in_progress',
                 'started_at' => now(),
-            ]);
+            ]), false];
         });
 
         if (! $attempt) {
@@ -410,17 +425,34 @@ class ExamAttemptController extends Controller
             ->reject(fn ($eq) => ! $eq->question)
             ->values();
 
-        if ($exam->random_questions_count && $exam->random_questions_count > 0 && $exam->random_questions_count < $examQuestions->count()) {
-            $examQuestions = $examQuestions->shuffle()->take($exam->random_questions_count);
-            $attempt->update([
-                'metadata' => array_merge($attempt->metadata ?? [], [
-                    'random_draw' => $examQuestions->pluck('question_id')->values()->toArray(),
-                ]),
-            ]);
-        }
+        // A resumed attempt replays the exact questions/order it was drawn with
+        // (a random draw or shuffle must not hand out a different, easier set).
+        $questionOrder = $attempt->metadata['question_order'] ?? null;
 
-        if ($exam->shuffle_questions) {
-            $examQuestions = $examQuestions->shuffle();
+        if ($resumed && is_array($questionOrder) && $questionOrder !== []) {
+            $order = array_flip($questionOrder);
+            $examQuestions = $examQuestions
+                ->filter(fn ($eq) => isset($order[$eq->question_id]))
+                ->sortBy(fn ($eq) => $order[$eq->question_id])
+                ->values();
+        } else {
+            if ($exam->random_questions_count && $exam->random_questions_count > 0 && $exam->random_questions_count < $examQuestions->count()) {
+                $examQuestions = $examQuestions->shuffle()->take($exam->random_questions_count)->values();
+            }
+
+            if ($exam->shuffle_questions) {
+                $examQuestions = $examQuestions->shuffle()->values();
+            }
+
+            if (! $resumed) {
+                // Remember the presented order so a reload/refresh continues the
+                // same paper instead of reshuffling into a fresh one.
+                $attempt->update([
+                    'metadata' => array_merge($attempt->metadata ?? [], [
+                        'question_order' => $examQuestions->pluck('question_id')->values()->toArray(),
+                    ]),
+                ]);
+            }
         }
 
         $questionsData = $this->questionsPayload($examQuestions, $exam);
@@ -433,18 +465,108 @@ class ExamAttemptController extends Controller
         )->count();
         $attemptsLeft = $exam->max_attempts > 0 ? max(0, $exam->max_attempts - $attemptsUsed) : -1;
 
+        // The deadline always runs from when THIS attempt actually started, so
+        // resuming a reloaded/reconnected attempt continues the real clock
+        // instead of silently restarting it.
+        $deadline = null;
+        if ($exam->duration_minutes > 0) {
+            $deadline = $attempt->started_at->copy()->addMinutes($exam->duration_minutes)->toIso8601String();
+        }
+
+        // Anything already saved for a resumed attempt is handed back so a
+        // reconnect drops the student back exactly where they left off.
+        $savedAnswers = $resumed
+            ? ExamAnswer::where('exam_attempt_id', $attempt->id)
+                ->get()
+                ->mapWithKeys(fn (ExamAnswer $a) => [
+                    (string) $a->exam_question_id => $this->decodeStoredAnswer($a->given_answer),
+                ])
+                ->all()
+            : (object) [];
+
         return response()->json([
             'attempt' => new ExamAttemptResource($attempt),
+            'resumed' => $resumed,
             'questions' => $questionsData,
-            'deadline' => $exam->duration_minutes > 0 ? now()->addMinutes($exam->duration_minutes)->toIso8601String() : null,
+            'saved_answers' => $savedAnswers,
+            'deadline' => $deadline,
             'attempts_left' => $attemptsLeft,
             'exam' => [
                 'title' => $exam->title,
                 'duration_minutes' => $exam->duration_minutes,
                 'shuffle_questions' => $exam->shuffle_questions,
                 'anti_cheat_enabled' => (bool) $exam->anti_cheat_enabled,
+                'allow_resume' => true,
             ],
         ]);
+    }
+
+    /**
+     * Lightweight autosave for an in-progress attempt. Only the current user's
+     * own live attempt is writable, the time limit is enforced, and the payload
+     * is bounded — so a flaky connection can persist progress without being a
+     * way to submit twice or tamper with a graded attempt.
+     */
+    public function autosave(Request $request, string $examId, string $attemptId): JsonResponse
+    {
+        $exam = Exam::findOrFail($examId);
+        $attempt = ExamAttempt::where('exam_id', $exam->id)
+            ->where('id', $attemptId)
+            ->where('user_id', $request->user()->id)
+            ->where('status', 'in_progress')
+            ->firstOrFail();
+
+        // Past the deadline: refuse the write and let the client auto-submit.
+        if ($exam->duration_minutes > 0 && $attempt->started_at
+            && now()->gt($attempt->started_at->copy()->addMinutes($exam->duration_minutes))) {
+            return response()->json(['message' => 'Time is up.', 'expired' => true], 409);
+        }
+
+        $validated = $request->validate([
+            'answers' => 'present|array|max:500',
+            'answers.*.exam_question_id' => 'required|string',
+            'answers.*.given_answer' => 'nullable',
+        ]);
+
+        $allowedIds = ExamQuestion::where('exam_id', $exam->id)->pluck('question_id', 'id');
+
+        $rows = [];
+        foreach ($validated['answers'] as $ans) {
+            $examQuestionId = $ans['exam_question_id'] ?? null;
+            if (! $examQuestionId || ! $allowedIds->has($examQuestionId)) {
+                continue;
+            }
+
+            $rows[] = [
+                'id' => UuidV7::generate(),
+                'tenant_id' => $exam->tenant_id,
+                'exam_attempt_id' => $attempt->id,
+                'exam_question_id' => $examQuestionId,
+                'question_id' => $allowedIds[$examQuestionId],
+                // Stored ungraded: `is_correct` stays null so an autosaved
+                // answer can never look graded before the real submit.
+                'given_answer' => json_encode($ans['given_answer'] ?? null),
+                'is_correct' => null,
+                'points_earned' => 0,
+                'points_max' => 0,
+                'time_spent_seconds' => 0,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        // Replace this attempt's draft answers in one transaction. An
+        // in-progress attempt has no graded answers yet, so replacing the whole
+        // set is safe and keeps repeated autosaves from piling up.
+        DB::transaction(function () use ($attempt, $rows) {
+            ExamAnswer::where('exam_attempt_id', $attempt->id)->delete();
+
+            if ($rows !== []) {
+                ExamAnswer::insert($rows);
+            }
+        });
+
+        return response()->json(['saved' => true, 'count' => count($rows)]);
     }
 
     public function submit(SubmitExamRequest $request, string $examId, string $attemptId): JsonResponse
@@ -540,6 +662,9 @@ class ExamAttemptController extends Controller
             ];
         }
 
+        // Drop any autosaved drafts from this attempt before writing the final,
+        // graded answer set (otherwise a reconnect-then-submit would duplicate).
+        ExamAnswer::where('exam_attempt_id', $attempt->id)->delete();
         ExamAnswer::insert($answersData);
 
         $percentage = $totalPoints > 0 ? round(($earnedPoints / $totalPoints) * 100, 2) : 0;
@@ -770,6 +895,21 @@ class ExamAttemptController extends Controller
         return $termId === null
             ? $query->whereNull('academic_term_id')
             : $query->where('academic_term_id', $termId);
+    }
+
+    /**
+     * Reverse the JSON encoding used when persisting an answer, so a resumed
+     * attempt receives the same type (string/array/object) the student sent.
+     */
+    private function decodeStoredAnswer(mixed $stored): mixed
+    {
+        if (! is_string($stored)) {
+            return $stored;
+        }
+
+        $decoded = json_decode($stored, true);
+
+        return json_last_error() === JSON_ERROR_NONE ? $decoded : $stored;
     }
 
     private function checkAnswer(Question $question, mixed $givenAnswer): ?bool

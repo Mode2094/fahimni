@@ -47,6 +47,8 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const submitRef = useRef<(() => void) | null>(null);
   const submittedRef = useRef(false);
   const startedAtRef = useRef(0);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef('');
 
   const typeLabel = (tp: string) => {
     const map: Record<string, [string, string]> = {
@@ -145,6 +147,38 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     };
   }, [started, antiCheat, warnShown]);
 
+  // Autosave: persist in-progress answers (debounced) so a reload, a dropped
+  // connection or an accidental close can always resume the same attempt
+  // without losing answers. Grading still happens only on the real submit.
+  useEffect(() => {
+    if (!started || previewMode || !attemptId || submittedRef.current) return;
+    const snapshot = JSON.stringify(answers);
+    if (snapshot === lastSavedRef.current) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(async () => {
+      try {
+        const tid = localStorage.getItem('tenant_id');
+        const payload = Object.entries(answers).map(([examQuestionId, v]) => ({
+          exam_question_id: examQuestionId,
+          given_answer: v,
+        }));
+        const res = await fetch(`${API}/exams/${id}/attempts/${attemptId}/autosave`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tid || '', Accept: 'application/json' },
+          body: JSON.stringify({ answers: payload }),
+          keepalive: true,
+        });
+        // The server clock ran out while the tab was idle: submit right away.
+        if (res.status === 409 && !submittedRef.current) {
+          submitRef.current?.();
+          return;
+        }
+        if (res.ok) lastSavedRef.current = snapshot;
+      } catch { /* offline: the next change retries */ }
+    }, 2500);
+    return () => { if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current); };
+  }, [answers, started, previewMode, attemptId, id]);
+
   const startExam = async () => {
     setLoading(true);
     const tid = localStorage.getItem('tenant_id');
@@ -161,13 +195,20 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       setViolations(0);
       setWarnShown(false);
       submittedRef.current = false;
-      setAnswers({});
+      // A resumed attempt restores the answers already saved (reconnect/reload)
+      // so the student continues where they left off.
+      setAnswers(d.resumed && d.saved_answers ? d.saved_answers : {});
+      // The real clock runs from the attempt's own start, not from this render.
+      const durationMs = (d.exam?.duration_minutes || 0) * 60000;
+      startedAtRef.current = d.deadline && durationMs ? new Date(d.deadline).getTime() - durationMs : Date.now();
       setPreviewAnswers([]);
       setCurrent(0);
       setResult(null);
       if (d.deadline) setDeadline(new Date(d.deadline).getTime());
       else setDeadline(null);
-      startedAtRef.current = Date.now();
+      if (d.resumed && !previewMode) {
+        toast.info(t('تم استئناف محاولتك السابقة — لا تُحتسب محاولة جديدة.', 'Your previous attempt was resumed — no new attempt was used.'));
+      }
       setStarted(true);
       window.scrollTo(0, 0);
     } catch { toast.error(t('فشل', 'Failed')); }
