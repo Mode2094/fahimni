@@ -1,8 +1,9 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useLocale } from '@/store/locale';
+import { track } from '@/lib/analytics';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CheckCircle2, XCircle, Loader2, LayoutDashboard, Clock, RefreshCw } from 'lucide-react';
@@ -23,6 +24,8 @@ function SuccessInner() {
   const [state, setState] = useState<UiState>('checking');
   const [message, setMessage] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  // Fire the Purchase conversion exactly once, only after the backend confirms.
+  const purchaseTracked = useRef(false);
 
   // Reconcile with the backend by forwarding the FULL original query string
   // (including Freemius' `signature`). The page NEVER decides success from the
@@ -48,13 +51,23 @@ function SuccessInner() {
         `${API}/subscriptions/freemius/complete?redirect_url=${encodeURIComponent(redirectUrl)}`,
         {
           credentials: 'include',
-          headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('lms_tenant') || '' },
+          headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('tenant_id') || '' },
         },
       );
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.status === 'active') {
         setState('active');
+        // Dedupe by license id across reloads: a refresh (or a second tab)
+        // must never double-count the Purchase conversion.
+        const key = 'purchase_tracked:' + (search.get('license_id') || search.toString() || 'platform_subscription');
+        let already = false;
+        try { already = sessionStorage.getItem(key) === '1'; } catch { /* storage blocked */ }
+        if (!purchaseTracked.current && !already) {
+          purchaseTracked.current = true;
+          try { sessionStorage.setItem(key, '1'); } catch { /* storage blocked */ }
+          track('Purchase', { currency: 'USD', content_name: 'platform_subscription' }, 'purchase');
+        }
       } else if (data.status === 'pending') {
         setState('pending');
       } else if (data.status === 'mismatch' || data.status === 'unverified' || data.status === 'no_intent') {

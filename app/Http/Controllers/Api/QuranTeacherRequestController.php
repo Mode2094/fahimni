@@ -120,15 +120,24 @@ class QuranTeacherRequestController extends Controller
      */
     private function createAccount(QuranTeacherRequest $qr): \App\Models\User
     {
-        $user = \App\Models\User::firstOrCreate(
-            ['email' => $qr->email],
-            [
-                'name'     => $qr->name,
-                'phone'    => $qr->phone,
-                'password' => bcrypt('quran-' . substr(md5($qr->email), 0, 8)),
+        // Approved by an admin: resolve the address INCLUDING soft-deleted rows
+        // (a deleted account still reserves its email) and reactivate it rather
+        // than letting the insert collide on the unique index.
+        $user = \App\Models\User::findByEmail((string) $qr->email);
+
+        if ($user) {
+            if ($user->trashed()) {
+                $user->restoreWithWorkspaces();
+            }
+        } else {
+            $user = \App\Models\User::create([
+                'name'      => $qr->name,
+                'phone'     => $qr->phone,
+                'email'     => \App\Models\User::normalizeEmail((string) $qr->email),
+                'password'  => bcrypt('quran-' . substr(md5($qr->email), 0, 8)),
                 'is_active' => true,
-            ]
-        );
+            ]);
+        }
 
         if (!$user->email_verified_at) {
             $user->forceFill(['email_verified_at' => now()])->save();
@@ -151,10 +160,12 @@ class QuranTeacherRequestController extends Controller
             $broker = \Illuminate\Support\Facades\Password::broker();
             $token = $broker->createToken($user);
 
-            // Build a reset URL pointing to the frontend
-            $resetUrl = config('app.frontend_url', 'http://localhost:3000')
-                . '/ar/reset-password?token=' . $token
-                . '&email=' . urlencode($user->email);
+            // Build a reset URL pointing to the frontend (the same page the
+            // standard password-reset email uses: /reset-password with
+            // token+email in the query string).
+            $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $resetUrl = $frontend.'/reset-password?token='.$token
+                .'&email='.urlencode($user->email);
 
             $planName = $qr->plan?->name;
 

@@ -4,7 +4,7 @@ import { twMerge } from 'tailwind-merge';
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-export const curr = (a: number, c = 'JOD') =>
+export const curr = (a: number, c = 'USD') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 2 }).format(a);
 
 /** Localized currency name — "دينار أردني" instead of a bare code like JOD. */

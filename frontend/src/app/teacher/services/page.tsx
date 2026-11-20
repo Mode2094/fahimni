@@ -28,7 +28,7 @@ export default function TeacherServicesPage() {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const { settings } = useSettings();
-  const currency = settings.currency || 'JOD';
+  const currency = settings.currency || 'USD';
 
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

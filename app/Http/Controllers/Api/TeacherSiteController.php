@@ -130,25 +130,19 @@ class TeacherSiteController extends Controller
                 'sections' => $config['sections'] ?? ['stats', 'about', 'courses', 'card', 'testimonials', 'faq', 'cta'],
                 'badge_text' => $config['badge_text'] ?? 'أكاديمية تعليمية',
                 'hero_slides' => $config['hero_slides'] ?? $defaultSlides,
-                'show_stats' => $config['show_stats'] ?? true,
-                'stats' => $config['stats'] ?? [
-                    ['value' => '+500', 'label' => 'طالب'],
-                    ['value' => '+40', 'label' => 'كورس'],
-                    ['value' => '4.9', 'label' => 'تقييم'],
-                    ['value' => '24/7', 'label' => 'دعم'],
-                ],
+                // No invented marketing numbers: the stats bar is opt-in and
+                // only ever shows figures the teacher entered themselves.
+                'show_stats' => $config['show_stats'] ?? false,
+                'stats' => $config['stats'] ?? [],
                 'show_about' => $config['show_about'] ?? false,
                 'about_title' => $config['about_title'] ?? 'من نحن',
                 'about_text' => $config['about_text'] ?? '',
                 'about_image' => $config['about_image'] ?? null,
                 'show_testimonials' => $config['show_testimonials'] ?? false,
-                'testimonials' => $config['testimonials'] ?? [
-                    ['name' => 'طالب', 'text' => 'تجربة رائعة!'],
-                ],
+                // Never fabricate social proof — only the teacher's own quotes.
+                'testimonials' => $config['testimonials'] ?? [],
                 'show_faq' => $config['show_faq'] ?? false,
-                'faq' => $config['faq'] ?? [
-                    ['q' => 'كيف أبدأ؟', 'a' => 'سجل حساباً وابدأ فوراً'],
-                ],
+                'faq' => $config['faq'] ?? [],
                 'cta_title' => $config['cta_title'] ?? 'جاهز تبدأ رحلتك التعليمية؟',
                 'cta_text' => $config['cta_text'] ?? 'سجل الآن وابدأ التعلم',
                 'contact_whatsapp' => $config['contact_whatsapp'] ?? null,

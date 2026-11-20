@@ -60,6 +60,27 @@ sudo ADMIN_SSH_IP=<your.ssh.ip> CONFIRM_LOOKSLOOP_OK=yes \
 sudo ufw disable
 ```
 
+> **Docker hosts: ufw alone is not enough.** When 80/443 are published by a
+> container (as here: the Caddy edge), Docker inserts its own rules in the
+> `FORWARD` chain (`DOCKER-USER` → `DOCKER-FORWARD`) that run **before** ufw's
+> forward chains — so a ufw rule cannot restrict a Docker-published port.
+> Use the Docker-aware script instead, which locks `:443` to the Cloudflare
+> ranges in the `DOCKER-USER` chain (IPv4 + IPv6), leaves `:22` and `:80`
+> untouched, and is idempotent:
+>
+> ```bash
+> # dry run / status / apply / rollback
+> ./deploy/scripts/cloudflare-origin-firewall.sh
+> sudo ./deploy/scripts/cloudflare-origin-firewall.sh apply
+> sudo ./deploy/scripts/cloudflare-origin-firewall.sh remove
+> ```
+>
+> Persist it across reboots with `deploy/scripts/fahimni-cf-firewall.service`
+> (installs to `/usr/local/sbin/fahimni-cf-firewall`, `systemctl enable`).
+> `:80` is intentionally left open so Caddy can still answer Let's Encrypt
+> HTTP-01 renewals; it only serves an HTTP→HTTPS redirect and never proxies to
+> nginx, so it is not a `CF-Connecting-IP` spoofing path.
+
 - Verify from a **second** SSH session before closing the first. Keep an
   out-of-band console (Hostinger VNC) reachable in case SSH locks out.
 - IPv6 is deliberately **not** in the script's allow list — add the

@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformSetting;
-use App\Models\TenantSetting;
+use App\Plans\TeacherTrialProgram;
 use App\Support\AuditLogger;
 use App\Support\PlatformBrand;
 use Illuminate\Http\JsonResponse;
@@ -14,29 +14,23 @@ class PlatformSettingController extends Controller
 {
     public function show(Request $request): JsonResponse
     {
+        // هوية منصة فهمني العامة مستقلة تمامًا عن هوية أي معلّم وعن الجلسة:
+        // لا يُسمح لأي ترويسة (خصوصًا X-Tenant-Id) بتخصيص اسم المنصة أو شعارها
+        // هنا. علامة كل معلّم تُخدَم من مصدرها المستقل والآمن فقط:
+        //   • الموقع العلني للمعلّم  → GET /public/{slug} (بالـslug، بلا مصادقة)
+        //   • لوحة المعلّم           → GET /teacher/site-design (TenantMiddleware)
+        // وإلا فإن أي مستخدم يحمل tenant_id في localStorage (بعد الدخول عبر
+        // Google مثلاً) كان يُلوّث اسم/شعار منصة فهمني في الهيدر والفوتر.
         $settings = PlatformSetting::allFlattened();
 
-        // لوجو المعلم (منصة المستأجر) يغلب لوجو المنصة العامة — عند طلب
-        // يحمل X-Tenant-Id (المعلم، الطلاب التابعون له، صفحته العامة).
-        // tenant_id عمود uuid في Postgres — أي قيمة غير UUID (مثلاً قديمة
-        // معطوبة من localStorage) ترمي QueryException، لذا نتحقق قبل الاستعلام.
-        $tenantId = $request->header('X-Tenant-Id');
-        if ($tenantId && \Illuminate\Support\Str::isUuid($tenantId)) {
-            $tenantSetting = TenantSetting::where('tenant_id', $tenantId)->first();
-            if ($tenantSetting?->logo_url) {
-                $settings['logo_url'] = $tenantSetting->logo_url;
-            }
-            if ($tenantSetting?->academy_name) {
-                $settings['platform_name'] = $tenantSetting->academy_name;
-            }
-        }
+        $trialProgram = app(TeacherTrialProgram::class);
 
         // المفاتيح السرية لا تُعاد أبداً عبر الـAPI — تُخزَّن مشفَّرة
         // (Crypt) ويخبر `*_set` الواجهةَ بوجودها فقط.
 
         $payload = [
             'platform_name' => PlatformBrand::normalize($settings['platform_name'] ?? null),
-            'currency' => $settings['currency'] ?? 'JOD',
+            'currency' => $settings['currency'] ?? 'USD',
             'currency_rate' => (float) ($settings['currency_rate'] ?? 1),
             'default_locale' => $settings['default_locale'] ?? 'ar',
             'logo_url' => $settings['logo_url'] ?? null,
@@ -81,6 +75,25 @@ class PlatformSettingController extends Controller
             'contact_whatsapp' => $settings['contact_whatsapp'] ?? '',
             'live_google_meet_enabled' => (bool) ($settings['live_google_meet_enabled'] ?? true),
             'live_default_provider' => (string) ($settings['live_default_provider'] ?? 'google_meet'),
+            // ── Analytics & tracking (public IDs only — never secrets) ──
+            'analytics_enabled' => (bool) ($settings['analytics_enabled'] ?? true),
+            'meta_pixel_id' => (string) ($settings['meta_pixel_id'] ?? ''),
+            'meta_domain_verification' => (string) ($settings['meta_domain_verification'] ?? ''),
+            'ga_measurement_id' => (string) ($settings['ga_measurement_id'] ?? ''),
+            'gtm_container_id' => (string) ($settings['gtm_container_id'] ?? ''),
+            // ── Teacher free trial: master switch + limited "first N" offer ──
+            // The master switch is the single source of truth; the seat numbers
+            // are read from the real DB counter, never a fake/local value.
+            'teacher_trial_enabled' => (bool) ($settings[TeacherTrialProgram::KEY_ENABLED] ?? true),
+            'teacher_trial_offer_enabled' => (bool) ($settings[TeacherTrialProgram::KEY_OFFER_ENABLED] ?? false),
+            'teacher_trial_offer_seats' => (int) ($settings[TeacherTrialProgram::KEY_OFFER_SEATS] ?? 50),
+            'teacher_trial_offer_text' => (string) ($settings[TeacherTrialProgram::KEY_OFFER_TEXT] ?? TeacherTrialProgram::DEFAULT_OFFER_TEXT),
+            'teacher_trial_days' => $trialProgram->trialDays(),
+            'teacher_trial_offer_text_rendered' => $trialProgram->renderOfferText(),
+            'teacher_trial_offer_seats_used' => $trialProgram->seatsUsed(),
+            'teacher_trial_offer_seats_remaining' => $trialProgram->seatsRemaining(),
+            'trial_available' => $trialProgram->trialAvailable(),
+            'trial_days' => $trialProgram->trialDays(),
         ];
 
         return response()->json(['settings' => $payload]);
@@ -130,6 +143,17 @@ class PlatformSettingController extends Controller
             'contact_whatsapp' => 'nullable|string|max:30',
             'live_google_meet_enabled' => 'boolean',
             'live_default_provider' => 'string|in:google_meet',
+            'analytics_enabled' => 'boolean',
+            'meta_pixel_id' => 'nullable|string|max:60',
+            'meta_domain_verification' => 'nullable|string|max:120',
+            'ga_measurement_id' => 'nullable|string|max:40',
+            'gtm_container_id' => 'nullable|string|max:40',
+            // Teacher free trial: master switch + limited-offer settings.
+            'teacher_trial_enabled' => 'boolean',
+            'teacher_trial_days' => 'integer|min:1|max:365',
+            'teacher_trial_offer_enabled' => 'boolean',
+            'teacher_trial_offer_seats' => 'integer|min:1|max:1000000',
+            'teacher_trial_offer_text' => 'nullable|string|max:500',
         ];
 
         $validated = $request->validate($allowed);

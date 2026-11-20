@@ -287,7 +287,7 @@ class PlanRecommenderTest extends TenantTestCase
 
         $plan->update(['name' => 'Renamed', 'monthly_price' => 88.25]);
 
-        // السعر الجديد يجب أن يظهر كشريحة "حتى 89 دينار" في خيارات الميزانية.
+        // السعر الجديد يجب أن يظهر كشريحة "حتى 89 دولار" في خيارات الميزانية.
         $budgetReqs = collect(collect($this->questionsPayload())->firstWhere('key', 'budget')['options'])
             ->map(fn ($o) => $o['requirements']['monthly_price'] ?? null)->filter()->values()->all();
         $this->assertContains(88.25, $budgetReqs);

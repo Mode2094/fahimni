@@ -16,7 +16,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Layers, Plus, Trash2, Loader2, Check, Crown, Pencil, RefreshCw,
   TrendingDown,
-  X, HelpCircle,
+  X, HelpCircle, ShieldCheck, AlertTriangle, UploadCloud, BadgeCheck, Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -74,6 +74,10 @@ export default function AdminPlansPage() {
   const [feats, setFeats] = useState<Record<string, { enabled: boolean; value: string }>>({});
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [priceForm, setPriceForm] = useState<{ monthly_price: string; yearly_price: string }>({ monthly_price: '', yearly_price: '' });
+  const [sync, setSync] = useState<any>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const headers = () => ({ 'Content-Type': 'application/json', Accept: 'application/json' });
 
@@ -96,8 +100,139 @@ export default function AdminPlansPage() {
   };
   useEffect(() => { if (check()) { loadSettings(); loadCatalog(); load(); } }, [check()]);
 
+  // ─── السعر والمزامنة مع Freemius (Super Admin فقط) ──────────────
+  const loadSync = async (planId: string) => {
+    if (!planId) return;
+    try {
+      const r = await fetch(`${API}/admin/plans/${planId}/freemius-sync`, { headers: headers() });
+      if (r.ok) setSync((await r.json()).sync || null);
+    } catch { /* ignore */ }
+  };
+
+  const refreshSync = async () => {
+    if (!editing?.id) return;
+    setSyncing(true);
+    await loadSync(editing.id);
+    setSyncing(false);
+  };
+
+  // أزواج فيها سعر مطلوب لم يُطبَّق/يُتحقق منه بعد على البوابة (Pending).
+  const pendingCycles = (['monthly', 'yearly'] as const).filter((c) => sync?.[c]?.pending);
+
+  const applyPendingPrice = async () => {
+    if (!editing?.id) return;
+    const ok = window.confirm(t(
+      'تطبيق السعر المعلّق الآن؟ سيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا عند التأكد من تطابقه مع سعر الدفع الحقيقي.',
+      'Apply the pending price now? It will be sent to Freemius and re-read; it is adopted on the site only once it matches the real charge.',
+    ));
+    if (!ok) return;
+
+    setPublishing(true);
+    try {
+      const res = await fetch(`${API}/admin/plans/${editing.id}/apply-pending-price`, { method: 'POST', headers: headers() });
+      const d = await res.json().catch(() => ({}));
+
+      if (d?.ok && Object.values(d?.results || {}).some((r: any) => r?.ok)) {
+        toast.success(t('تم تطبيق السعر المعلّق والتحقق منه في Freemius', 'Pending price applied and verified on Freemius'));
+      } else {
+        toast.error(t('لم يُطبَّق السعر المعلّق بعد — لم يُغيَّر السعر المعروض. أصلح السبب ثم أعد المحاولة.', 'Pending price still not applied — displayed price unchanged. Fix the cause and retry.'));
+      }
+
+      if (d?.plan) {
+        setForm((f: any) => ({ ...f, monthly_price: d.plan.monthly_price, yearly_price: d.plan.yearly_price }));
+        setPriceForm({ monthly_price: String(d.plan.monthly_price ?? ''), yearly_price: String(d.plan.yearly_price ?? '') });
+      }
+
+      await loadSync(editing.id);
+      load();
+    } catch {
+      toast.error(t('تعذّر تطبيق السعر المعلّق.', 'Could not apply the pending price.'));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const publishPrice = async () => {
+    if (!editing?.id) return;
+    const monthly = String(priceForm.monthly_price ?? '').trim();
+    const yearly = String(priceForm.yearly_price ?? '').trim();
+    if (!monthly && !yearly) { toast.error(t('أدخل السعر الشهري أو السنوي', 'Enter a monthly or yearly price')); return; }
+
+    const summary = [
+      monthly && `${t('شهري', 'Monthly')}: ${monthly} USD`,
+      yearly && `${t('سنوي', 'Yearly')}: ${yearly} USD`,
+    ].filter(Boolean).join(' · ');
+
+    const ok = window.confirm(t(
+      `تأكيد نشر السعر؟\n${summary}\n\nسيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا بعد التأكد من تطابقه مع سعر الدفع الحقيقي.`,
+      `Publish this price?\n${summary}\n\nIt will be sent to Freemius and re-read; the site price is adopted only after it is confirmed to match the real charge.`,
+    ));
+    if (!ok) return;
+
+    setPublishing(true);
+    try {
+      const body: any = {};
+      if (monthly) body.monthly_price = Number(monthly);
+      if (yearly) body.yearly_price = Number(yearly);
+
+      const res = await fetch(`${API}/admin/plans/${editing.id}/publish-price`, {
+        method: 'POST', headers: headers(), body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      const results = d?.results || {};
+      const failed = Object.entries(results).filter(([, r]: any) => r && !r.ok);
+      const anyOk = Object.values(results).some((r: any) => r?.ok);
+
+      if (d?.ok) {
+        toast.success(t('تم نشر السعر والتحقق منه في Freemius', 'Price published and verified on Freemius'));
+      } else if (d?.locked) {
+        toast.error(t('هناك عملية نشر جارية لهذه الخطة — أعد المحاولة بعد لحظات', 'Another publish is in progress — retry in a moment'));
+      } else {
+        const first: any = failed[0]?.[1];
+        const msg = first?.status === 'not_configured'
+          ? t('فشل التزامن: مفاتيح نطاق المطوّر غير مضبوطة على الخادم — لم يُغيَّر السعر.', 'Sync failed: developer-scope keys are not configured on the server — price unchanged.')
+          : first?.status === 'ambiguous'
+            ? t('فشل التزامن: الخطة لها أكثر من تسعير في Freemius — اربط Pricing ID المحدد أولًا. لم يُغيَّر السعر.', 'Sync failed: the plan has more than one price in Freemius — link the exact Pricing ID first. Price unchanged.')
+            : first?.status === 'mismatch'
+              ? t('فشل التزامن: سعر Freemius لا يطابق السعر المطلوب — لم يُغيَّر السعر.', 'Sync failed: the Freemius price does not match — price unchanged.')
+              : t('فشل التزامن — لم يُغيَّر السعر. أعد المحاولة.', 'Sync failed — price unchanged. Retry.');
+        toast.error(msg);
+      }
+
+      // Adopt the server's confirmed values into the form (source of truth).
+      if (anyOk && d?.plan) {
+        setForm((f: any) => ({ ...f, monthly_price: d.plan.monthly_price, yearly_price: d.plan.yearly_price }));
+        setPriceForm({ monthly_price: String(d.plan.monthly_price ?? ''), yearly_price: String(d.plan.yearly_price ?? '') });
+      }
+
+      await loadSync(editing.id);
+      load();
+    } catch {
+      toast.error(t('فشل التزامن — لم يُغيَّر السعر.', 'Sync failed — price unchanged.'));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const syncBadge = (cycle: 'monthly' | 'yearly') => {
+    const s = sync?.[cycle];
+    if (!s) return <Badge variant="secondary" className="text-[10px]">{t('جارٍ التحقق…', 'Checking…')}</Badge>;
+    const map: Record<string, { label: string; cls: string }> = {
+      synced: { label: t('مُزامن ومؤكد', 'Synced'), cls: 'bg-emerald-100 text-emerald-700 border-0' },
+      mismatch: { label: t('غير متطابق', 'Mismatch'), cls: 'bg-red-100 text-red-700 border-0' },
+      not_linked: { label: t('غير مرتبط', 'Not linked'), cls: 'bg-amber-100 text-amber-700 border-0' },
+      ambiguous: { label: t('تسعيرات متعددة', 'Multiple prices'), cls: 'bg-amber-100 text-amber-700 border-0' },
+      unavailable: { label: t('تعذّر التحقق', 'Unverified'), cls: 'bg-amber-100 text-amber-700 border-0' },
+      not_configured: { label: t('غير مضبوط', 'Not configured'), cls: 'bg-amber-100 text-amber-700 border-0' },
+    };
+    const m = map[s.status] || { label: String(s.status), cls: 'bg-gray-100 text-gray-600 border-0' };
+    return <Badge className={`text-[10px] ${m.cls}`}>{m.label}</Badge>;
+  };
+
   const resetForm = () => {
     setForm({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false, freemius_monthly_plan_id: '', freemius_yearly_plan_id: '', freemius_monthly_pricing_id: '', freemius_yearly_pricing_id: '' });
+    setPriceForm({ monthly_price: '', yearly_price: '' });
+    setSync(null);
     setFeats({});
   };
 
@@ -118,6 +253,9 @@ export default function AdminPlansPage() {
       freemius_monthly_pricing_id: p.freemius_monthly_pricing_id || '',
       freemius_yearly_pricing_id: p.freemius_yearly_pricing_id || '',
     });
+    setPriceForm({ monthly_price: String(p.monthly_price ?? ''), yearly_price: String(p.yearly_price ?? '') });
+    setSync(null);
+    loadSync(p.id);
     const init: Record<string, { enabled: boolean; value: string }> = {};
     const existing = (p.features || []).reduce((acc: any, f: any) => { acc[f.feature_key] = f; return acc; }, {});
     catalog.filter((d) => EDITABLE_KEYS.includes(d.key)).forEach((def) => {
@@ -170,12 +308,10 @@ export default function AdminPlansPage() {
     if (!form.name || !form.monthly_price) { toast.error(t('أدخل الاسم والسعر', 'Enter name and price')); return; }
     setSaving(true);
     try {
-      const body = {
+      const body: any = {
         name: form.name,
         slug: editing?.slug || form.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') + '-' + Math.random().toString(36).slice(2, 7),
         description: form.description || 'Plan',
-        monthly_price: Number(form.monthly_price),
-        yearly_price: form.yearly_price ? Number(form.yearly_price) : null,
         currency: form.currency,
         trial_days: Number(form.trial_days) || 0,
         is_active: form.is_active,
@@ -185,6 +321,12 @@ export default function AdminPlansPage() {
         freemius_monthly_pricing_id: form.freemius_monthly_pricing_id?.trim() || null,
         freemius_yearly_pricing_id: form.freemius_yearly_pricing_id?.trim() || null,
       };
+      // Prices are only set HERE when creating a plan. For existing plans the
+      // price is changed exclusively through "حفظ ونشر السعر" (verified sync).
+      if (!editing) {
+        body.monthly_price = Number(form.monthly_price);
+        body.yearly_price = form.yearly_price ? Number(form.yearly_price) : null;
+      }
       let planId = editing?.id;
       let warning: any = null;
       if (editing) {
@@ -321,6 +463,9 @@ export default function AdminPlansPage() {
                     <span className="text-sm text-gray-400 mb-1.5">/ {t('شهر', 'mo')}</span>
                   </div>
                   {p.yearly_price ? <p className="text-xs text-gray-400 mb-4">{formatPrice(p.yearly_price)} / {t('سنة', 'yr')} · {p.trial_days ? `${p.trial_days} ${t('يوم تجربة', 'trial days')}` : ''}</p> : <p className="text-xs text-gray-400 mb-4">&nbsp;</p>}
+                  {p.freemius_sync_summary?.monthly && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 mb-3"><BadgeCheck className="h-3 w-3" /> {t('السعر مؤكد على بوابة الدفع', 'Price verified on the payment gateway')}</span>
+                  )}
                   <div className="flex flex-wrap gap-1.5 mb-6 min-h-[28px]">
                     {(p.features || []).length === 0 ? <span className="text-xs text-gray-300">{t('بدون مميزات', 'No features')}</span> :
                       (p.features || []).slice(0, 6).map((f: any) => (
@@ -347,11 +492,78 @@ export default function AdminPlansPage() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2"><Label>{t('اسم الخطة', 'Name')} *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="h-11" placeholder="Professional" /></div>
               <div className="space-y-2"><Label>{t('الوصف', 'Description')}</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="h-11" /></div>
-              <div className="space-y-2"><Label>{t('السعر الشهري', 'Monthly price')} *</Label><Input type="number" value={form.monthly_price} onChange={(e) => setForm({ ...form, monthly_price: e.target.value })} className="h-11" /></div>
-              <div className="space-y-2"><Label>{t('السعر السنوي', 'Yearly price')}</Label><Input type="number" value={form.yearly_price} onChange={(e) => setForm({ ...form, yearly_price: e.target.value })} className="h-11" /></div>
+              {!editing && (<>
+                <div className="space-y-2"><Label>{t('السعر الشهري', 'Monthly price')} *</Label><Input type="number" value={form.monthly_price} onChange={(e) => setForm({ ...form, monthly_price: e.target.value })} className="h-11" /></div>
+                <div className="space-y-2"><Label>{t('السعر السنوي', 'Yearly price')}</Label><Input type="number" value={form.yearly_price} onChange={(e) => setForm({ ...form, yearly_price: e.target.value })} className="h-11" /></div>
+              </>)}
               <div className="space-y-2"><Label>{t('العملة', 'Currency')}</Label><div className="h-11 flex items-center px-3 rounded-lg border border-gray-200 bg-gray-50 text-sm font-medium text-gray-600">USD — {t('دولار أمريكي (ثابت لاشتراكات المنصة)', 'US Dollar (fixed for platform subscriptions)')}</div></div>
               <div className="space-y-2"><Label>{t('أيام التجربة', 'Trial days')}</Label><Input type="number" value={form.trial_days} onChange={(e) => setForm({ ...form, trial_days: e.target.value })} className="h-11" /></div>
             </div>
+
+            {/* ─── الأسعار والدفع: Save & publish (+ verified sync) ─── */}
+            {editing && (
+              <div className="p-3 rounded-xl border border-teal-100 bg-teal-50/40 space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <p className="font-medium text-sm flex items-center gap-1.5">
+                    <ShieldCheck className="h-4 w-4 text-teal-600" />
+                    {t('الأسعار والدفع (USD) — Super Admin فقط', 'Prices & payment (USD) — Super Admin only')}
+                  </p>
+                  <Button variant="outline" size="sm" className="gap-1 rounded-full" onClick={refreshSync} disabled={syncing}>
+                    {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {t('تحديث الحالة', 'Refresh')}
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {t('عند «حفظ ونشر السعر» يُرسَل السعر إلى Freemius ثم يُعاد قراءته، ولا يُعتمد في الموقع إلا عند تطابقه مع سعر الدفع الحقيقي.', 'On “Save & publish”, the price is sent to Freemius and re-read; it is adopted on the site only once it matches the real charge.')}
+                </p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2"><Label>{t('السعر الشهري', 'Monthly price')} (USD)</Label>{syncBadge('monthly')}</div>
+                    <Input type="number" value={priceForm.monthly_price} onChange={(e) => setPriceForm({ ...priceForm, monthly_price: e.target.value })} className="h-11" />
+                    {sync?.monthly?.remote_price != null && <p className="text-[11px] text-gray-400">{t('سعر Freemius الفعلي', 'Freemius actual')}: {sync.monthly.remote_price} {sync.monthly.currency}</p>}
+                    {sync?.monthly?.pending?.amount != null && (
+                      <p className="text-[11px] text-amber-600">
+                        {t('سعر مطلوب لم يُطبَّق بعد', 'Requested — not applied yet')}: {sync.monthly.pending.amount} USD
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2"><Label>{t('السعر السنوي', 'Yearly price')} (USD)</Label>{syncBadge('yearly')}</div>
+                    <Input type="number" value={priceForm.yearly_price} onChange={(e) => setPriceForm({ ...priceForm, yearly_price: e.target.value })} className="h-11" />
+                    {sync?.yearly?.remote_price != null && <p className="text-[11px] text-gray-400">{t('سعر Freemius الفعلي', 'Freemius actual')}: {sync.yearly.remote_price} {sync.yearly.currency}</p>}
+                    {sync?.yearly?.pending?.amount != null && (
+                      <p className="text-[11px] text-amber-600">
+                        {t('سعر مطلوب لم يُطبَّق بعد', 'Requested — not applied yet')}: {sync.yearly.pending.amount} USD
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {pendingCycles.length > 0 && (
+                  <div className="flex items-start justify-between gap-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-700">
+                    <span className="flex items-start gap-2">
+                      <Clock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      {t(
+                        'يوجد سعر مطلوب لم يُطبَّق على البوابة بعد (لا يُعرض للطالب، والدفع محجوب إن اختلف عن سعر الشحن). أصلح السبب ثم طبّقه.',
+                        'A requested price has not been applied to the gateway yet (never shown to buyers; checkout stays blocked while it differs from the charge). Fix the cause, then apply it.',
+                      )}
+                    </span>
+                    <Button size="sm" variant="outline" className="rounded-full shrink-0 gap-1" onClick={applyPendingPrice} disabled={publishing}>
+                      {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />} {t('تطبيق المعلّق', 'Apply pending')}
+                    </Button>
+                  </div>
+                )}
+                {sync && !sync.developer_configured && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-700">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>{t('لتمكين النشر التلقائي أضف مفاتيح نطاق المطوّر: FREEMIUS_DEVELOPER_ID و FREEMIUS_DEVELOPER_PUBLIC_KEY و FREEMIUS_DEVELOPER_SECRET_KEY (Dashboard → My Profile → Keys). رمز المنتج (Bearer) لا يستطيع تغيير الأسعار.', 'To enable automatic publishing, add the developer-scope keys FREEMIUS_DEVELOPER_ID, FREEMIUS_DEVELOPER_PUBLIC_KEY and FREEMIUS_DEVELOPER_SECRET_KEY (Dashboard → My Profile → Keys). The product Bearer token cannot change prices.')}</span>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button onClick={publishPrice} disabled={publishing} className="gap-2 rounded-full">
+                    {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />} {t('حفظ ونشر السعر', 'Save & publish price')}
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="p-3 rounded-xl border border-gray-100 bg-gray-50/60">
               <p className="font-medium text-sm mb-1">Freemius — {t('ربط خطة Freemius (اختياري)', 'Freemius plan mapping (optional)')}</p>

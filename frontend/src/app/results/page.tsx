@@ -101,7 +101,7 @@ export default function ResultsPage() {
                     </div>
                     <div className="flex-1 min-w-[180px]">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-bold truncate">{r.exam_title || 'Exam'}</h3>
+                        <h3 className="font-bold truncate">{r.exam_title || t('اختبار', 'Exam')}</h3>
                         {r.passed ? (
                           <Badge className="bg-emerald-100 text-emerald-700 border-0 rounded-full"><CheckCircle className="h-3 w-3 me-1" />{t('ناجح', 'Passed')}</Badge>
                         ) : (

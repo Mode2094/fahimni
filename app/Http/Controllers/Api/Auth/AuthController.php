@@ -8,16 +8,17 @@ use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Resources\UserResource;
 use App\Mail\PlatformNotification;
 use App\Models\PlatformSetting;
-use App\Models\SubscriptionPlan;
 use App\Models\TeacherInvitation;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
-use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
+use App\Plans\TeacherTrialProgram;
 use App\Services\StudentGamificationService;
+use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
 use App\Support\DevicePolicy;
+use App\Support\MailDelivery;
 use App\Support\MathCaptcha;
 use App\Support\TOTP;
 use Illuminate\Http\JsonResponse;
@@ -52,7 +53,10 @@ class AuthController extends Controller
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            // Ignore soft-deleted rows: a deleted account keeps its address
+            // reserved, and we answer that case explicitly below with a clear,
+            // recoverable message instead of a bare "already taken".
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'required|string|min:8|confirmed',
             'locale' => 'sometimes|string|in:ar,en',
             'role' => 'sometimes|string|in:Student,Teacher',
@@ -62,6 +66,17 @@ class AuthController extends Controller
         // Normalize the email so accounts can never be registered with
         // case-variants of an existing address (impersonation vectors).
         $email = strtolower(trim($validated['email']));
+
+        // A previously deleted account keeps its address reserved. Never
+        // silently re-provision it — that would hand a stranger control of a
+        // deleted account. Its owner recovers it by proving ownership (sign in,
+        // Google, or a password reset).
+        if (User::onlyTrashed()->where('email', $email)->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — سجّل الدخول لاستعادة الحساب أو استخدم بريداً آخر.',
+                'code' => 'email_previously_deleted',
+            ], 422);
+        }
 
         $user = User::create([
             'id' => UuidV7::generate(),
@@ -79,6 +94,7 @@ class AuthController extends Controller
 
         // ربط الطالب بمنصة المعلم (tenant) فور تسجيله من الموقع العام
         $tenantId = null;
+        $trialGranted = false;
         if ($request->filled('tenant_slug')) {
             $tenant = Tenant::where('slug', $request->input('tenant_slug'))
                 ->where('status', 'active')
@@ -121,14 +137,13 @@ class AuthController extends Controller
             $user->assignRole('Teacher');
 
             // إنشاء منصة المعلم الافتراضية (tenant) تلقائياً
-            $tenant = Tenant::create([
+            $tenant = app(TenantSlugService::class)->createTenant([
                 'id' => UuidV7::generate(),
                 'name' => $request->name.' '.__('Platform'),
                 'type' => 'tutor',
-                'slug' => Str::slug($request->name).'-'.Str::random(4),
                 'email' => $request->email,
                 'owner_id' => $user->id,
-            ]);
+            ], $request->name);
 
             TenantSetting::create([
                 'id' => UuidV7::generate(),
@@ -147,24 +162,49 @@ class AuthController extends Controller
             // attach it to every API request.
             $tenantId = $tenant->id;
 
-            // التسجيل = تجربة مجانية فورية (7 أيام) بأرخص خطة نشطة —
-            // بدونها يُحظر حساب المعلم الجديد فورًا بواسطة بوابة الاشتراك.
-            $trialPlan = SubscriptionPlan::where('is_active', true)
-                ->orderBy('monthly_price')
-                ->first();
+            // منح التجربة المجانية عبر البرنامج المركزي فقط: يخضع للمفتاح
+            // الرئيسي وعداد المقاعد المحدودة. عند الإيقاف أو نفاد المقاعد لا
+            // تُنشأ أي اشتراكات، ويبقى الحساب في حالة «بانتظار الدفع» بلا
+            // صلاحيات تشغيل حتى يتم التحقق من دفع حقيقي عبر Freemius.
+            $trialGranted = app(TeacherTrialProgram::class)
+                ->grantTrial($user, $tenant->id, 'register', true) !== null;
+        }
 
-            if ($trialPlan) {
-                TenantSubscription::create([
-                    'id' => UuidV7::generate(),
-                    'tenant_id' => $tenant->id,
-                    'plan_id' => $trialPlan->id,
-                    'status' => 'trialing',
-                    'billing_cycle' => 'monthly',
-                    'starts_at' => now(),
-                    'trial_ends_at' => now()->addDays(max(1, (int) $trialPlan->trial_days)),
-                    'auto_renew' => true,
-                ]);
+        // بريد ترحيبي (منفصل عن بريد التفعيل) — يُرسَل عبر الطابور عبر Resend.
+        try {
+            $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $isTeacher = $role === 'Teacher';
+
+            if ($isTeacher && $trialGranted) {
+                $trialDays = app(TeacherTrialProgram::class)->trialDays();
+                $title = 'مرحباً بك في منصة فهمني — منصتك التعليمية جاهزة';
+                $body = "أهلاً {$user->name}،\n\nسعداء بانضمامك! أنشأنا لك منصة تعليمية خاصة تلقائياً، وبدأت تجربتك المجانية لمدة {$trialDays} أيام على الخطة النشطة.\n\nمن لوحة التحكم يمكنك إضافة كورساتك وأقسامك ودروسك، وضبط بطاقات التسجيل وعلامتك التجارية وطريقة تحصيل أرباحك.";
+                $actionUrl = $frontend.'/teacher/dashboard';
+                $actionText = 'افتح لوحة تحكم معلمك';
+            } elseif ($isTeacher) {
+                $title = 'مرحباً بك في منصة فهمني — منصتك بانتظار الاشتراك';
+                $body = "أهلاً {$user->name}،\n\nسعداء بانضمامك! أنشأنا لك منصة تعليمية خاصة تلقائياً.\n\nلتفعيل منصتك والبدء بنشر كورساتك، اختر خطة الاشتراك المناسبة وأكمل الدفع. سيتم تفعيل منصتك تلقائياً بعد تأكيد الدفع.";
+                $actionUrl = $frontend.'/pricing';
+                $actionText = 'اختر خطة الاشتراك';
+            } else {
+                $title = 'مرحباً بك في منصة فهمني';
+                $body = "أهلاً {$user->name}،\n\nسعداء بانضمامك إلى منصة فهمني!\n\nيمكنك الآن تصفح الكورسات، متابعة تعلّمك من قسم «تعليمي»، وحل الاختبارات.";
+                $actionUrl = $frontend.'/my-learning';
+                $actionText = 'ابدأ التعلّم';
             }
+
+            Mail::to($user->email)->queue(
+                new PlatformNotification(
+                    title: $title,
+                    body: $body,
+                    data: [
+                        'action_url' => $actionUrl,
+                        'action_text' => $actionText,
+                    ],
+                )
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Welcome email failed to send', ['user_id' => $user->id, 'error' => $e->getMessage()]);
         }
 
         // Web (cookie session) registration: sign the user in server-side and
@@ -178,6 +218,7 @@ class AuthController extends Controller
             return response()->json([
                 'user' => new UserResource($user->load('tenants')),
                 'tenant_id' => $tenantId,
+                'trial_started' => $trialGranted,
             ], 201);
         }
 
@@ -193,6 +234,7 @@ class AuthController extends Controller
             'user' => new UserResource($user->load('tenants')),
             'token' => $newToken->plainTextToken,
             'tenant_id' => $tenantId,
+            'trial_started' => $trialGranted,
         ], 201);
     }
 
@@ -204,7 +246,10 @@ class AuthController extends Controller
             }
         }
 
-        $user = User::where('email', strtolower(trim($request->email)))->first();
+        // Include soft-deleted rows: the email is still reserved by the unique
+        // index, so a plain lookup would miss the account and any re-create
+        // would collide.
+        $user = User::findByEmail((string) $request->email);
 
         // Timing-safe login: unknown emails run a dummy hash comparison so
         // account existence cannot be inferred from response latency.
@@ -216,6 +261,12 @@ class AuthController extends Controller
             return response()->json([
                 'message' => __('auth.failed'),
             ], 401);
+        }
+
+        // A correct password proves ownership: bring a soft-deleted account
+        // back instead of dead-ending on a reserved-but-hidden address.
+        if ($user->trashed()) {
+            $user->restoreWithWorkspaces();
         }
 
         if (! $user->is_active) {
@@ -259,7 +310,7 @@ class AuthController extends Controller
             AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
             return response()->json([
-                'user' => new UserResource($user),
+                'user' => new UserResource($user->load('tenants')),
                 'tenant_id' => $tenantId,
             ]);
         }
@@ -273,7 +324,7 @@ class AuthController extends Controller
         AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email]);
 
         return response()->json([
-            'user' => new UserResource($user),
+            'user' => new UserResource($user->load('tenants')),
             'token' => $newToken->plainTextToken,
         ]);
     }
@@ -377,7 +428,7 @@ class AuthController extends Controller
             AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id, ['mode' => 'session']);
 
             return response()->json([
-                'user' => new UserResource($user),
+                'user' => new UserResource($user->load('tenants')),
                 'tenant_id' => $tenantId,
             ]);
         }
@@ -391,7 +442,7 @@ class AuthController extends Controller
         AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id);
 
         return response()->json([
-            'user' => new UserResource($user),
+            'user' => new UserResource($user->load('tenants')),
             'token' => $newToken->plainTextToken,
         ]);
     }
@@ -540,6 +591,11 @@ class AuthController extends Controller
         // Uniform response: never reveal whether an account exists — a mailer
         // failure must not surface as a distinct status (500 for existing email
         // vs 200 for unknown would leak account existence).
+        // A reset link is delivered to the account's own inbox (proving
+        // ownership), so a soft-deleted account is restored first — otherwise
+        // the password broker cannot see its reserved-but-hidden email.
+        User::findByEmail((string) $request->email)?->restoreWithWorkspaces();
+
         try {
             $status = Password::sendResetLink($request->only('email'));
 
@@ -550,7 +606,13 @@ class AuthController extends Controller
             Log::warning('Password reset link send failed', ['email_hmac' => $this->redactEmail($request->email), 'error' => $e->getMessage()]);
         }
 
-        return response()->json(['message' => __('passwords.sent')]);
+        // `delivery` is derived ONLY from mailer configuration — never from
+        // whether the account exists — so the UI can be honest about whether a
+        // message could actually be delivered without enabling enumeration.
+        return response()->json([
+            'message' => __('passwords.sent'),
+            'delivery' => MailDelivery::isConfigured() ? 'email' : 'unconfigured',
+        ]);
     }
 
     public function resetPassword(Request $request): JsonResponse
@@ -561,9 +623,15 @@ class AuthController extends Controller
             'password' => 'required|min:8|confirmed',
         ]);
 
+        $loginPath = null;
+
+        // The emailed token proves ownership of the address: restore a
+        // soft-deleted account so the broker can complete the reset.
+        User::findByEmail((string) $request->email)?->restoreWithWorkspaces();
+
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
-            function (User $user, string $password) {
+            function (User $user, string $password) use (&$loginPath) {
                 $user->forceFill([
                     'password' => Hash::make($password),
                     'remember_token' => Str::random(60),
@@ -572,11 +640,13 @@ class AuthController extends Controller
                 // A reset means the credential may have been compromised:
                 // revoke every bearer token so stolen sessions die instantly.
                 $user->tokens()->delete();
+
+                $loginPath = $user->loginPath();
             }
         );
 
         return $status === Password::PASSWORD_RESET
-            ? response()->json(['message' => __($status)])
+            ? response()->json(['message' => __($status), 'login_path' => $loginPath])
             : response()->json(['message' => __($status)], 400);
     }
 

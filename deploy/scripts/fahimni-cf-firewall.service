@@ -1,0 +1,19 @@
+[Unit]
+Description=Fahimni Cloudflare origin firewall (restrict :443 to Cloudflare ranges)
+Documentation=https://www.cloudflare.com/ips/
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# DOCKER-USER is (re)created by the Docker daemon, so this must run after it.
+ExecStart=/usr/local/sbin/fahimni-cf-firewall apply
+ExecStop=/usr/local/sbin/fahimni-cf-firewall remove
+# Never fail the boot if iptables is briefly unavailable; retry a few times.
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

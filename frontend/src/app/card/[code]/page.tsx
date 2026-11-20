@@ -16,6 +16,13 @@ type CardInfo = {
   tenant?: { id: string; slug: string; name: string };
 };
 
+const CARD_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  generated: { ar: 'جاهزة', en: 'Ready' },
+  used: { ar: 'مستخدمة', en: 'Used' },
+  expired: { ar: 'منتهية', en: 'Expired' },
+  revoked: { ar: 'ملغاة', en: 'Revoked' },
+};
+
 export default function CardRedeemPage() {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -100,7 +107,7 @@ export default function CardRedeemPage() {
           <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 shadow-xl shadow-teal-500/20">
             <QrCode className="h-7 w-7 text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white">{t('تفعيل بطاقة تسجيل', 'Registration card activation')}</h1>
+          <h1 className="text-2xl font-bold text-white">{t('تفعيل بطاقة تسجيل', 'Registration card activation')}</h1>
         </div>
 
         <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
@@ -121,7 +128,7 @@ export default function CardRedeemPage() {
                   <p className="font-mono font-bold text-lg tracking-widest" dir="ltr">{card.code}</p>
                 </div>
                 <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium shrink-0">
-                  {card.status === 'generated' ? t('جاهزة', 'Ready') : t(card.status, card.status)}
+                  {t(CARD_STATUS_LABELS[card.status]?.ar ?? 'حالة غير معروفة', CARD_STATUS_LABELS[card.status]?.en ?? 'Unknown status')}
                 </span>
               </div>
 

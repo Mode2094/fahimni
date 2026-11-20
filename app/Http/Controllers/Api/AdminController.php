@@ -24,10 +24,14 @@ use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\TicketMessage;
 use App\Models\Transaction;
+use App\Models\TrialGrant;
 use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
+use App\Plans\TeacherTrialProgram;
+use App\Services\EnrollmentService;
 use App\Services\PaymentCompletionService;
+use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -165,10 +169,17 @@ class AdminController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'nullable|string|min:8',
             'plan_id' => 'nullable|exists:subscription_plans,id',
         ]);
+
+        if (User::onlyTrashed()->where('email', strtolower($validated['email']))->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — استخدم بريداً آخر، أو أطلب من صاحبه استعادة الحساب بتسجيل الدخول.',
+                'code' => 'email_previously_deleted',
+            ], 422);
+        }
 
         $password = $validated['password'] ?? Str::random(14);
         $user = User::create([
@@ -182,14 +193,13 @@ class AdminController extends Controller
         ]);
         $user->assignRole('Teacher');
 
-        $tenant = Tenant::create([
+        $tenant = app(TenantSlugService::class)->createTenant([
             'id' => UuidV7::generate(),
             'name' => $validated['name'].' Academy',
             'type' => 'tutor',
-            'slug' => Str::slug($validated['name']).'-'.Str::random(4),
             'email' => strtolower($validated['email']),
             'owner_id' => $user->id,
-        ]);
+        ], $validated['name']);
 
         TenantSetting::create([
             'id' => UuidV7::generate(),
@@ -206,12 +216,15 @@ class AdminController extends Controller
             'metadata' => [],
         ]);
 
-        // Start the 7-day free trial with the selected (or default cheapest) plan.
+        // ابدأ التجربة المجانية فقط عندما يسمح المفتاح الرئيسي بمنح تجارب
+        // جديدة. تجارب الأدمن لا تستهلك مقعدًا من العرض المحدود (حسابات
+        // الاختبار/التجهيز مستثناة من العداد) لكنها تُسجَّل للتدقيق.
+        $program = app(TeacherTrialProgram::class);
         $plan = $request->filled('plan_id')
             ? SubscriptionPlan::findOrFail($request->plan_id)
             : SubscriptionPlan::where('is_active', true)->orderBy('monthly_price')->first();
 
-        if ($plan) {
+        if ($plan && $program->masterEnabled()) {
             TenantSubscription::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $tenant->id,
@@ -221,6 +234,15 @@ class AdminController extends Controller
                 'starts_at' => now(),
                 'trial_ends_at' => now()->addDays(max(1, (int) $plan->trial_days)),
                 'auto_renew' => true,
+            ]);
+
+            TrialGrant::create([
+                'id' => UuidV7::generate(),
+                'user_id' => $user->id,
+                'tenant_id' => $tenant->id,
+                'source' => 'admin',
+                'counted' => false,
+                'granted_at' => now(),
             ]);
         }
 
@@ -279,7 +301,7 @@ class AdminController extends Controller
         // ── Students (distinct users with enrollments) ──
         $students = Enrollment::withoutTenant()
             ->where('tenant_id', $tenantId)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->with('student:id,name,email,created_at')
             ->get()
             ->groupBy('user_id')
@@ -545,48 +567,58 @@ class AdminController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'nullable|string|min:8',
             'tenant_id' => 'nullable|exists:tenants,id',
             'course_id' => 'nullable|exists:courses,id',
         ]);
 
-        $password = $validated['password'] ?? Str::random(12);
-        $user = User::create([
-            'id' => UuidV7::generate(),
-            'name' => $validated['name'],
-            'email' => strtolower($validated['email']),
-            'password' => Hash::make($password),
-            'is_active' => true,
-            'email_verified_at' => now(),
-            'locale' => 'ar',
-        ]);
-        $user->assignRole('Student');
-
-        // Attach to the chosen tenant (or the first active one).
-        $tenantId = $validated['tenant_id'] ?? Tenant::where('status', 'active')->first()?->id;
-
-        if ($tenantId) {
-            TenantUser::firstOrCreate(
-                ['tenant_id' => $tenantId, 'user_id' => $user->id],
-                ['role' => 'student', 'status' => 'active', 'joined_at' => now(), 'metadata' => []]
-            );
-
-            if ($request->filled('course_id')) {
-                $course = Course::where('tenant_id', $tenantId)->findOrFail($request->course_id);
-                Enrollment::firstOrCreate(
-                    ['course_id' => $course->id, 'user_id' => $user->id],
-                    [
-                        'id' => UuidV7::generate(),
-                        'tenant_id' => $tenantId,
-                        'status' => 'active',
-                        'enrolled_at' => now(),
-                        'source' => 'admin',
-                        'metadata' => [],
-                    ]
-                );
-            }
+        if (User::onlyTrashed()->where('email', strtolower($validated['email']))->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — استخدم بريداً آخر، أو أطلب من صاحبه استعادة الحساب بتسجيل الدخول.',
+                'code' => 'email_previously_deleted',
+            ], 422);
         }
+
+        $password = $validated['password'] ?? Str::random(12);
+
+        $user = DB::transaction(function () use ($request, $validated, $password) {
+            $tenantId = $validated['tenant_id'] ?? Tenant::where('status', 'active')->first()?->id;
+
+            $course = null;
+            if ($tenantId && $request->filled('course_id')) {
+                $course = Course::where('tenant_id', $tenantId)->findOrFail($request->course_id);
+                // Fail before the account is created if the teacher's seat
+                // limit is full — never leave an orphan student.
+                app(EnrollmentService::class)->assertNewSeatAvailable($tenantId);
+            }
+
+            $user = User::create([
+                'id' => UuidV7::generate(),
+                'name' => $validated['name'],
+                'email' => strtolower($validated['email']),
+                'password' => Hash::make($password),
+                'is_active' => true,
+                'email_verified_at' => now(),
+                'locale' => 'ar',
+            ]);
+            $user->assignRole('Student');
+
+            if ($tenantId) {
+                TenantUser::firstOrCreate(
+                    ['tenant_id' => $tenantId, 'user_id' => $user->id],
+                    ['role' => 'student', 'status' => 'active', 'joined_at' => now(), 'metadata' => []]
+                );
+
+                if ($course) {
+                    // Seat limit, duplicate and per-course cap are enforced
+                    // centrally under the tenant lock.
+                    app(EnrollmentService::class)->enroll($course, $user, ['source' => 'admin']);
+                }
+            }
+
+            return $user;
+        });
 
         AuditLogger::log($request, 'admin.student_created', 'user', $user->id, ['email' => $user->email]);
 

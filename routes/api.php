@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
+use App\Http\Controllers\Api\AdminTeacherNotificationController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\Api\AssignmentController;
@@ -20,6 +22,7 @@ use App\Http\Controllers\Api\CommunityThreadController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\ConversationMessageController;
 use App\Http\Controllers\Api\CourseController;
+use App\Http\Controllers\Api\CourseGroupController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\EnrollmentController;
 use App\Http\Controllers\Api\ExamAttemptController;
@@ -63,6 +66,7 @@ use App\Http\Controllers\Api\StudentCertificateController;
 use App\Http\Controllers\Api\StudentProfileController;
 use App\Http\Controllers\Api\SubscriptionPlanController;
 use App\Http\Controllers\Api\TeacherAnalyticsController;
+use App\Http\Controllers\Api\TeacherAdminNotificationController;
 use App\Http\Controllers\Api\TeacherAvailabilityController;
 use App\Http\Controllers\Api\TeacherBlogController;
 use App\Http\Controllers\Api\TeacherBookingController;
@@ -80,6 +84,7 @@ use App\Http\Controllers\Api\TenantSettingController;
 use App\Http\Controllers\Api\TenantSubscriptionController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UserPreferenceController;
 use App\Http\Controllers\Api\VideoStreamController;
 use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
@@ -215,6 +220,18 @@ Route::prefix('v1')->group(function () {
             Route::put('lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('lessons/{lesson}', [LessonController::class, 'destroy']);
 
+            // ─── Course groups (مجموعات الطلاب داخل الكورس) ───────────
+            // Separate from community/forum groups and from academic terms.
+            Route::get('courses/{course}/groups', [CourseGroupController::class, 'index']);
+            Route::post('courses/{course}/groups', [CourseGroupController::class, 'store']);
+            Route::get('course-groups/{group}', [CourseGroupController::class, 'show']);
+            Route::put('course-groups/{group}', [CourseGroupController::class, 'update']);
+            Route::delete('course-groups/{group}', [CourseGroupController::class, 'destroy']);
+            Route::put('course-groups/{group}/members', [CourseGroupController::class, 'syncMembers']);
+            Route::put('course-groups/{group}/lessons', [CourseGroupController::class, 'syncLessons']);
+            Route::put('course-groups/{group}/exams', [CourseGroupController::class, 'syncExams']);
+            Route::get('course-groups/{group}/results', [CourseGroupController::class, 'results']);
+
             // Lesson Contents
             Route::get('lessons/{lesson}/contents', [LessonContentController::class, 'index']);
             Route::post('lesson-contents', [LessonContentController::class, 'store']);
@@ -233,6 +250,24 @@ Route::prefix('v1')->group(function () {
             Route::get('enrollments/{enrollment}/progress', [LessonProgressController::class, 'index']);
             Route::put('enrollments/{enrollment}/progress/{lesson}', [LessonProgressController::class, 'update']);
             Route::post('enrollments/{enrollment}/progress/{lesson}/complete', [LessonProgressController::class, 'markCompleted']);
+
+            // ─── Academic Terms (الفصول الدراسية) ─────────
+            // Staff-only: teachers, owners and admins with the students
+            // permission manage terms and renew seats.
+            Route::middleware('role:teacher,owner,admin')->group(function () {
+                Route::get('terms', [AcademicTermController::class, 'index']);
+                Route::post('terms', [AcademicTermController::class, 'store']);
+                Route::get('terms/{term}', [AcademicTermController::class, 'show']);
+                Route::put('terms/{term}', [AcademicTermController::class, 'update']);
+                Route::delete('terms/{term}', [AcademicTermController::class, 'destroy']);
+                Route::post('terms/{term}/activate', [AcademicTermController::class, 'activate']);
+                Route::post('terms/{term}/students', [AcademicTermController::class, 'assignStudents']);
+                Route::get('terms/{term}/linkable-students', [AcademicTermController::class, 'linkableStudents']);
+                Route::post('terms/{term}/link-students', [AcademicTermController::class, 'linkStudents']);
+                Route::get('terms/{term}/end-preview', [AcademicTermController::class, 'endPreview']);
+                Route::post('terms/{term}/end', [AcademicTermController::class, 'end']);
+                Route::post('terms/{term}/promote', [AcademicTermController::class, 'promote']);
+            });
 
             // ─── Assignments ──────────────────────────────
             Route::get('assignments', [AssignmentController::class, 'index']);
@@ -268,6 +303,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('exams/{exam}', [ExamController::class, 'destroy']);
             Route::post('exams/{exam}/publish', [ExamController::class, 'publish']);
             Route::post('exams/{exam}/add-questions', [ExamController::class, 'addQuestions']);
+            Route::post('exams/{exam}/questions/reorder', [ExamController::class, 'reorderQuestions']);
             Route::delete('exams/{exam}/questions/{question}', [ExamController::class, 'removeQuestion']);
 
             // Exam Sections
@@ -280,7 +316,13 @@ Route::prefix('v1')->group(function () {
             Route::get('exams/{exam}/attempts', [ExamAttemptController::class, 'index']);
             Route::get('exams/{exam}/questions', [ExamController::class, 'questions']);
             Route::post('exams/{exam}/attempt', [ExamAttemptController::class, 'start']);
+            // Teacher preview: same student payload, no attempt/score recorded.
+            Route::post('exams/{exam}/preview', [ExamAttemptController::class, 'preview']);
+            Route::post('exams/{exam}/preview/grade', [ExamAttemptController::class, 'previewGrade']);
             Route::post('exams/{exam}/attempts/{attempt}/submit', [ExamAttemptController::class, 'submit']);
+            // Autosave: persist in-progress answers so a reload/reconnect can
+            // resume the same attempt without losing answers or a slot.
+            Route::post('exams/{exam}/attempts/{attempt}/autosave', [ExamAttemptController::class, 'autosave']);
             Route::post('exams/{exam}/attempts/{attempt}/grade', [ExamAttemptController::class, 'grade'])->middleware('role:teacher,owner,admin,permission:exams.manage');
             Route::get('exam-attempts/{attempt}', [ExamAttemptController::class, 'show']);
 
@@ -352,6 +394,23 @@ Route::prefix('v1')->group(function () {
                 Route::put('tickets/{ticket}/status', [AdminController::class, 'ticketStatus']);
                 Route::put('tickets/{ticket}/assign', [AdminController::class, 'ticketAssign']);
 
+                // ─── Platform notifications to teachers (Super Admin) ──
+                // Separate from tenant announcements: audience is every
+                // eligible teacher account on the platform. Static segments
+                // are declared before the {id} wildcard.
+                Route::prefix('teacher-notifications')->group(function () {
+                    Route::get('/', [AdminTeacherNotificationController::class, 'index']);
+                    Route::post('/', [AdminTeacherNotificationController::class, 'store']);
+                    Route::get('teachers', [AdminTeacherNotificationController::class, 'teachers']);
+                    Route::post('recipients', [AdminTeacherNotificationController::class, 'recipients']);
+                    Route::post('contact', [AdminTeacherNotificationController::class, 'contact']);
+                    Route::get('{id}', [AdminTeacherNotificationController::class, 'show']);
+                    Route::put('{id}', [AdminTeacherNotificationController::class, 'update']);
+                    Route::post('{id}/send', [AdminTeacherNotificationController::class, 'send']);
+                    Route::post('{id}/retract', [AdminTeacherNotificationController::class, 'retract']);
+                    Route::delete('{id}', [AdminTeacherNotificationController::class, 'destroy']);
+                });
+
                 Route::get('error-logs', [AdminController::class, 'errorLogs']);
                 Route::delete('error-logs/{log}', [AdminController::class, 'errorLogDestroy']);
                 Route::post('error-logs/clear', [AdminController::class, 'errorLogsClear']);
@@ -375,6 +434,12 @@ Route::prefix('v1')->group(function () {
                 Route::post('admin/plans/{plan}/features', [PlanFeatureController::class, 'store']);
                 Route::put('admin/plans/{plan}/features/{feature}', [PlanFeatureController::class, 'update']);
                 Route::delete('admin/plans/{plan}/features/{feature}', [PlanFeatureController::class, 'destroy']);
+
+                // ─── Subscription prices — Super Admin only ──────────
+                // Prices are verified against Freemius before being adopted.
+                Route::get('admin/plans/{plan}/freemius-sync', [SubscriptionPlanController::class, 'freemiusSync']);
+                Route::post('admin/plans/{plan}/publish-price', [SubscriptionPlanController::class, 'publishPrice']);
+                Route::post('admin/plans/{plan}/apply-pending-price', [SubscriptionPlanController::class, 'applyPendingPrice']);
             });
 
             // ─── Media Infrastructure (Super Admin) ────────
@@ -452,12 +517,28 @@ Route::prefix('v1')->group(function () {
             Route::get('settings', [TenantSettingController::class, 'show']);
             Route::put('settings', [TenantSettingController::class, 'update']);
 
+            // ─── Per-user UI preferences (per teacher, per tenant) ──
+            // Stores only allowlisted, non-secret editor settings on the user row.
+            Route::get('me/preferences', [UserPreferenceController::class, 'show']);
+            Route::put('me/preferences', [UserPreferenceController::class, 'update'])->middleware('role:teacher,owner,admin');
+
             // ─── Notifications ───────────────────────────
             Route::prefix('notifications')->group(function () {
                 Route::get('/', [NotificationController::class, 'index']);
                 Route::post('{id}/read', [NotificationController::class, 'markAsRead']);
                 Route::post('read-all', [NotificationController::class, 'markAllAsRead']);
                 Route::get('unread-count', [NotificationController::class, 'unreadCount']);
+            });
+
+            // ─── Platform notifications from the Super Admin (teachers) ──
+            // Read-only for teachers: no delete route exists by design.
+            Route::prefix('admin-notifications')->middleware('role:teacher,owner,admin')->group(function () {
+                Route::get('/', [TeacherAdminNotificationController::class, 'index']);
+                Route::get('unread-count', [TeacherAdminNotificationController::class, 'unreadCount']);
+                Route::post('read-all', [TeacherAdminNotificationController::class, 'markAllRead']);
+                Route::get('{id}', [TeacherAdminNotificationController::class, 'show']);
+                Route::post('{id}/read', [TeacherAdminNotificationController::class, 'markRead']);
+                Route::post('{id}/contact', [TeacherAdminNotificationController::class, 'contact']);
             });
 
             // ─── Notification Preferences ────────────────
@@ -602,6 +683,8 @@ Route::prefix('v1')->group(function () {
             // ─── Teacher: Custom Domain ────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/domain')->group(function () {
                 Route::get('/', [TeacherDomainController::class, 'show']);
+                Route::get('slug-available', [TeacherDomainController::class, 'checkSlug'])->middleware('throttle:slug-check');
+                Route::put('slug', [TeacherDomainController::class, 'updateSlug']);
                 Route::put('/', [TeacherDomainController::class, 'connect']);
                 Route::post('verify', [TeacherDomainController::class, 'verify']);
                 Route::delete('/', [TeacherDomainController::class, 'disconnect']);

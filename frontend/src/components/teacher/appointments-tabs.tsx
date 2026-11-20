@@ -1,21 +1,26 @@
 'use client';
 
 import { useLocale } from '@/store/locale';
+import { usePlan } from '@/store/plan';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { CalendarClock, HandCoins, CalendarDays } from 'lucide-react';
 
 /**
  * تبويبات المواعيد والجلسات المدفوعة — تنقل بين الصفحتين (لا iframe).
+ * تبويب الجلسات المدفوعة يظهر فقط إذا كانت ميزة paid_services_enabled مفعّلة في الخطة.
  */
 export default function AppointmentsTabs() {
   const { locale } = useLocale();
+  const { can } = usePlan();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const path = usePathname();
 
   const tabs = [
     { href: '/teacher/appointments', icon: CalendarClock, ar: 'المواعيد', en: 'Appointments' },
-    { href: '/teacher/services', icon: HandCoins, ar: 'الجلسات المدفوعة', en: 'Paid Sessions' },
+    ...(can('paid_services_enabled')
+      ? [{ href: '/teacher/services', icon: HandCoins, ar: 'الجلسات المدفوعة', en: 'Paid Sessions' }]
+      : []),
   ];
 
   return (

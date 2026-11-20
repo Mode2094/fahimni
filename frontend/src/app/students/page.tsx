@@ -27,6 +27,7 @@ export default function StudentsPage() {
 
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seats, setSeats] = useState<any>(null);
   const [search, setSearch] = useState('');
   const [profile, setProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -45,7 +46,14 @@ export default function StudentsPage() {
       .then(r => r.json()).then(d => setStudents(d.students || [])).catch(() => {})
       .finally(() => setLoading(false));
   };
+  const loadSeats = () => {
+    // Seats = distinct students with a currently-effective enrollment
+    // (active/completed, not expired, not archived). Server-owned value.
+    fetch(`${API}/teacher/plan`, { headers: headers() })
+      .then(r => r.json()).then(d => setSeats(d.usage?.students || null)).catch(() => {});
+  };
   useEffect(() => { if (check()) load(); }, [check()]);
+  useEffect(() => { if (check()) loadSeats(); }, [check()]);
 
   const openProfile = async (s: any) => {
     setProfileLoading(true);
@@ -119,7 +127,31 @@ export default function StudentsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold">{t('الطلاب', 'Students')}</h1>
           <p className="text-muted-foreground mt-1">{t('إدارة كاملة: الأداء، الأجهزة، الحدود، وإعادة التعيين', 'Full control: performance, devices, limits & resets')}</p>
         </div>
+        {seats && (
+          <div className="flex items-center gap-2 rounded-full bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-700 ms-auto">
+            <Users className="h-4 w-4" />
+            {seats.unlimited
+              ? t(`${seats.used} مقعد مستخدم (غير محدود)`, `${seats.used} seats used (unlimited)`)
+              : t(`${seats.used} / ${seats.limit} مقعد · متاح ${seats.remaining}`, `${seats.used} / ${seats.limit} seats · ${seats.remaining} available`)}
+          </div>
+        )}
+        <a
+          href="/teacher/terms"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-semibold ${seats ? '' : 'ms-auto'}`}
+        >
+          <Calendar className="h-4 w-4" />
+          {t('الفصول وربط الطلاب', 'Terms & link students')}
+        </a>
       </div>
+
+      {seats && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground -mt-1">
+          {t(
+            'المقعد يُحسب لكل طالب عندك مرة واحدة مهما التحق بعدة كورسات. إنهاء الدروس لا يحرّر المقعد؛ يتحرّر فقط عندما لا يبقى له أي تسجيل ساري (كأن تُنهي الفصل أو تؤرشف تسجيلاته).',
+            'A seat is counted once per student in your platform however many courses they join. Finishing lessons does not free the seat; it is freed only when they have no active enrolment left (e.g. you end the term or archive their enrolments).',
+          )}
+        </p>
+      )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((s, i) => (

@@ -39,14 +39,24 @@ class TenantSubscriptionController extends Controller
         // current subscription when a Freemius license actually governs access.
         $state = \App\Plans\SubscriptionState::make()->resolve($tenantId);
 
+        // Staff without an active subscription/trial are in "pending_payment":
+        // the account exists but the paid workspace is not activated. This is
+        // not an error — it is the explicit state the UI must surface so the
+        // teacher is routed to plan selection / checkout.
+        $isStaff = (bool) $request->user()?->tenantPivots()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('role', ['teacher', 'owner', 'admin'])
+            ->where('status', 'active')
+            ->exists();
+
         if ($state['source'] === \App\Plans\SubscriptionState::SOURCE_NONE || ! $state['plan_id']) {
-            return response()->json(['subscription' => null]);
+            return response()->json(['subscription' => null, 'pending_payment' => $isStaff]);
         }
 
         $plan = \App\Models\SubscriptionPlan::with('features')->find($state['plan_id']);
 
         if (! $plan) {
-            return response()->json(['subscription' => null]);
+            return response()->json(['subscription' => null, 'pending_payment' => $isStaff]);
         }
 
         return response()->json([

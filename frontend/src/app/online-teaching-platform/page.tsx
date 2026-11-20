@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
@@ -88,7 +88,7 @@ export default function OnlineTeachingPlatformPage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="See how your own platform changes things"
           text="Sign up free, publish one course, share your link with one student. Then decide if you ever want to pay commissions again."
           primaryLabel="Start for free"
@@ -118,7 +118,7 @@ export default function OnlineTeachingPlatformPage() {
 
         <Faq title="Questions teachers ask" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="Own your teaching, not just your lessons"
           text="Stop renting a storefront. Create your platform, keep your students and collect every payment yourself."
           primaryLabel="Create your free account"

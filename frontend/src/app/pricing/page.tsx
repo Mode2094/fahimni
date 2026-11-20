@@ -1,6 +1,6 @@
 import PricingClient from '@/components/pricing/pricing-client';
-import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialFaq } from '@/components/seo/trial-faq';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 
 const COMPARISON: { name: string; who: string; use: string }[] = [
   {
@@ -20,12 +20,15 @@ const COMPARISON: { name: string; who: string; use: string }[] = [
   },
 ];
 
-const PRICING_FAQ: [string, string][] = [
-  ['هل هناك فترة تجربة؟', 'نعم، الخطط تأتي بأيام تجربة تسمح لك باستكشاف المنصة قبل الالتزام.'],
+const BASE_FACTS: [string, string][] = [
   ['هل أدفع لكل طالب؟', 'لا — تشترك في خطة ثابتة شهرياً أو سنوياً، والطلاب يضافون ضمن حدود خطتك بدون رسوم لكل مقعد.'],
-  ['ماذا يحدث بعد انتهاء الفترة التجريبية؟', 'تختار الخطة التي تناسبك أو تنهي تجربتك. محتواك وبياناتك محفوظة لك.'],
   ['هل يمكنني ترقية خطتي لاحقاً؟', 'نعم، يمكنك الترقية أو التعديل في أي وقت من لوحة الاشتراك، وتُحتسب الفروقات تلقائياً.'],
   ['هل يشمل السعر الدعم الفني؟', 'جميع الخطط تشمل دعماً فنياً وتحديثات مستمرة للمنصة.'],
+];
+
+const TRIAL_FACTS: [string, string][] = [
+  ['هل هناك فترة تجربة؟', 'نعم، الخطط تأتي بأيام تجربة تسمح لك باستكشاف المنصة قبل الالتزام.'],
+  ['ماذا يحدث بعد انتهاء الفترة التجريبية؟', 'تختار الخطة التي تناسبك أو تنهي تجربتك. محتواك وبياناتك محفوظة لك.'],
 ];
 
 export default function PricingPage() {
@@ -77,12 +80,14 @@ export default function PricingPage() {
           </div>
         </section>
 
-        <Faq title="أسئلة شائعة عن الاشتراك" items={PRICING_FAQ} />
+        <TrialFaq title="أسئلة شائعة عن الاشتراك" baseItems={BASE_FACTS} trialItems={TRIAL_FACTS} />
 
-        <CtaSection
+        <TrialCtaSection
           title="ابدأ تجربتك المجانية اليوم"
           text="جرّب المنصة بأيام التجربة، أضف كورسك الأول، وشاهد كيف تتحول أدوات التدريس إلى منصتك الخاصة."
           primaryLabel="ابدأ الآن مجاناً"
+          offTitle="اختر خطتك وابدأ الآن"
+          offText="اختر الخطة المناسبة لمنصتك التعليمية، أضف كورسك الأول، وابدأ التدريس فوراً بعد تأكيد الاشتراك."
         />
       </div>
     </main>

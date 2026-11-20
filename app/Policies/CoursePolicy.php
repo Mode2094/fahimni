@@ -34,7 +34,7 @@ class CoursePolicy
 
         return Enrollment::where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->exists();
     }
 

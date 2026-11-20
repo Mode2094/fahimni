@@ -12,6 +12,14 @@
 #      from PR #24, is what gets deployed instead of a brand-only checkout),
 #    * builds images tagged prod-brand1 and replaces ONLY these four containers:
 #        app  frontend  scheduler  horizon
+#    * BEFORE the cutover, runs a READ-ONLY preflight that compares the pending
+#      migrations reported by the new image against an explicit allowlist, then
+#      (only when the owner approves it) applies exactly those approved files,
+#      one `migrate --path=...` at a time, from the new image. The generic
+#      `docker compose run migrate` service is never used (it would run every
+#      pending migration and `plans:sync`),
+#    * applies the targeted, additive-only `cards.export` permission fix
+#      (the full RolePermissionSeeder uses syncPermissions() and is never run),
 #    * RELOADS the stack's nginx so it re-resolves the recreated containers'
 #      new addresses (nginx caches the upstream IPs; without a reload the site
 #      returns 502 even though the new containers are healthy),
@@ -24,20 +32,34 @@
 #      (reloading nginx again so the rollback is not itself left on 502).
 #
 #  WHAT THIS NEVER TOUCHES
-#    DNS, Caddy, LooksLoop, Staging, the nginx *configuration*, postgres, redis,
-#    the one-shot migrate service (no migrations — there is no schema change),
-#    Freemius settings, prices, subscriptions and all user data.
-#    The production database is never written to: the previous brand still
-#    stored in the platform_settings row is remapped on READ by the application.
+#    DNS, Caddy, LooksLoop, Staging, the nginx *configuration*, redis, the
+#    generic one-shot migrate service, Freemius settings, prices, subscriptions
+#    and all user data. The production database is only written by the isolated,
+#    allowlisted migration step (steps 4c/4d) and only when that write is
+#    explicitly approved: `FAHIMNI_ALLOW_DB_WRITE=1` plus a confirmed restore
+#    test `FAHIMNI_DB_BACKUP_VERIFIED=1`, and `FAHIMNI_ALLOW_PERMISSION_WRITE=1`
+#    for the permission fix. With those unset (the default) the script is
+#    read-only against the database. Any applied migration is nullable and
+#    additive, so a rollback keeps it while the previous release keeps working.
 #    nginx is only signalled to reload its existing config — its files, volumes
 #    and the shared LooksLoop proxy network are untouched.
 #
 #  MINIMAL SURFACE
-#    `docker compose up -d --no-deps` on exactly four services, plus a
-#    `nginx -t && nginx -s reload` on the stack's own nginx service. `--no-deps`
-#    is what keeps postgres/redis/migrate out of the operation.
+#    `docker compose up -d --no-deps` on exactly four services, a
+#    `nginx -t && nginx -s reload` on the stack's own nginx service, and
+#    `docker compose run --rm --no-deps app php artisan …` for the approved
+#    migration / permission steps. `--no-deps` is what keeps postgres/redis and
+#    the migrate service out of the operation.
 #
 #  Run:  sudo bash /home/fahimni/fahimni-brand-rollout.sh
+#
+#  RUN MODES (env vars; every database write is OFF unless explicitly enabled)
+#    sudo bash …                                  # deploy, READ-ONLY on the DB
+#    sudo FAHIMNI_ALLOW_PERMISSION_WRITE=1 bash … # + the cards.export fix
+#    sudo FAHIMNI_ALLOW_DB_WRITE=1 \
+#         FAHIMNI_DB_BACKUP_VERIFIED=1 bash …     # + the approved migration(s)
+#    FAHIMNI_APPROVED_MIGRATIONS="2026_11_16_000001_add_lesson_id_to_assignments.php"
+#    FAHIMNI_RELEASE_SHA=<sha> FAHIMNI_RELEASE_BRANCH=<branch>
 # =============================================================================
 set -Eeuo pipefail
 
@@ -50,6 +72,8 @@ ENVF=/etc/fahimni/production.env
 REPO_URL=https://github.com/Mode2094/fahimni.git
 # The unified Release Candidate lives on its own branch; the clone/fetch is
 # single-branch, so the branch that carries $SHA must be named here too.
+# release_sha_on_branch() then refuses to deploy when $SHA is not reachable
+# from this branch (see the FAHIMNI_LIB block).
 BRANCH="${FAHIMNI_RELEASE_BRANCH:-integration/launch-2026-11}"
 NEW_TAG=prod-brand1
 PORT="${APP_PORT:-8080}"
@@ -64,6 +88,15 @@ SERVICES=(app frontend scheduler horizon)
 # service that must be reloaded, never rebuilt, after the four above change.
 NGINX_SVC=nginx
 CSP_PAGE=/teacher/dashboard
+
+# ── database changes (all OFF by default; owner approval is required) ───────
+# The release ships additive migrations the live DB may not have yet. Only the
+# files listed in FAHIMNI_APPROVED_MIGRATIONS (comma-separated) may be applied,
+# and only when FAHIMNI_ALLOW_DB_WRITE=1 AND FAHIMNI_DB_BACKUP_VERIFIED=1 are
+# set. The generic `docker compose run migrate` service is deliberately NOT
+# used: it would run `migrate --force` (any pending migration, approved or not)
+# and `plans:sync`.
+APPROVED_MIGRATIONS_DEFAULT="2026_11_16_000001_add_lesson_id_to_assignments.php"
 
 # Core surfaces: must be 200, must carry the new identity, must not carry the old.
 CORE_PAGES=(/ /teacher/login /student/login /admin/login /register/student /register/teacher)
@@ -210,7 +243,223 @@ verify_readiness(){
 
   return "$rc"
 }
+
+# Fail closed when $2 (a commit) is not reachable from branch $3 in the checkout
+# at $1. The release clone is `--single-branch`, so a SHA that only lives on a
+# DIFFERENT branch is simply not fetchable: `git checkout --detach $SHA` then
+# dies with a confusing "reference is not a tree" / "unknown revision" error, or
+# — worse — a stale object from an earlier run is silently reused. This checks
+# reachability up front and lets the caller abort with an explicit message.
+#
+# Returns 0 only when the commit exists AND descends from the branch tip.
+release_sha_on_branch(){  # $1 = release dir ; $2 = sha ; $3 = branch
+  local dir="$1" sha="$2" branch="$3" tip
+  [ -n "$dir" ] && [ -n "$sha" ] && [ -n "$branch" ] || return 1
+  [ -d "$dir/.git" ] || return 1
+  # Fetch exactly the requested branch into its remote-tracking ref. This does
+  # not depend on the clone's configured (single-branch) refspec, and it fails
+  # when the branch does not exist on the remote — both are fail-closed.
+  git -C "$dir" fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null || true
+  # Resolve the branch tip explicitly; NO FETCH_HEAD fallback, which can be a
+  # leftover from an unrelated fetch and would accept a bogus branch name.
+  tip="$(git -C "$dir" rev-parse --verify --quiet "refs/remotes/origin/$branch")" || return 1
+  [ -n "$tip" ] || return 1
+  git -C "$dir" cat-file -e "${sha}^{commit}" 2>/dev/null || return 1
+  git -C "$dir" merge-base --is-ancestor "$sha" "$tip" 2>/dev/null
+}
+
+# platform-settings returns {"settings":{"platform_name":"…"}} and the value is
+# very often JSON-escaped (\u0645\u0646\u0635\u0629…). Grepping the raw body for
+# the Arabic text therefore reports a FALSE failure and triggers a bogus
+# rollback, so decode with a real JSON parser (jq → python3 → php) and compare
+# the DECODED value. Prints ONE verdict token and returns its status:
+#   ok         (rc 0)  the decoded name is exactly «منصة فهمني»
+#   noparser   (rc 2)  no JSON parser is installed
+#   invalid    (rc 1)  the body is not valid JSON, or has no string field
+#   empty      (rc 1)  the decoded name is empty
+#   legacy     (rc 1)  the decoded name is an old brand value
+#   wrong:<n>  (rc 1)  any other value
+platform_name_status(){  # $1 = JSON body
+  local body="$1" name="" rc=0
+  if command -v jq >/dev/null 2>&1; then
+    name="$(jq -er '.settings.platform_name | strings' <<<"$body" 2>/dev/null)" || rc=1
+  elif command -v python3 >/dev/null 2>&1; then
+    name="$(python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+node = doc.get("settings") if isinstance(doc, dict) else None
+value = node.get("platform_name") if isinstance(node, dict) else None
+if not isinstance(value, str):
+    sys.exit(1)
+sys.stdout.write(value)
+' <<<"$body" 2>/dev/null)" || rc=1
+  elif command -v php >/dev/null 2>&1; then
+    # shellcheck disable=SC2016
+    name="$(php -r '$d=json_decode(stream_get_contents(STDIN),true); $v=(is_array($d)&&isset($d["settings"])&&is_array($d["settings"]))?($d["settings"]["platform_name"]??null):null; if(!is_string($v))exit(1); echo $v;' <<<"$body" 2>/dev/null)" || rc=1
+  else
+    printf 'noparser\n'; return 2
+  fi
+  [ "$rc" = 0 ] || { printf 'invalid\n'; return 1; }
+  [ -n "$name" ] || { printf 'empty\n'; return 1; }
+  if [ "$name" = 'منصة فهمني' ]; then printf 'ok\n'; return 0; fi
+  case "$name" in
+    *Tadreesly*|*tadreesly*|*تدريسلي*|*تدريسلى*) printf 'legacy\n'; return 1 ;;
+  esac
+  printf 'wrong:%s\n' "$name"
+  return 1
+}
+
+# Source-level brand audit. The OLD brand must not survive anywhere that reaches
+# a user (a browser, the API, or a served asset). It legitimately survives in:
+#   • documentation and the launch reports (docs/),
+#   • the deploy tooling and its tests (deploy/),
+#   • the two normalisation helpers below that MAP a legacy value onto the new
+#     name (app/Support/PlatformBrand.php, frontend/src/lib/brand.ts),
+#   • the detection greps themselves — a pattern that LOOKS for the old name is
+#     not a user-visible string.
+# None of those is a leak, so none is an error. Only the user-visible source
+# trees are scanned; the LIVE surfaces are separately verified after deploy.
+#
+# Prints the offending files (one per line); empty output = clean.
+brand_source_audit(){  # $1 = release dir ; prints user-visible offenders
+  local rel="$1" d stale="" dirs=()
+  for d in frontend/src frontend/public app resources public routes config; do
+    [ -e "$rel/$d" ] && dirs+=("$rel/$d")
+  done
+  if [ "${#dirs[@]}" -gt 0 ]; then
+    stale="$(grep -rIl -E 'Tadreesly|tadreesly' "${dirs[@]}" 2>/dev/null || true)"
+  fi
+  # The two intentional legacy-normalisation helpers may mention the old value.
+  # `grep -v` exits 1 whenever it removes EVERY line — which is exactly the CLEAN
+  # case, because those two helpers are the only old-name matches a good release
+  # has. Under `pipefail` that made the whole function exit 1, and `set -e` then
+  # aborted the deploy at `offenders="$(brand_source_audit "$REL")"` with nothing
+  # printed (a silent SAFE STOP on a perfectly clean tree). `|| true` keeps a
+  # clean audit at exit 0 while every real offender is still printed on stdout —
+  # and the caller still aborts via its `[ -n "$offenders" ]` gate.
+  printf '%s\n' "$stale" \
+    | grep -v -E '/(app/Support/PlatformBrand\.php|frontend/src/lib/brand\.ts)$' \
+    | sed '/^[[:space:]]*$/d' || true
+}
 # ── FAHIMNI_LIB_END ──────────────────────────────────────────────────────────
+
+# ── FAHIMNI_DB_BEGIN ────────────────────────────────────────────────────────
+# Gated, additive-only database work. Extracted and unit-tested by
+# deploy/tests/brand-rollout-nginx-test.sh (FAHIMNI_DB_* markers).
+
+# The migration files this deployment is allowed to apply, one per line.
+approved_migrations(){
+  printf '%s\n' "${FAHIMNI_APPROVED_MIGRATIONS:-$APPROVED_MIGRATIONS_DEFAULT}" \
+    | sed 's/[,;]/\n/g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed '/^$/d'
+}
+
+# Run a one-off artisan command inside the NEW app image. `run --rm --no-deps`
+# never starts dependencies (postgres/redis/migrate stay exactly as they are)
+# and never touches the migrate service, so only the given command runs.
+app_artisan(){  # $1 = release dir ; rest = artisan arguments
+  local dir="$1"; shift
+  ( cd "$dir" && IMAGE_TAG="$NEW_TAG" docker compose --env-file "$ENVF" \
+      run --rm --no-deps app php artisan "$@" )
+}
+
+# Pending migrations, diffed from the migration FILES by our own read-only
+# `migrations:pending` command — NOT parsed out of `migrate:status`.
+#
+# Why not `migrate:status --pending` (the old approach):
+#   • Laravel's `Migrator::getMigrationName()` STRIPS `.php`, so the CLI prints
+#     migration names WITHOUT the extension. A parser keyed on `…<name>.php`
+#     therefore matched nothing and reported "no pending migrations" — silently
+#     letting UNapproved migrations through.
+#   • Its exit code is not an error signal: `handle()` returns the option value,
+#     so `--pending` alone can exit 0 while pending migrations exist,
+#     `--pending=1` exits 1, and a missing table also exits 1.
+#
+# `migrations:pending` instead compares the files on disk against the
+# `migrations` table and prints the file basenames WITH `.php` — exactly the
+# strings the allowlist carries, independent of the framework's CLI formatting.
+#
+# Prints one filename per line. Returns:
+#   0  the list was produced (possibly empty — safe to compare)
+#   2  the state could not be read, or a line was not a migration filename.
+#      This is FAIL CLOSED: it is NEVER treated as "nothing pending".
+db_pending_migrations(){  # $1 = release dir ; prints pending filenames, one per line
+  local dir="$1" out rc
+  out="$(app_artisan "$dir" migrations:pending --no-ansi 2>/dev/null)"; rc=$?
+  [ "$rc" = "0" ] || return 2
+  # Fail closed unless EVERY non-empty line is exactly a migration filename with
+  # `.php`. Anything else (framework banners, a name without the extension, a
+  # stray log line) means the output shape is not what we validated.
+  if printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' \
+       | grep -qvE '^[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{6}_[A-Za-z0-9_]+\.php$'; then
+    return 2
+  fi
+  printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | sort -u
+}
+
+# Compare what is pending against the approved allowlist. Any pending migration
+# NOT on the list aborts the deploy BEFORE anything is touched. Missing approved
+# files in the release also abort (nothing to apply would be a silent no-op).
+db_preflight(){  # $1 = release dir ; 0 = safe, 1 = unexpected, 2 = unreadable
+  local dir="$1" pending approved extra m rc
+  pending="$(db_pending_migrations "$dir")"; rc=$?
+  if [ "$rc" = "2" ]; then
+    warn "could not read migrations:pending from the new image — aborting rather than guessing"
+    return 2
+  fi
+  approved="$(approved_migrations)"
+
+  if [ -n "$pending" ]; then
+    printf '%s\n' "$pending" | sed 's/^/  pending: /'
+  else
+    log "pending: <none>"
+  fi
+
+  extra="$(comm -23 <(printf '%s\n' "$pending" | sort) <(printf '%s\n' "$approved" | sort) | sed '/^$/d')"
+  if [ -n "$extra" ]; then
+    printf '%s\n' "$extra" | sed 's/^/  UNAPPROVED pending: /' >&2
+    warn "the release would apply migration(s) that were not approved"
+    return 1
+  fi
+
+  for m in $approved; do
+    if [ ! -f "$dir/database/migrations/$m" ]; then
+      warn "approved migration '$m' is not present in the release tree"
+      return 1
+    fi
+  done
+  log "every pending migration is on the approved allowlist"
+  return 0
+}
+
+# Apply ONLY the approved migrations, from the new image, one --path at a time.
+# Runs BEFORE the cutover so the new code never starts on an incomplete schema;
+# a failure here leaves the running production containers untouched.
+apply_approved_migrations(){  # $1 = release dir
+  local dir="$1" m
+  for m in $(approved_migrations); do
+    [ -f "$dir/database/migrations/$m" ] || { warn "approved migration $m missing from the release"; return 1; }
+    if ! app_artisan "$dir" migrate --force --no-interaction --path="database/migrations/$m"; then
+      warn "migration $m FAILED — the schema was not changed for this file"
+      return 1
+    fi
+    log "applied $m"
+  done
+  return 0
+}
+
+# Additive-only permission fix ($2=1 applies, $2=0 previews). Never syncs roles.
+ensure_cards_export_permission(){  # $1 = release dir ; $2 = apply?
+  local dir="$1" apply="${2:-0}"
+  if [ "$apply" = "1" ]; then
+    app_artisan "$dir" permissions:ensure-cards-export --apply
+  else
+    app_artisan "$dir" permissions:ensure-cards-export
+  fi
+}
+# ── FAHIMNI_DB_END ──────────────────────────────────────────────────────────
 
 # Stable LooksLoop identity signature (same one the approved production tooling
 # uses). It deliberately EXCLUDES the human 'Up 3 minutes' uptime text, which
@@ -299,6 +548,10 @@ log "$ENV_BAK"
   echo "rollback_release=$OLD_REL"
   echo "new_tag=$NEW_TAG"
   echo "new_release=$REL"
+  echo "# DB note: the additive migration (assignments.lesson_id, NULLABLE) is NOT"
+  echo "# reverted by a rollback. It is compatible with the previous release, whose"
+  echo "# code never reads the column, so the rollback image keeps working."
+  echo "# Approve/applied via FAHIMNI_ALLOW_DB_WRITE; reverted only manually + deliberately."
   echo "env_backup=$ENV_BAK"
   echo "# exact revert:"
   echo "cp $ENV_BAK $ENVF && chown fahimni:fahimni $ENVF && chmod 600 $ENVF"
@@ -338,6 +591,12 @@ else
     || die "git clone failed — production is untouched"
 fi
 git -C "$REL" config core.fileMode false
+# P0 guard: the clone/fetch is single-branch, so $SHA must be reachable from
+# $BRANCH. A mismatch (e.g. $SHA lives on a sibling branch) must abort here with
+# a clear message instead of a confusing checkout failure — or a silently stale
+# object from a previous run.
+release_sha_on_branch "$REL" "$SHA" "$BRANCH" \
+  || die "$SHA is not reachable from branch '$BRANCH' — refusing to deploy. Set FAHIMNI_RELEASE_BRANCH to the branch that actually contains $SHA (and remove $REL so it re-clones if the current clone is pinned to another branch)."
 git -C "$REL" checkout --detach --quiet "$SHA" || die "could not check out $SHA"
 [ "$(git -C "$REL" rev-parse HEAD)" = "$SHA" ] || die "release HEAD is not $SHA"
 git -C "$REL" merge-base --is-ancestor a85544e6d097572e23e7f42123746eb848431df2 HEAD \
@@ -347,9 +606,12 @@ git -C "$REL" merge-base --is-ancestor a85544e6d097572e23e7f42123746eb848431df2 
 # The release MUST carry the P0 Google/session BFF fix (PR #24). Rebuilding the
 # frontend from a brand-only checkout would drop the public-origin fix and
 # bring back «تعذر إنشاء الجلسة» after the Google callback.
-[ -f "$REL/frontend/src/lib/request-origin.ts" ] \
-  && grep -q 'requestOrigin' "$REL/frontend/src/lib/request-origin.ts" \
-  || die "the release lacks the Google/session BFF fix (request-origin.ts) — refusing to deploy an older checkout"
+if [ -f "$REL/frontend/src/lib/request-origin.ts" ] \
+   && grep -q 'requestOrigin' "$REL/frontend/src/lib/request-origin.ts"; then
+  :
+else
+  die "the release lacks the Google/session BFF fix (request-origin.ts) — refusing to deploy an older checkout"
+fi
 [ -z "$(git -C "$REL" -c core.fileMode=false status --porcelain)" ] \
   || die "release worktree is dirty — refusing to build (inspect it first)"
 log "checked out $SHA (clean)"
@@ -372,16 +634,16 @@ chown -R fahimni:fahimni "$REL"
 chown fahimni:fahimni "$STACK/releases" 2>/dev/null || true
 log "release ownership set to fahimni:fahimni"
 
-step "brand audit of the release source (the old name must be gone)"
-stale="$(grep -rIl -E 'Tadreesly|tadreesly' "$REL" \
-  --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor \
-  --exclude-dir=.next --exclude-dir=storage 2>/dev/null || true)"
-unexpected="$(printf '%s\n' "$stale" | grep -v -E '/(app/Support/PlatformBrand\.php|frontend/src/lib/brand\.ts)$' | sed '/^$/d' || true)"
-if [ -n "$unexpected" ]; then
-  printf '%s\n' "$unexpected" | sed 's/^/    /' >&2
-  die "the old brand still appears in the release sources listed above"
+step "brand audit of user-visible release sources (the old name must be gone)"
+# Scan only the trees that reach a user. The old name legitimately survives in
+# docs/, in the deploy tooling/tests and in the two normalisation helpers — a
+# detection grep is not a user-visible string and is never a failure.
+offenders="$(brand_source_audit "$REL")"
+if [ -n "$offenders" ]; then
+  printf '%s\n' "$offenders" | sed 's/^/    /' >&2
+  die "the old brand still appears in a user-visible release source listed above"
 fi
-log "old brand appears only inside the two intentional remapping helpers"
+log "old brand appears only inside the two intentional remapping helpers (docs/deploy/tests are not user-visible)"
 
 # ── 3. build ────────────────────────────────────────────────────────────────
 step "building images for $NEW_TAG (several minutes; production keeps running)"
@@ -409,6 +671,37 @@ for f in frontend/public/logo.png frontend/public/og.png frontend/public/icon-ma
     || die "frontend image asset ${f#frontend/} does not match the release (want $expect, got ${got:-none})"
   log "frontend ${f#frontend/} verified ($got)"
 done
+
+# ── 4b. database preflight (read-only, always runs) ────────────────────────
+step "DB preflight (read-only): pending migrations vs the approved allowlist"
+db_preflight "$REL"; pf=$?
+[ "$pf" = 0 ] || die "DB preflight failed (unreadable status or an unapproved pending migration) — refusing to deploy; production is untouched"
+
+# ── 4c. apply the approved migration(s) from the new image, BEFORE cutover ──
+# The new code reads assignments.lesson_id unconditionally, so the column must
+# exist before the new containers serve traffic. Applying it here — against the
+# still-live old release — is safe: the column is nullable and the old code
+# never references it (see the rollback note; a rollback keeps the column).
+if [ "${FAHIMNI_ALLOW_DB_WRITE:-0}" = "1" ]; then
+  [ "${FAHIMNI_DB_BACKUP_VERIFIED:-0}" = "1" ] \
+    || die "DB writes are approved but no verified fresh backup was confirmed — set FAHIMNI_DB_BACKUP_VERIFIED=1 only after restoring a recent backup onto an isolated copy"
+  step "applying the approved migration(s) from the new image (before cutover)"
+  apply_approved_migrations "$REL" \
+    || die "an approved migration failed BEFORE cutover — production containers and traffic are untouched"
+else
+  warn "DB writes not approved (FAHIMNI_ALLOW_DB_WRITE != 1) — the approved migration was NOT applied"
+fi
+
+# ── 4d. targeted permission change (additive only) ──────────────────────────
+step "permission preflight (read-only): the expected cards.export diff"
+ensure_cards_export_permission "$REL" 0 || warn "permission preflight could not run (continuing)"
+if [ "${FAHIMNI_ALLOW_PERMISSION_WRITE:-0}" = "1" ]; then
+  step "applying the targeted permission change (grant cards.export to Teacher)"
+  ensure_cards_export_permission "$REL" 1 \
+    || die "the targeted permission change failed (no permission was removed; re-run after fixing)"
+else
+  warn "permission writes not approved (FAHIMNI_ALLOW_PERMISSION_WRITE != 1) — no permission change applied"
+fi
 
 # ── 5. rollback helper ──────────────────────────────────────────────────────
 # ── FAHIMNI_ROLLBACK_BEGIN ──────────────────────────────────────────────────
@@ -567,13 +860,15 @@ done
 
 log "-- the DB-driven platform name (the value the live settings row still holds)"
 ps_json="$(curl -sS --max-time 15 -H "Host: $HOSTHDR" "$BASE/api/v1/platform-settings" 2>/dev/null || true)"
-printf '%s' "$ps_json" | grep -oE '"platform_name":"[^"]*"' | head -1 | sed 's/^/    /' || true
-case "$ps_json" in
-  *'منصة فهمني'*) log "platform-settings serves the new name" ;;
-  *) warn "platform-settings does not serve the new name"; brand_fail=1 ;;
-esac
-case "$ps_json" in
-  *Tadreesly*) warn "platform-settings still exposes the old name"; brand_fail=1 ;;
+ps_name="$(platform_name_status "$ps_json")" || true
+case "$ps_name" in
+  ok)       log "platform-settings serves the new name (decoded JSON)" ;;
+  legacy)   warn "platform-settings still exposes the old name"; brand_fail=1 ;;
+  invalid)  warn "platform-settings returned a body that is not valid JSON or has no string name"; brand_fail=1 ;;
+  empty)    warn "platform-settings returned an empty platform name"; brand_fail=1 ;;
+  noparser) warn "no JSON parser (jq/python3/php) is available to verify the platform name"; brand_fail=1 ;;
+  wrong:*)  warn "platform-settings serves a wrong name: ${ps_name#wrong:}"; brand_fail=1 ;;
+  *)        warn "platform-settings verification did not produce a verdict"; brand_fail=1 ;;
 esac
 
 log "-- manifest, social card and the served logo"
@@ -658,9 +953,15 @@ cat <<EOF
 
   Replaced exactly: ${SERVICES[*]}
   Reloaded: $NGINX_SVC (existing config; upstream addresses re-resolved — no 502)
-  Untouched: DNS, Caddy, LooksLoop, Staging, the nginx configuration,
-             postgres, redis, migrate (no migrations), Freemius, prices,
-             subscriptions, user data and the production database.
+  Untouched: DNS, Caddy, LooksLoop, Staging, the nginx configuration, redis,
+             the generic migrate service, Freemius, prices, subscriptions and
+             user data.
+
+  Database: only allowlisted, additive migration(s) may be applied, from the
+            new image, before the cutover, gated on FAHIMNI_ALLOW_DB_WRITE=1 +
+            FAHIMNI_DB_BACKUP_VERIFIED=1. The cards.export permission fix is
+            additive-only, gated on FAHIMNI_ALLOW_PERMISSION_WRITE=1. A rollback
+            keeps the nullable column (compatible with the previous release).
 
   Verified live: ${#CORE_PAGES[@]} core pages + ${#MORE_PAGES[@]} public pages,
   the settings API, the web manifest, the served logo hash, the tab title,

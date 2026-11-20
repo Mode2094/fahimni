@@ -314,7 +314,7 @@ class VideoProtectionService
 
         $enrollment = Enrollment::where('course_id', $lesson->section->course_id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         if (! $enrollment) {

@@ -1,10 +1,57 @@
 # FINAL RELEASE CHECKLIST — منصة فهمني
 
-**Release candidate:** `release/launch-2026-11-rc`
-**Code-complete tip (what gets deployed):** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Docs commit:** on top of the tip (documentation only — not required in the image)
-**Status:** **READY TO DEPLOY PENDING APPROVAL** — do **not** run anything in §5 or §6
-before the go/no-go in §8.
+**Release branch (carries the final SHA):** `fix/launch-blockers-rc`
+**Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
+**Final unified SHA (pinned — CI-green):** `3ed3df6c39b222e94ba381cf92dcf25672e26d5d`
+**P0 fixes in this revision:**
+- Migration preflight no longer parses `migrate:status`. Laravel 13's
+  `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
+  **every** pending migration and let an unapproved one through; it now diffs the
+  migration **files** against the `migrations` table via a new read-only
+  `migrations:pending` command and **fails closed** on anything unparsable.
+- A new `release_sha_on_branch` guard refuses to deploy when
+  `FAHIMNI_RELEASE_SHA` is not reachable from `FAHIMNI_RELEASE_BRANCH` (the clone
+  is `--single-branch`, so a sibling-branch SHA is not fetchable).
+- The release-source brand audit now scans only **user-visible** trees
+  (`frontend/src`, `frontend/public`, `app`, `resources`, `public`, `routes`,
+  `config`) and no longer aborts on the old name inside `docs/`, the deploy
+  tooling/tests, or the detection greps themselves — a pattern that *looks for*
+  the old name is not a user-visible string. A genuinely user-visible old name
+  still fails, and the live surfaces are verified after deploy.
+- That same audit no longer **silently aborts the rollout on a clean tree**.
+  `grep -v` exits 1 whenever it filters out every line, and in a good release the
+  only old-name matches are the two remapping helpers — so `pipefail` made
+  `brand_source_audit()` return 1 and `set -e` aborted at
+  `offenders="$(brand_source_audit "$REL")"` with nothing printed. It now returns
+  0 on a clean tree and still rejects every real offender (regression-tested in
+  both directions).
+- The isolated restore drill accepts a local plain `.dump` only through its
+  explicit `--allow-unencrypted` flag (scoped to `--file`). It is no longer
+  acknowledged via the `BACKUP_ALLOW_UNENCRYPTED` env var, which
+  `production.env` sets to `0` and which `load_env_file` re-sourced **after** the
+  runner exported `1` — that clobbering is what produced `refusing a plain .dump
+  without BACKUP_ALLOW_UNENCRYPTED=1`. The off-site path never passes the flag
+  and unencrypted archives are still never uploaded.
+- The three live **identity checks** (brand rollout, go-live runner, launch
+  smoke test) no longer grep the raw `platform-settings` body for the literal
+  `منصة فهمني`. The API returns `{"settings":{"platform_name":"…"}}` with the
+  Arabic name **Unicode-escaped**, so the literal match failed on a correct
+  response and the rollout's final live check tripped `brand_fail` — a bogus
+  rollback. A shared `platform_name_status` helper now decodes
+  `.settings.platform_name` with a real parser (`jq` → `python3` → `php`) and
+  still refuses the legacy brand, an unparsable/missing/empty name or any other
+  wrong value. Regression-tested across all three parser paths and all cases.
+- The **restore drill** no longer trusts `pg_isready` alone. The postgres
+  entrypoint brings up a TEMPORARY server during initdb (which also logs
+  "database system is ready to accept connections"), so `pg_isready` answered
+  before the real server existed and `pg_restore` died with
+  `FATAL: the database system is shutting down`. The drill now waits for
+  evidence that initdb finished (the entrypoint's "PostgreSQL init process
+  complete" marker or a second ready line), then confirms `restore_drill`
+  answers a query before restoring; it also fails fast if the container exits
+  during init. Still fully isolated (`--network none`, trust auth).
+**Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
+Nothing in §5 or §6 has been executed.
 
 ---
 
@@ -14,10 +61,21 @@ before the go/no-go in §8.
 - **P0 fix:** Google + email/password login session (public-origin BFF) **plus**
   host-header spoofing hardening.
 - **P1:** original landing page restored; **only** the Hero redesigned (PR #25 not merged).
-- Provider cost rules actually seeded; last stale brand string removed;
-  assignment worksheets can attach to a lesson (needs an approved migration — §4A).
-- Nothing older overwrites newer fixes: 17 approved branches merged, `fix/landing-redesign`
+- Provider cost rules correctly seeded for a *fresh* DB; last stale brand string
+  removed; assignment worksheets can attach to a lesson (needs an **approved**
+  migration — §4A).
+- Nothing older overwrites newer fixes: approved branches merged, `fix/landing-redesign`
   (PR #25) deliberately excluded.
+
+### Blockers-only work in this commit (before → after)
+
+| Blocker | Before | After |
+| --- | --- | --- |
+| 1. Migration before cutover | Deploy replaced containers first; the column did not exist → new code 500s | The deploy script runs a **read-only preflight**, then applies **only the allowlisted** migration from the new image **before cutover**; the generic `migrate` service is never used |
+| 2. `RolePermissionSeeder` hot-fix | Recommended running the whole seeder (`syncPermissions()` → not additive) | New **additive-only** `permissions:ensure-cards-export` (dry-run by default; creates/grants `cards.export` to Teacher only); the full seeder is **not** a prod step |
+| 3. Cost rules | Ambiguous whether to run `CostRulesSeeder` | **Gap report only** (`docs/COST_RULES_GAP_REPORT.md`); seeder is never run in prod |
+| 4. Deploy script integrity | Host copy could drift from the reviewed file | `verify-deploy-script.sh` SHA256-gates host vs Git; DB/permission writes are gated; rollback never reverts the schema |
+| 5. Launch smoke tests | None | `launch-smoke-test.sh` covers every critical journey; account/provider halves reported **BLOCKED** |
 
 ---
 
@@ -25,15 +83,18 @@ before the go/no-go in §8.
 
 | Gate | Result |
 | --- | --- |
-| PHPUnit (full) | **389 / 389** |
+| PHPUnit (full) | **394 / 394** |
 | `npx tsc --noEmit` | clean |
 | Frontend node tests | **26 / 26** |
 | Frontend vitest | **20 / 20** |
-| `next build` | success (89 pages + 8 handlers) |
-| `bash -n deploy/scripts/*.sh` | clean |
-| Brand-rollout tests | all pass (incl. T6b + branch override) |
+| `next build` | success |
+| `shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh` | **clean** |
+| `bash -n deploy/**/*.sh` | clean |
+| Brand-rollout tests (`deploy/tests/brand-rollout-nginx-test.sh`) | all pass — incl. **T12–T21** (DB preflight / approved migration / permission gating / sequence / rollback does not revert the schema) |
+| Deploy-script integrity test (`deploy/tests/verify-deploy-script-test.sh`) | all pass |
+| Launch smoke list test (`deploy/tests/launch-smoke-list-test.sh`) | all pass |
+| `permissions:ensure-cards-export` unit tests | **5 / 5** (`tests/Feature/EnsureCardsExportPermissionTest.php`) |
 | Landing before/after screenshots | captured (`docs/screenshots/hero/`) |
-| Deploy script installed on host | `/home/fahimni/fahimni-brand-rollout.sh` (36 146 B, mode 700, previous copies backed up as `…bak-*` / `…pre-nginxfix.bak`) |
 
 ---
 
@@ -41,154 +102,360 @@ before the go/no-go in §8.
 
 `/home/fahimni/fahimni-brand-rollout.sh` (root-run) will:
 
-1. preflight; record LooksLoop baseline (must stay identical)
+1. preflight; record the LooksLoop baseline (must stay identical)
 2. back up `/etc/fahimni/production.env` → `backups/production.env.<ts>.bak`
-3. **clone `release/launch-2026-11-rc` and `checkout` the RC sha** (new:
-   `FAHIMNI_RELEASE_BRANCH` / `FAHIMNI_RELEASE_SHA`), then hard-fail if the tree
-   has no `frontend/src/lib/request-origin.ts` (**refuses to redeploy the broken
-   session state**) or is dirty
-4. brand-audit the source (old name only inside the two remap helpers)
-5. build images for tag `prod-brand1`
-6. verify the brand + logo hashes **inside the built images**
-7. repoint `APP_NAME` / `MAIL_FROM_NAME` in the env file to the new identity
-8. `docker compose up -d --no-deps` on **only** `app frontend scheduler horizon`
-9. `nginx -t && nginx -s reload` (re-resolve upstreams — no 502)
-10. readiness gate: containers running+healthy, port listening, DNS resolves
-11. re-verify **CSP nonce** (`/teacher/dashboard`) and the **Google redirect** (must not regress)
-12. brand verification on the live stack (13 core pages 200 + new identity,
+3. clone/checkout the release (`FAHIMNI_RELEASE_BRANCH` / `FAHIMNI_RELEASE_SHA`),
+   hard-fail if the tree lacks `frontend/src/lib/request-origin.ts` (the Google/session
+   fix) or is dirty
+4. brand-audit the source; build images for tag `prod-brand1`
+5. verify the brand + logo hashes **inside the built images**
+6. **DB preflight (read-only, always):** list the pending migrations reported by the
+   new image and compare them to `FAHIMNI_APPROVED_MIGRATIONS`. Any **unapproved**
+   pending migration aborts **before anything is touched**; an unreadable status is a
+   hard failure (never "nothing pending")
+7. **Apply the approved migration(s)** — one `migrate --force --path=database/migrations/<file>`
+   per allowlisted file, from the new image, **before the cutover** — only when
+   `FAHIMNI_ALLOW_DB_WRITE=1` **and** `FAHIMNI_DB_BACKUP_VERIFIED=1`. The generic
+   `docker compose run migrate` service (which would run *every* pending migration and
+   `plans:sync`) is **never** used
+8. **Permission fix:** print the expected `cards.export` diff (read-only), then apply
+   the additive-only change only when `FAHIMNI_ALLOW_PERMISSION_WRITE=1`
+9. repoint `APP_NAME` / `MAIL_FROM_NAME` to the new identity
+10. `docker compose up -d --no-deps` on **only** `app frontend scheduler horizon` (cutover)
+11. `nginx -t && nginx -s reload` (re-resolve upstreams — no 502)
+12. readiness gate: containers running+healthy, port listening, DNS resolves
+13. re-verify **CSP nonce** (`/teacher/dashboard`) and the **Google redirect**
+14. brand verification on the live stack (core pages 200 + new identity,
     `platform-settings`, web manifest, served logo hash, tab title)
-13. LooksLoop after == baseline
-14. bookkeeping (`.deployed-tag`, `.previous-tag`, `current` symlink)
+15. LooksLoop after == baseline; bookkeeping (`.deployed-tag`, `.previous-tag`, `current`)
 
-**Never touched:** DNS, Caddy, LooksLoop, Staging, the nginx *configuration*,
-postgres, redis, the `migrate` service, Freemius, prices, subscriptions, user data,
-the production database.
+**Never touched:** DNS, Caddy, LooksLoop, Staging, the nginx *configuration*, redis,
+the generic `migrate` service, Freemius, prices, subscriptions, user data. The DB is
+written **only** by steps 7–8 and **only** when explicitly approved; with the gates
+unset the script is read-only against the database.
 
 ---
 
 ## 3. Rollback
 
-The script auto-rolls-back on **any** health failure and prints exact revert
-commands (env restore + previous tag `up -d --no-deps` + nginx reload). Manual
-rollback uses the standard tooling (`deploy/scripts/rollback.sh`), which also
-re-checks nginx and re-verifies the restored version's health.
+The script auto-rolls-back on **any** health failure (restores the env file + previous
+images + `nginx -s reload`) and prints the exact revert commands.
+
+**Database note (documented, required):** a rollback **keeps** the applied column. The
+migration adds a **nullable** `assignments.lesson_id`; the previous release's code never
+reads it, so the old image keeps working with the column present. The column is reverted
+**only** by a deliberate, manual, separate action — never by the automatic rollback.
+This is printed into the rollback note (`backups/rollback-<tag>.<ts>.txt`).
+
+Manual rollback still uses `deploy/scripts/rollback.sh`.
 
 ---
 
 ## 4. APPROVAL GATES (each needs an explicit yes)
 
-### 4A — **Schema change** (blocks a clean deploy)
+### 4A — **Approved migration** (applied by the deploy script, before cutover)
 
 `database/migrations/2026_11_16_000001_add_lesson_id_to_assignments.php`
 
 - **What:** adds a **nullable** `lesson_id` (uuid, FK → `lessons.id`, `nullOnDelete`)
   plus index `(lesson_id, sort_order)` to `assignments`.
-- **Impact:** purely **additive**; every existing row stays valid (NULL = course-level
-  assignment). **Why it is required:** `AssignmentResource` emits `lesson_id`
-  unconditionally, so without the column **assignment endpoints return 500** on the
-  new code. No data is modified or deleted. No tenant/user data touched.
-- **Rollback:** `down()` drops FK + index + column (assignment rows survive; they
-  lose only the lesson link, which did not exist before).
-- **Rule:** `migrate --force` is **forbidden** to run automatically. The deploy script
-  deliberately does **not** run the `migrate` service. Run it only on approval.
+- **Why required:** `AssignmentResource` emits `lesson_id` unconditionally; without the
+  column the new code's assignment endpoints return 500.
+- **Impact:** purely additive; existing rows stay valid (NULL = course-level). No data
+  modified or deleted.
+- **Applied via:** `docker compose run --rm --no-deps app php artisan migrate --force
+  --path=database/migrations/2026_11_16_000001_add_lesson_id_to_assignments.php`
+  (inside the script, gated). **Never** the generic `migrate` service.
+- **Preconditions:** owner approval **and** a fresh, **restore-tested** DB backup
+  (set `FAHIMNI_DB_BACKUP_VERIFIED=1` only after restoring it onto an isolated copy).
+- **Rollback:** keeps the column (see §3).
+
+**Read-only production DB check (prepared — run before approving; nothing is written).**
+Requires docker/root on the host (owner-only). Run from the live release dir:
+
+```bash
+cd /opt/fahimni/production/current
+# 1. Our own read-only view: files on disk vs the `migrations` table, names WITH .php.
+docker compose --env-file /etc/fahimni/production.env run --rm --no-deps app \
+  php artisan migrations:pending
+# 2. The framework's own view (informational only — names WITHOUT .php).
+docker compose --env-file /etc/fahimni/production.env run --rm --no-deps app \
+  php artisan migrate:status --pending --no-ansi
+```
+
+Expected: `migrations:pending` lists **exactly** the one approved file above (or nothing if
+it is already applied). Any other line — or a non-zero exit — is a **NO-GO**. Never the
+generic `migrate` service. Paste the raw output into the release report as evidence.
+
+**Restore-tested backup (the evidence behind `FAHIMNI_DB_BACKUP_VERIFIED=1`).** Restores a
+backup into a network-isolated throwaway PostgreSQL and **fails if the archive is stale**,
+so it proves a *recent* backup of production exists:
+
+```bash
+# (a) newest OFF-SITE archive (needs rclone / the daily 02:00 UTC upload):
+deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 26 --yes
+
+# (b) an explicit LOCAL archive — no Google Drive/rclone needed for this temporary path:
+deploy/scripts/restore-drill.sh --env production \
+  --file /opt/fahimni/production/backups/db-<UTC>.dump \
+  --allow-unencrypted --max-age-hours 26 --yes
+```
+
+> **(b) is a local file on the same server and does NOT protect against losing the
+> server.** It is accepted only for this temporary path, is never deleted, and every gate
+> still requires the real restore below. `--allow-unencrypted` is a per-invocation
+> acknowledgement for an explicit `--file` only; it is never read from the env file, so
+> `BACKUP_ALLOW_UNENCRYPTED=0` in `production.env` cannot veto it, and it is refused for
+> `--from-remote`. Unencrypted archives are still never *uploaded* (see `backup-offsite.sh`).
+
+Required evidence (paste into the release report — do **not** set
+`FAHIMNI_DB_BACKUP_VERIFIED=1` without it): the `backup freshness ok: <N>h old (limit 26h)`
+line, the `restore drill: OK` line, and the `migrations=… users=… tenants=… size=…` line,
+plus the archive name (it carries the UTC stamp). Production is never contacted or
+modified by the drill.
 
 ### 4B — **Permission data** (needed for card CSV export)
 
-`RolePermissionSeeder` defines `cards.export` and grants it to `Teacher`. Re-running
-it is **idempotent** (`findOrCreate` + `syncPermissions`) and **additive** — it does
-not remove any existing permission or role. Without it, teachers get `403` on
-`GET /api/v1/cards/export`.
+`RolePermissionSeeder` uses `syncPermissions()` → **not** additive; it must **not** be
+run whole in production. Instead the release ships:
+
+```bash
+php artisan permissions:ensure-cards-export          # dry-run: prints the expected diff
+php artisan permissions:ensure-cards-export --apply  # creates cards.export + grants to Teacher only
+```
+
+- creates `cards.export` only if missing, grants it to **Teacher** only, never removes or
+  re-syncs any other permission, and is idempotent (a second run changes nothing).
+- refuses to act if the `Teacher` role is absent.
+- Gated by `FAHIMNI_ALLOW_PERMISSION_WRITE=1`.
 
 ### 4C — **Deploying the RC branch** (not the default brand commit)
 
-The host script now accepts `FAHIMNI_RELEASE_BRANCH` + `FAHIMNI_RELEASE_SHA`; the
-default (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallback.
+The blockers work lives on `fix/launch-blockers-rc`, which is **one commit ahead of**
+`release/launch-2026-11-rc`. The deploy must therefore name **that** branch, because the
+clone is `--single-branch`: the target SHA is only fetchable from the branch that actually
+contains it. `release_sha_on_branch()` enforces this and aborts before checkout when
+`FAHIMNI_RELEASE_SHA` is not reachable from `FAHIMNI_RELEASE_BRANCH`.
+
+`FAHIMNI_RELEASE_BRANCH` + `FAHIMNI_RELEASE_SHA` override the clone target; the default
+(`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallback.
+
+**Final unified SHA — pinned literally. Never deploy a branch tip** (it moves; the SHA
+does not):
+
+```
+3ed3df6c39b222e94ba381cf92dcf25672e26d5d
+```
+
+Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
+enforces before checkout:
+
+```bash
+# from a clean single-branch clone of fix/launch-blockers-rc
+git merge-base --is-ancestor 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
+  refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
+```
+
+**Deploy-script integrity gate.** The reviewed script is:
+
+- `sha256 = 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8`
+- 52 999 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+
+The restore drill is not installed on the host: the runner always executes it
+from the pinned tree (`$STACK/.golive-tools/<sha>/deploy/scripts/restore-drill.sh`),
+so the pinned SHA above is its integrity gate. For reference, at `3ed3df6` it is
+`sha256 = 5b9cfb197697d67643720623c3d0ed248e2123596a42e4557774ac0b5c9ceb72`
+(9 067 bytes).
+
+**Runner fingerprint.** The single go-live runner on the host is:
+
+- `sha256 = 9448e27dffcadb8d2e3e19253a42bf9c419c39e51b030fe8eb6aac76b5b5d98a`
+- 31 181 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `3ed3df6…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
+  re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
+  that does not match.
+
+Before running §5, confirm the host copy is byte-identical to the approved one:
+
+```bash
+deploy/scripts/verify-deploy-script.sh \
+  --git-ref 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
+  --remote fahimni@187.127.87.101 \
+  --expect 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8
+```
+
+A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
+If the host copy is still the previous revision, install the reviewed one first (as
+`fahimni`, no root and no service restart):
+
+```bash
+scp deploy/scripts/fahimni-brand-rollout.sh \
+  fahimni@187.127.87.101:/home/fahimni/fahimni-brand-rollout.sh
+```
+
+Install the single go-live runner alongside it (mode 700, `fahimni`-owned):
+
+```bash
+scp deploy/scripts/fahimni-golive.sh fahimni@187.127.87.101:/home/fahimni/fahimni-golive.sh
+ssh fahimni@187.127.87.101 'chmod 700 ~/fahimni-golive.sh'
+```
 
 ---
 
-## 5. THE DEPLOY COMMAND (run only after approval)
+## 5. THE SINGLE ROOT COMMAND (ready — **not executed**)
+
+After §4A + §4B are approved **and** a restore-tested backup exists, this one command
+performs the whole release (approved migration → permission fix → brand rollout):
 
 ```bash
-sudo env FAHIMNI_RELEASE_BRANCH=release/launch-2026-11-rc \
-         FAHIMNI_RELEASE_SHA=b41494d1c18d0db022cb44dd1e37518c03a084a4 \
-     bash /home/fahimni/fahimni-brand-rollout.sh
+sudo env \
+  FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
+  FAHIMNI_RELEASE_SHA=3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
+  FAHIMNI_ALLOW_DB_WRITE=1 \
+  FAHIMNI_DB_BACKUP_VERIFIED=1 \
+  FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
+  bash /home/fahimni/fahimni-brand-rollout.sh
 ```
 
-(One command. `env` is used so the overrides survive `sudo`.)
+- It makes **no** production change until an operator runs it. Do not run it before the
+  approvals in §4 and the backup check in §7.
+- The SHA above is **pinned literally** and must be used as-is — **never** substitute a
+  branch tip or a `git ls-remote` result. It must be a commit reachable from
+  `FAHIMNI_RELEASE_BRANCH`; the script refuses to run otherwise (the clone is
+  `--single-branch`).
+- The migration preflight uses the read-only `migrations:pending` command (files vs the
+  `migrations` table) and fails closed — it no longer reads `migrate:status`, whose Laravel-13
+  output drops the `.php` extension.
+
+### 5.1 The single go-live runner (recommended — one command does everything)
+
+`deploy/scripts/fahimni-golive.sh` chains **pre-flight → backup → isolated restore drill →
+deploy → verify** with a safe stop at every gate. It is the one command to run; it verifies
+the host script's SHA256, pins the approved SHA/branch, ensures a recent restorable backup,
+and only then passes `FAHIMNI_DB_BACKUP_VERIFIED=1` to the rollout above. It never retries a
+failed deploy, never rolls the schema back, and never touches DNS/Caddy/LooksLoop/Staging.
+
+```bash
+# LOCAL-backup path (no Google Drive required) — the one command to run:
+sudo bash /home/fahimni/fahimni-golive.sh \
+  --backup-file /opt/fahimni/production/backups/db-20261116T191419Z.dump
+```
+
+Off-site path (when rclone/Google Drive is configured) — the same runner, newest archive:
+
+```bash
+sudo bash /home/fahimni/fahimni-golive.sh
+```
+
+Dry gate check that stops before the deploy (pre-flight + backup + drill only):
+
+```bash
+sudo bash /home/fahimni/fahimni-golive.sh \
+  --backup-file /opt/fahimni/production/backups/db-20261116T191419Z.dump --dry-run
+```
+
+- `--backup-file PATH` runs the isolated restore on **that** local archive (integrity
+  pre-check → real `restore drill: OK` → row counts) and **never deletes** it; the plain
+  `.dump` is acknowledged with the drill's explicit `--allow-unencrypted` flag, passed by
+  the runner for exactly this `--file` invocation. That flag is **not** read from
+  `production.env`, so `BACKUP_ALLOW_UNENCRYPTED=0` there cannot veto it, and the off-site
+  path never passes it. A local file on the same server does **not** protect against
+  losing the server.
+
+Every run writes `<stack>/backups/golive-<UTC>.log` and a `<stack>/backups/golive-<UTC>.result`
+summary (status, deployed SHA, backup/drill evidence, smoke result). Exit codes:
+`0` LIVE · `1` SAFE STOPPED · `2` ROLLED BACK · `3` LIVE with anomalies.
+
+**Read-only rehearsal** (safe; no DB or permission write, still builds and deploys the
+brand — use it only if a real cutover rehearsal is intended). For an even safer dry
+check without deploying, run the verifier and the smoke script first:
+
+```bash
+deploy/scripts/verify-deploy-script.sh --git-ref <sha> --remote fahimni@<host> --expect <sha256>
+deploy/scripts/launch-smoke-test.sh --base https://fahimni.me --host-header fahimni.me
+```
 
 ---
 
-## 6. POST-DEPLOY STEPS (each gated by §4)
+## 6. POST-DEPLOY VERIFICATION
 
-**(1) Schema — only if 4A approved** (run immediately after §5 so the assignment
-endpoints have their column):
-
-```bash
-sudo bash -c 'cd /opt/fahimni/production/current && \
-  IMAGE_TAG=prod-brand1 docker compose --env-file /etc/fahimni/production.env \
-  run --rm migrate'
-```
-
-`docker/migrate.sh` runs `migrate --force` + `plans:sync`; it seeds **only** when the
-users table is empty, so it will not re-seed. `plans:sync` without `--force` does
-**not** touch existing plans or prices — no selling-price change.
-
-**(2) Permissions — only if 4B approved:**
+### 6.1 Scripted launch smoke test (critical journeys)
 
 ```bash
-sudo bash -c 'cd /opt/fahimni/production/current && \
-  IMAGE_TAG=prod-brand1 docker compose --env-file /etc/fahimni/production.env \
-  exec -T app php artisan db:seed --class=Database\\Seeders\\RolePermissionSeeder --force'
+bash deploy/scripts/launch-smoke-test.sh --base https://fahimni.me
 ```
 
----
+Covers, read-only: platform health; branding «منصة فهمني» + served logo hash;
+CSP nonce; PWA manifest/icons; core page links; and the **public guard** of each
+authenticated journey (Google redirect returns `client_id`; role-gated endpoints
+answer 401/403 without a session). Every journey that needs a real account or an
+external provider is reported **BLOCKED** (see §6.2). Add `--allow-login-probe` to
+additionally confirm the login endpoint rejects bad credentials with 401/422.
 
-## 7. POST-DEPLOY VERIFICATION (manual, outside the script)
+### 6.2 BLOCKED items — the human click-through required before GO
+
+| Journey | Why BLOCKED |
+| --- | --- |
+| Google register → teacher dashboard → refresh | needs a real Google account |
+| Email/password login | needs real credentials |
+| Admin + student login | needs real accounts |
+| Create course + lesson + worksheet | needs an authenticated teacher |
+| Generate / export / redeem a card | needs a teacher + the `cards.export` grant |
+| Video + live access by permission | needs real enrolled users |
+| Google OAuth consent screen («تعذر إنشاء الجلسة» must not appear) | external provider |
+| Bunny transcode of a real upload | external provider |
+| Custom-domain DNS / Freemius checkout | out of scope for this release |
+
+These are the **exact** steps a human must complete (from `docs/FINAL_E2E_TEST_MATRIX.md`)
+before the release can be declared GO.
+
+### 6.3 Quick manual table
 
 | Check | Expectation |
 | --- | --- |
 | `https://fahimni.me/` | 200; title + logo = «منصة فهمني» |
-| `/api/v1/platform-settings` | `platform_name` reads as the new name in the UI |
+| `/api/v1/platform-settings` | `platform_name` = new name |
 | Core pages | `/teacher/login`, `/student/login`, `/admin/login`, `/register/*` all 200 |
-| CSP | no `unsafe-inline` regression; page loads with nonce |
+| CSP | nonce present; no `unsafe-inline` regression |
 | Logo/PWA | served icon + manifest show the new identity |
-| LooksLoop / Staging | unchanged from baseline |
 | Containers | `app frontend scheduler horizon` on `prod-brand1`, healthy |
-| Rollback markers | `current` → new release; `.previous-tag` = `prod-hotfix1` |
-
-### THE ONE REQUIRED HUMAN TEST — Google login (cannot be automated)
-
-1. Open `https://fahimni.me/teacher/login` → **Continue with Google**.
-2. Complete Google consent with a real account.
-3. The callback must land you on **`/teacher/dashboard`** (teacher) — student →
-   `/my-learning`, admin → `/admin/dashboard`.
-4. **Refresh the page**: the session must survive (still logged in).
-5. Confirm no «تعذر إنشاء الجلسة» screen.
-
-This is the single item that cannot be verified from CI; everything up to the live
-Google consent is unit-covered.
+| Migration | `assignments.lesson_id` exists; `php artisan migrations:pending` lists nothing unapproved |
+| Permission | `cards.export` granted to Teacher; other roles/permissions untouched |
+| LooksLoop / Staging | unchanged from baseline |
 
 ---
 
-## 8. GO / NO-GO
+## 7. GO / NO-GO
 
-**GO if:** §1 is green (it is), and approvals 4A + 4B + 4C are given, and a valid
-pre-deploy DB backup exists.
+**GO if:** §1 is green (it is), approvals **4A + 4B + 4C** are given, a valid
+**restore-tested** DB backup exists, and **every BLOCKED item in §6.2 has been driven
+with a real account/provider**.
 
-**Backup check before GO:** confirm the latest backup is fresh and restore-tested
-(`docs/backup-strategy.md`, `deploy/scripts/restore-drill.sh`); the deploy script
-backs up the env file itself.
+**Backup check before GO:** confirm the latest backup is fresh and restore-tested — either
+the newest **off-site** archive:
+`deploy/scripts/restore-drill.sh --env production --from-remote --max-age-hours 26 --yes`
+or an explicit **local** archive (no Google Drive required for this temporary path):
+`deploy/scripts/restore-drill.sh --env production --file /opt/fahimni/production/backups/db-<UTC>.dump --allow-unencrypted --max-age-hours 26 --yes`
+(see §4A for the exact evidence to record). The drill refuses a stale archive, so a GO
+without its `restore drill: OK` + freshness output is not allowed — `FAHIMNI_DB_BACKUP_VERIFIED=1`
+must never be set on the strength of the variable alone. A locally-stored archive does **not**
+protect against losing the server; keep an off-site copy too. The deploy script also backs up
+the env file itself.
 
-**NO-GO / stop if:** any §1 gate regresses, the env backup cannot be written, the
-LooksLoop baseline differs, or approvals are withheld (then §5/§6 must not run).
+**NO-GO / stop if:** any §1 gate regresses; the env backup cannot be written; the
+LooksLoop baseline differs; an **unapproved** pending migration is detected; the
+permission diff is not confined to `cards.export`/Teacher; the restore drill cannot prove a
+recent backup; or approvals are withheld (then §5 must not run).
 
 ---
 
-## 9. DO-NOT-TOUCH (enforced)
+## 8. DO-NOT-TOUCH (enforced)
 
-- Delete data · `migrate:fresh` · `docker compose down -v` · replace the DB.
+- Delete data · `migrate:fresh` · `migrate:rollback` · `docker compose down -v` · replace the DB.
+- The generic `docker compose run migrate` service / `plans:sync` for this release.
+- Run `RolePermissionSeeder` (or `DatabaseSeeder`) whole in production.
+- Run `CostRulesSeeder` in production, or change any selling price / actual cost.
 - Change DNS / Caddy / Firewall / Cloudflare WAF (review only).
-- Edit selling prices or existing-customer entitlements (separate proposal).
 - Enable Freemius or any real payment.
 - Move auth tokens into URLs or `localStorage`; disable any security control.
 - Deploy an older tree over newer fixes (the script hard-fails on a checkout without
@@ -197,12 +464,13 @@ LooksLoop baseline differs, or approvals are withheld (then §5/§6 must not run
 
 ---
 
-## 10. Open items carried into release (documented, not blocking the brand/session fix)
+## 9. Open items carried into release
 
 | # | Item | Owner action |
 | --- | --- | --- |
-| O1 | `video_watch_minutes_limit` missing from FeatureCatalog (falls back to delivery) | separate pricing proposal |
+| O1 | `video_watch_minutes_limit` missing from FeatureCatalog (falls back to delivery) | `docs/COST_RULES_GAP_REPORT.md` C4 — separate pricing proposal |
 | O2 | `PlansSeeder` vs `SubscriptionPlanSeeder` mismatch | separate proposal |
-| O3 | `CostRulesSeeder` uses EU/US Bunny rates, not MENA | separate proposal |
+| O3 | `CostRulesSeeder` uses EU/US Bunny rates, not MENA | `docs/COST_RULES_GAP_REPORT.md` — report only, no change |
 | O4 | `SANCTUM_STATEFUL_DOMAINS` lacks `*.fahimni.me` (tenant subdomain BFF calls non-stateful) | env change, approval |
-| O5 | `cards.export` needs §6(2) | covered by gate 4B |
+| O5 | `cards.export` missing in some DBs | **closed** — additive `permissions:ensure-cards-export` (§4B) |
+| O6 | Production `provider_cost_rules` values unverified | run §2 of `docs/COST_RULES_GAP_REPORT.md` |

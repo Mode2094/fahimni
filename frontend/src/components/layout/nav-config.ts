@@ -1,10 +1,10 @@
 import type { LucideIcon } from 'lucide-react';
 import {
-  LayoutDashboard, CreditCard, Layers, Users, GraduationCap, Ticket, Wallet, ReceiptText, LifeBuoy, Shield, Settings, BookOpen,
-  ClipboardList, Video, CalendarDays, CalendarClock, HandCoins, FileQuestion,
+  LayoutDashboard, Layers, Users, GraduationCap, Ticket, Wallet, ReceiptText, LifeBuoy, Shield, Settings, BookOpen,
+  ClipboardList, Video, CalendarDays, CalendarClock, HandCoins,
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
-  BookMarked, Medal, CalendarCheck, UserCircle2, DatabaseBackup, Home, HelpCircle,
-  ServerCog, Radio, Smartphone, Activity, Bug, Database,
+  BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
+  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -19,7 +19,7 @@ export type NavItem = {
   hideWithApp?: boolean;
   /** extra path prefixes that should highlight this item */
   match?: string[];
-  badge?: 'notifications' | 'messages';
+  badge?: 'notifications' | 'messages' | 'adminNotifications';
 };
 export type NavGroup = { title?: { ar: string; en: string }; items: NavItem[] };
 
@@ -31,16 +31,15 @@ export const ADMIN_NAV: NavGroup[] = [
     ],
   },
   {
-    title: { ar: 'الاشتراكات والخطط', en: 'Subscriptions' },
+    title: { ar: 'المعلمون والاشتراكات', en: 'Teachers & Subscriptions' },
     items: [
-      { href: '/admin/subscriptions', icon: CreditCard, ar: 'الاشتراكات', en: 'Subscriptions' },
-      { href: '/admin/plans', icon: Layers, ar: 'الخطط', en: 'Plans' },
+      { href: '/admin/teachers', icon: Users, ar: 'المعلمون والاشتراكات', en: 'Teachers & Subscriptions', match: ['/admin/teachers', '/admin/subscriptions'] },
+      { href: '/admin/plans', icon: Layers, ar: 'الخطط والأسعار', en: 'Plans & Pricing' },
     ],
   },
   {
     title: { ar: 'المستخدمون', en: 'Users' },
     items: [
-      { href: '/admin/teachers', icon: Users, ar: 'المعلمون', en: 'Teachers' },
       { href: '/admin/students', icon: GraduationCap, ar: 'الطلاب', en: 'Students' },
       { href: '/admin/quran-requests', icon: BookOpen, ar: 'مدرسو القرءان', en: 'Quran Teachers' },
     ],
@@ -61,7 +60,7 @@ export const ADMIN_NAV: NavGroup[] = [
     title: { ar: 'التشغيل', en: 'Operations' },
     items: [
       { href: '/admin/tickets', icon: LifeBuoy, ar: 'الدعم الفني', en: 'Support Tickets' },
-      { href: '/admin/backups', icon: DatabaseBackup, ar: 'النسخ الاحتياطي', en: 'Backups' },
+      { href: '/admin/teacher-notifications', icon: BellRing, ar: 'إشعارات المعلمين', en: 'Teacher Notifications' },
     ],
   },
   {
@@ -88,6 +87,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/teacher/dashboard', icon: LayoutDashboard, ar: 'لوحة التحكم', en: 'Dashboard' },
       { href: '/courses', icon: BookOpen, ar: 'الكورسات', en: 'Courses', match: ['/courses'] },
       { href: '/students', icon: Users, ar: 'الطلاب', en: 'Students' },
+      { href: '/teacher/terms', icon: CalendarDays, ar: 'الفصول الدراسية', en: 'Academic Terms', match: ['/teacher/terms'] },
       { href: '/teacher/cards', icon: Ticket, ar: 'البطاقات', en: 'Cards' },
       { href: '/teacher/student-app', icon: Smartphone, ar: 'تطبيق الطلاب', en: 'Student App', hideWithApp: true },
     ],
@@ -102,10 +102,9 @@ export const TEACHER_NAV: NavGroup[] = [
         en: 'Appointments & Sessions',
         match: ['/teacher/appointments', '/teacher/services'],
       },
-      { href: '/teacher/live', icon: Radio, ar: 'البث المباشر', en: 'Live Sessions' },
+      { href: '/teacher/live', icon: Radio, ar: 'البث المباشر', en: 'Live Sessions', gate: 'live_stream_enabled' },
       { href: '/teacher/schedule', icon: CalendarDays, ar: 'الدروس المجدولة', en: 'Scheduled Lessons', gate: 'scheduled_lessons_enabled' },
       { href: '/teacher/exams', icon: ClipboardList, ar: 'الاختبارات', en: 'Exams' },
-      { href: '/teacher/questions', icon: FileQuestion, ar: 'بنك الأسئلة', en: 'Question Bank', gate: 'question_bank_enabled' },
       { href: '/teacher/staff', icon: UsersRound, ar: 'فريق العمل', en: 'Team', gate: 'multi_teacher_enabled' },
     ],
   },
@@ -115,6 +114,8 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/blog', icon: Newspaper, ar: 'المدونة', en: 'Blog', gate: 'blog_enabled' },
       { href: '/community', icon: MessagesSquare, ar: 'المجتمع', en: 'Community', gate: 'community_enabled', match: ['/community'] },
       { href: '/announcements', icon: Megaphone, ar: 'الإعلانات', en: 'Announcements' },
+      { href: '/teacher/notifications', icon: BellRing, ar: 'إشعارات الإدارة', en: 'Platform Notifications', badge: 'adminNotifications' },
+      { href: '/teacher/assistant', icon: Bot, ar: 'اسألني عن المنصة', en: 'Ask about the platform' },
     ],
   },
   {

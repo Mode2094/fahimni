@@ -608,7 +608,7 @@ class LiveSessionController extends Controller
 
         return Enrollment::where('course_id', $courseId)
             ->where('user_id', $request->user()->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->exists();
     }
@@ -675,7 +675,7 @@ class LiveSessionController extends Controller
         $students = Enrollment::withoutTenant()
             ->where('tenant_id', $session->tenant_id)
             ->where('course_id', $session->course_id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->with('student')
             ->get()
             ->pluck('student')

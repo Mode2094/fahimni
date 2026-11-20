@@ -22,7 +22,7 @@ class SectionController extends Controller
             ->withCount('lessons')
             ->when(! $this->isTenantStaff($request), function ($q) use ($request) {
                 $enrolledCourseIds = Enrollment::where('user_id', $request->user()->id)
-                    ->whereIn('status', ['active', 'completed'])
+                    ->effective()
                     ->pluck('course_id');
 
                 $q->whereIn('course_id', $enrolledCourseIds);

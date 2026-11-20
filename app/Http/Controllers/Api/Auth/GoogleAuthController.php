@@ -4,13 +4,13 @@ namespace App\Http\Controllers\Api\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformSetting;
-use App\Models\SubscriptionPlan;
 use App\Models\TeacherInvitation;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
-use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\User;
+use App\Plans\TeacherTrialProgram;
+use App\Services\TenantSlugService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -125,7 +125,10 @@ class GoogleAuthController extends Controller
             return $this->redirectToFrontend($frontend, $role, ['error' => 'no_email']);
         }
 
-        $user = User::where('email', $email)->first();
+        // Include soft-deleted rows: a deleted account keeps its address in the
+        // unique index, so a plain lookup would miss it and the later INSERT
+        // would collide (the `error=retry` dead-end).
+        $user = User::findByEmail($email);
         $existingTenant = $user ? $user->tenantPivots()->first() : null;
 
         // ── Gates. Decided BEFORE any write so a rejected attempt never
@@ -146,6 +149,13 @@ class GoogleAuthController extends Controller
             && ! ($user && $user->hasRole('Teacher'))
             && ! $this->teacherRegistrationAllowed($email)) {
             return $this->redirectToFrontend($frontend, $role, ['error' => 'teacher_registration_disabled']);
+        }
+
+        // The verified Google email proves ownership of a soft-deleted account:
+        // reactivate it (non-destructively, with its workspaces) so login never
+        // dead-ends on the reserved address.
+        if ($user && $user->trashed()) {
+            $user->restoreWithWorkspaces();
         }
 
         if ($user && ! $user->is_active) {
@@ -174,10 +184,17 @@ class GoogleAuthController extends Controller
         //    fails the whole thing rolls back: no orphan user without a
         //    tenant, no tenant without an owner membership. ────────────────
         try {
-            [$user, $tenant] = DB::transaction(function () use ($email, $name, $regData, $role, $wantsStaffTenant) {
+            $trialStarted = false;
+            [$user, $tenant] = DB::transaction(function () use ($email, $name, $regData, $role, $wantsStaffTenant, &$trialStarted) {
                 // Re-read inside the transaction and take a row lock so
                 // concurrent callbacks converge on one row.
-                $user = User::where('email', $email)->lockForUpdate()->first();
+                $user = User::withTrashed()->where('email', $email)->lockForUpdate()->first();
+
+                if ($user && $user->trashed()) {
+                    // A concurrent path may have soft-deleted mid-flight; the
+                    // verified email still owns it, so reactivate.
+                    $user->restoreWithWorkspaces();
+                }
 
                 if (! $user) {
                     $user = User::create([
@@ -209,7 +226,7 @@ class GoogleAuthController extends Controller
                     }
                 }
 
-                return [$user, $this->ensureWorkspaceTenant($user, $name, $email, $wantsStaffTenant)];
+                return [$user, $this->ensureWorkspaceTenant($user, $name, $email, $wantsStaffTenant, $trialStarted)];
             });
         } catch (QueryException $e) {
             // A concurrent callback won the race: the unique index rejected the
@@ -219,7 +236,7 @@ class GoogleAuthController extends Controller
                 throw $e;
             }
 
-            $user = User::where('email', $email)->first();
+            $user = User::findByEmail($email);
 
             if (! $user) {
                 Log::warning('google.callback_unique_collision');
@@ -237,7 +254,7 @@ class GoogleAuthController extends Controller
             Auth::guard('web')->login($user);
             $request->session()->regenerate();
 
-            return $this->redirectToFrontend($frontend, $role, ['step' => 'done']);
+            return $this->redirectToFrontend($frontend, $role, ['step' => 'done', 'trial_started' => $trialStarted ? '1' : '0']);
         }
 
         $token = $user->createToken('auth-token')->plainTextToken;
@@ -248,6 +265,7 @@ class GoogleAuthController extends Controller
             'token' => $token,
             'tenant_id' => $tenant?->id ?? '',
             'role' => $role,
+            'trial_started' => $trialStarted ? '1' : '0',
             'user' => json_encode([
                 'id'    => $user->id,
                 'name'  => $user->name,
@@ -269,7 +287,7 @@ class GoogleAuthController extends Controller
      * Column names follow the real schema (tenants.owner_id / tenants.email /
      * tenants.status) — NOT owner_user_id / is_active, which do not exist.
      */
-    private function ensureWorkspaceTenant(User $user, string $name, string $email, bool $wantsStaffTenant): ?Tenant
+    private function ensureWorkspaceTenant(User $user, string $name, string $email, bool $wantsStaffTenant, bool &$trialStarted = false): ?Tenant
     {
         // Already a member of some tenant → that is the user's workspace.
         $membership = $user->tenantPivots()->first();
@@ -283,15 +301,14 @@ class GoogleAuthController extends Controller
             return null;
         }
 
-        $tenant = Tenant::create([
+        $tenant = app(TenantSlugService::class)->createTenant([
             'id' => UuidV7::generate(),
             'name' => $name.' '.__('Platform'),
             'type' => 'tutor',
-            'slug' => (Str::slug($name) ?: 'platform').'-'.Str::random(6),
             'email' => $email,
             'owner_id' => $user->id,
             'status' => 'active',
-        ]);
+        ], $name);
 
         TenantSetting::create([
             'id' => UuidV7::generate(),
@@ -314,23 +331,12 @@ class GoogleAuthController extends Controller
             $user->assignRole(Role::findOrCreate('Teacher', 'web'));
         }
 
-        // Registration = immediate 7-day trial on the cheapest active plan,
-        // so the new teacher is not instantly blocked by the subscription
-        // gate. Mirrors AuthController::register().
-        $trialPlan = SubscriptionPlan::where('is_active', true)->orderBy('monthly_price')->first();
-
-        if ($trialPlan) {
-            TenantSubscription::create([
-                'id' => UuidV7::generate(),
-                'tenant_id' => $tenant->id,
-                'plan_id' => $trialPlan->id,
-                'status' => 'trialing',
-                'billing_cycle' => 'monthly',
-                'starts_at' => now(),
-                'trial_ends_at' => now()->addDays(max(1, (int) $trialPlan->trial_days)),
-                'auto_renew' => true,
-            ]);
-        }
+        // منح التجربة المجانية عبر البرنامج المركزي فقط (نفس قواعد التسجيل
+        // بالبريد): يخضع للمفتاح الرئيسي وعداد المقاعد. عند الإيقاف أو نفاد
+        // المقاعد لا يُنشأ اشتراك، ويبقى الحساب «بانتظار الدفع». Mirror of
+        // AuthController::register().
+        $trialStarted = app(TeacherTrialProgram::class)
+            ->grantTrial($user, $tenant->id, 'google', true) !== null;
 
         return $tenant;
     }

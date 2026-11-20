@@ -26,6 +26,9 @@ class SubscriptionPlanResource extends JsonResource
             'freemius_yearly_plan_id' => $this->metadata['freemius_yearly_plan_id'] ?? null,
             'freemius_monthly_pricing_id' => $this->metadata['freemius_monthly_pricing_id'] ?? null,
             'freemius_yearly_pricing_id' => $this->metadata['freemius_yearly_pricing_id'] ?? null,
+            // Last CONFIRMED Freemius price per cycle (stored at publish time;
+            // no network call). Used to render the admin sync badges.
+            'freemius_sync_summary' => $this->metadata['freemius_prices'] ?? null,
             'features' => PlanFeatureResource::collection($this->whenLoaded('features')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

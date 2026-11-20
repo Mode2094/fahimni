@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import TeacherDashboard from './page';
 import { useAuth } from '@/store';
@@ -27,6 +28,8 @@ const PLAN_SUCCESS = ok({
     videos: { used: 5, limit: 200 },
     live_sessions: { used: 1, limit: 50 },
     recordings: { used: 0, limit: 5 },
+    files: { used: 7, limit: 100 },
+    pdfs: { used: 2, limit: 50 },
   },
 });
 
@@ -116,6 +119,77 @@ describe('Teacher Dashboard', () => {
 
     expect(await screen.findByText('الدروس القادمة')).toBeInTheDocument();
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
+  });
+
+  it('replaced the always-empty media tiles with real file usage', async () => {
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    const { container } = render(<TeacherDashboard />);
+
+    expect(await screen.findByText('الوسائط والملفات')).toBeInTheDocument();
+    // The two dead tiles (always 0 / $0.00) are gone.
+    expect(screen.queryByText('التسجيلات')).toBeNull();
+    expect(screen.queryByText('التكلفة التقديرية (الشهر)')).toBeNull();
+    expect(container.textContent).not.toContain('$0.00');
+    // Real counted resources replace them.
+    expect(screen.getByText('الملفات')).toBeInTheDocument();
+    expect(screen.getByText('ملفات PDF')).toBeInTheDocument();
+    expect(screen.getByText('7 / 100')).toBeInTheDocument();
+    expect(screen.getByText('2 / 50')).toBeInTheDocument();
+  });
+
+  it('shows the platform publish card with the teacher link and a settings shortcut', async () => {
+    vi.stubGlobal('fetch', routeFetch({
+      ...FULL_SUCCESS,
+      '/teacher/domain': () => ok({ slug: 'sami', page_url: 'https://fahimni.me/t/sami', domain: null, verified: false }),
+    }));
+
+    const { container } = render(<TeacherDashboard />);
+
+    expect(await screen.findByText('رابط منصتك')).toBeInTheDocument();
+    // The link is shown without the scheme, LTR-isolated, and openable.
+    expect(screen.getByText('fahimni.me/t/sami')).toBeInTheDocument();
+    expect(container.querySelector('a[href="https://fahimni.me/t/sami"]')).toBeTruthy();
+    // The quick route into the platform settings that the teacher asked for.
+    expect(container.querySelector('a[href="/teacher/settings"]')).toBeTruthy();
+  });
+
+  it('lays out quick actions and a 2×2 statistics grid that links to real pages', async () => {
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    const { container } = render(<TeacherDashboard />);
+    await screen.findByText(/أ\. سامي/);
+
+    // The two primary quick actions are present and point somewhere real.
+    expect(screen.getByRole('button', { name: /إنشاء كورس/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /إدارة الكورسات/ })).toBeInTheDocument();
+
+    // Every statistic keeps its real destination.
+    expect(container.querySelector('a[href="/students"]')).toBeTruthy();
+    expect(container.querySelectorAll('a[href="/courses"]').length).toBeGreaterThan(0);
+    expect(container.querySelector('a[href="/analytics"]')).toBeTruthy();
+
+    // The statistics container is 2-up on phones and 4-up on desktop.
+    const statsGrid = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.className.includes('grid-cols-2') && d.className.includes('lg:grid-cols-4'),
+    );
+    expect(statsGrid).toBeTruthy();
+  });
+
+  it('collapses the lower sections on phones and expands them on tap', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    render(<TeacherDashboard />);
+    await screen.findByText('استخدام خطتك');
+
+    // On a phone the plan-usage section starts collapsed…
+    const header = screen.getByRole('button', { name: /استخدام خطتك/ });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+
+    // …and opens when the teacher taps it.
+    await user.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('switches every label to English when the locale is English', async () => {

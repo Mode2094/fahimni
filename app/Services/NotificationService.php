@@ -177,26 +177,31 @@ class NotificationService
         string $audience,
         ?string $courseId = null,
     ): Collection {
-        $users = DB::table('tenant_user')
+        // Course targeting is enrolment-based, not role-based, so it is
+        // resolved on its own (and already returns hydrated User models).
+        if ($audience === 'course') {
+            return $this->resolveCourseAudience($tenantId, $courseId);
+        }
+
+        $query = DB::table('tenant_user')
             ->where('tenant_id', $tenantId)
             ->where('status', 'active')
             ->join('users', 'users.id', '=', 'tenant_user.user_id')
             ->whereNull('users.deleted_at')
             ->select('users.*');
 
-        $users = match ($audience) {
-            'students' => (clone $users)->whereIn('tenant_user.role', ['student', 'parent']),
-            'teachers' => (clone $users)->whereIn('tenant_user.role', [
+        $query = match ($audience) {
+            'students' => $query->whereIn('tenant_user.role', ['student', 'parent']),
+            'teachers' => $query->whereIn('tenant_user.role', [
                 'teacher', 'owner', 'admin',
                 'principal', 'vice_principal', 'supervisor',
                 'accountant', 'student_affairs', 'manager', 'assistant',
             ]),
-            'admins' => (clone $users)->where('tenant_user.role', 'admin'),
-            'course' => $this->resolveCourseAudience($tenantId, $courseId),
-            default => $users,
+            'admins' => $query->where('tenant_user.role', 'admin'),
+            default => $query,
         };
 
-        return $users
+        return $query
             ->where('users.is_active', true)
             ->get()
             ->map(fn ($row) => (new User)->newFromBuilder((array) $row));
@@ -211,6 +216,11 @@ class NotificationService
         $studentIds = DB::table('enrollments')
             ->where('tenant_id', $tenantId)
             ->where('course_id', $courseId)
+            // Only currently-effective enrollees: an archived term's history
+            // must not deliver this course's messages to past students.
+            ->whereIn('status', ['active', 'completed'])
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->distinct()
             ->pluck('user_id');
 
         $teacherIds = DB::table('tenant_user')
@@ -225,7 +235,7 @@ class NotificationService
             ->where('is_active', true)
             ->whereNull('deleted_at')
             ->get()
-            ->mapInto(User::class);
+            ->map(fn ($row) => (new User)->newFromBuilder((array) $row));
     }
 
     /**
@@ -320,8 +330,21 @@ class NotificationService
             $query->where('tenant_id', $tenantId);
         }
 
-        return $query->orderByDesc('created_at')
+        $paginator = $query->orderByDesc('created_at')
             ->paginate($perPage);
+
+        // Normalise the JSON `data` payload so clients receive an object
+        // (with e.g. action_url / announcement_id) instead of a raw string.
+        $paginator->getCollection()->transform(function ($row) {
+            if (isset($row->data) && is_string($row->data)) {
+                $decoded = json_decode($row->data, true);
+                $row->data = is_array($decoded) ? $decoded : [];
+            }
+
+            return $row;
+        });
+
+        return $paginator;
     }
 
     public function unreadCount(string $userId, ?string $tenantId = null): int

@@ -57,7 +57,7 @@ class FreemiusGateway
     }
 
     /**
-     * @return array{enabled: bool, product_id: string, api_token: string, secret_key: string, public_key: string, api_url: string, checkout_url: string, sandbox: bool}
+     * @return array{enabled: bool, product_id: string, api_token: string, secret_key: string, public_key: string, api_url: string, checkout_url: string, sandbox: bool, developer_id: string, developer_public_key: string, developer_secret_key: string}
      */
     public static function config(): array
     {
@@ -67,6 +67,10 @@ class FreemiusGateway
             'api_token' => (string) config('services.freemius.api_token', ''),
             'secret_key' => (string) config('services.freemius.secret_key', ''),
             'public_key' => (string) config('services.freemius.public_key', ''),
+            // Developer scope — environment only. Needed to publish prices.
+            'developer_id' => (string) config('services.freemius.developer_id', ''),
+            'developer_public_key' => (string) config('services.freemius.developer_public_key', ''),
+            'developer_secret_key' => (string) config('services.freemius.developer_secret_key', ''),
             // Non-secret overrides — admin-editable via platform_settings.
             'product_id' => (string) PlatformSetting::get('freemius_product_id', config('services.freemius.product_id', '')),
             'api_url' => rtrim((string) PlatformSetting::get('freemius_api_url', config('services.freemius.api_url', 'https://api.freemius.com')), '/'),
@@ -80,6 +84,21 @@ class FreemiusGateway
         $c = self::config();
 
         return $c['api_token'] !== '' && $c['secret_key'] !== '' && $c['product_id'] !== '';
+    }
+
+    /**
+     * Whether developer-scope credentials are present. The product Bearer token
+     * can NEVER change a plan price (Freemius allows plan/pricing writes for the
+     * developer scope only); publishing therefore requires the developer
+     * public + secret key pair from Dashboard → My Profile → Keys.
+     */
+    public static function developerConfigured(): bool
+    {
+        $c = self::config();
+
+        return $c['developer_id'] !== ''
+            && $c['developer_public_key'] !== ''
+            && $c['developer_secret_key'] !== '';
     }
 
     public static function productId(): string
@@ -105,6 +124,13 @@ class FreemiusGateway
 
     /**
      * Build a Hosted Checkout link (direct checkout link).
+     *
+     * Official URL schema:
+     *   {checkout}/product/{product_id}/plan/{plan_id}/?<Buy Button options>
+     *
+     * `$extra` carries documented Buy Button options as query params. To charge
+     * the verified pricing we pass `pricing_id` and `billing_cycle`
+     * (monthly|annual) plus `currency=usd` — see the caller.
      *
      * The email is prefilled and marked read-only so the purchase is made
      * with the same customer email as in our system.
@@ -295,7 +321,12 @@ class FreemiusGateway
     /**
      * Generate an upgrade / plan-change / payment-method checkout link.
      *
-     * @param  array{plan_id?: string, billing_cycle?: string, quota?: int, currency?: string, is_payment_method_update?: bool}  $params
+     * Official body (POST .../licenses/{id}/checkout/link.json):
+     *   plan_id, billing_cycle (monthly|annual|lifetime), quota,
+     *   is_payment_method_update. There is no pricing_id/currency here — the
+     *   caller must have verified the target plan price first.
+     *
+     * @param  array{plan_id?: string, billing_cycle?: string, quota?: int|string, is_payment_method_update?: bool}  $params
      * @return array{url: string, settings: array, expires: string}|null
      */
     public static function upgradeCheckoutLink(string $licenseId, array $params): ?array
@@ -348,6 +379,305 @@ class FreemiusGateway
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    // ─── Plan pricing: read (product scope) + write (developer scope) ───
+
+    /**
+     * List every pricing of a plan (PRODUCT-scope read). Returns the raw
+     * `pricing` array, or null when none could be read (transport/HTTP error).
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    public static function getPlanPricing(string $planId): ?array
+    {
+        $productId = self::productId();
+
+        if ($productId === '' || $planId === '') {
+            return null;
+        }
+
+        try {
+            $res = self::client()->get("/v1/products/{$productId}/plans/{$planId}/pricing.json");
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (! $res->successful()) {
+            return null;
+        }
+
+        $json = $res->json();
+
+        if (! is_array($json)) {
+            return null;
+        }
+
+        $list = $json['pricing'] ?? (array_is_list($json) ? $json : null);
+
+        return is_array($list) ? array_values(array_filter($list, 'is_array')) : null;
+    }
+
+    /**
+     * Retrieve a single pricing by id (PRODUCT-scope read).
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function getPricing(string $planId, string $pricingId): ?array
+    {
+        $productId = self::productId();
+
+        if ($productId === '' || $planId === '' || $pricingId === '') {
+            return null;
+        }
+
+        try {
+            $res = self::client()->get("/v1/products/{$productId}/plans/{$planId}/pricing/{$pricingId}.json");
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (! $res->successful()) {
+            return null;
+        }
+
+        $json = $res->json();
+
+        if (! is_array($json)) {
+            return null;
+        }
+
+        if (isset($json['pricing']) && is_array($json['pricing'])) {
+            return $json['pricing'];
+        }
+
+        return $json !== [] ? $json : null;
+    }
+
+    /**
+     * Update a plan's pricing in Freemius using DEVELOPER-scope authentication.
+     *
+     * The product Bearer token does NOT authorize this operation. Developer
+     * scope uses Developer secret-key authentication: a signed `FS`/`FSP`
+     * header whose resource is the live `plugins/` route
+     * (`PUT /v1/developers/{dev}/plugins/{prod}/plans/{plan}/pricing/{id}.json`).
+     * See developerWrite() for the verified path/auth details.
+     *
+     * Never throws: returns a structured result the caller can act on honestly.
+     *
+     * @param  array<string, mixed>  $payload  e.g. ['monthly_price' => 59, 'currency' => 'usd']
+     * @return array{ok: bool, status: int, data: array<string, mixed>|null, error: ?string}
+     */
+    public static function updatePricing(string $planId, string $pricingId, array $payload): array
+    {
+        $c = self::config();
+
+        if (! self::developerConfigured()) {
+            return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'developer_credentials_missing'];
+        }
+
+        $productId = $c['product_id'];
+
+        if ($productId === '' || $planId === '' || $pricingId === '') {
+            return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'missing_ids'];
+        }
+
+        $path = "/v1/developers/{$c['developer_id']}/products/{$productId}/plans/{$planId}/pricing/{$pricingId}.json";
+
+        return self::developerWrite('PUT', $path, $payload);
+    }
+
+    /**
+     * Create a plan via the documented developer API
+     * (`POST /v1/developers/{dev}/products/{prod}/plans.json`).
+     *
+     * @param  array<string, mixed>  $payload  e.g. ['name' => 'starter', 'title' => 'Basic']
+     * @return array{ok: bool, status: int, data: array<string, mixed>|null, error: ?string}
+     */
+    public static function createPlan(array $payload): array
+    {
+        $c = self::config();
+
+        if (! self::developerConfigured() || $c['product_id'] === '') {
+            return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'developer_credentials_missing'];
+        }
+
+        $path = "/v1/developers/{$c['developer_id']}/products/{$c['product_id']}/plans.json";
+
+        return self::developerWrite('POST', $path, $payload);
+    }
+
+    /**
+     * Create a single pricing (carrying both `monthly_price` and `annual_price`)
+     * for a plan via the documented developer API
+     * (`POST /v1/developers/{dev}/products/{prod}/plans/{plan}/pricing.json`).
+     *
+     * @param  array<string, mixed>  $payload  e.g. ['monthly_price' => 49, 'annual_price' => 490, 'currency' => 'usd']
+     * @return array{ok: bool, status: int, data: array<string, mixed>|null, error: ?string}
+     */
+    public static function createPricing(string $planId, array $payload): array
+    {
+        $c = self::config();
+
+        if (! self::developerConfigured() || $c['product_id'] === '' || $planId === '') {
+            return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'developer_credentials_missing'];
+        }
+
+        $path = "/v1/developers/{$c['developer_id']}/products/{$c['product_id']}/plans/{$planId}/pricing.json";
+
+        return self::developerWrite('POST', $path, $payload);
+    }
+
+    /**
+     * List every plan of the product (PRODUCT-scope read; Bearer token).
+     * Returns the raw `plans` array, or null when it could not be read.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    public static function listPlans(): ?array
+    {
+        $productId = self::productId();
+
+        if ($productId === '') {
+            return null;
+        }
+
+        try {
+            $res = self::client()->get("/v1/products/{$productId}/plans.json");
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (! $res->successful()) {
+            return null;
+        }
+
+        $json = $res->json();
+
+        if (! is_array($json)) {
+            return null;
+        }
+
+        $list = $json['plans'] ?? (array_is_list($json) ? $json : null);
+
+        return is_array($list) ? array_values(array_filter($list, 'is_array')) : null;
+    }
+
+    /**
+     * Perform a DEVELOPER-scope write with the documented Developer secret-key
+     * authentication.
+     *
+     * `$documentedPath` is written with `products/`; the LIVE developer-scope
+     * route is registered under the `plugins/` alias, so it is rewritten here.
+     * (Verified against the live API: `POST .../products/{id}/plans.json`
+     * returns `400 not_implemented` "Invalid request path", while the same
+     * request under `plugins/` reaches the resource and only fails auth with a
+     * bogus signature → `401 Invalid Authorization header`.) The official legacy
+     * SDKs (freemius-php-sdk / freemius-node-sdk) likewise call `/plugins/...`
+     * with the signed `FS`/`FSP` header.
+     *
+     * Never throws and never auto-retries (money-affecting writes).
+     *
+     * @param  array<string, mixed>|null  $payload
+     * @return array{ok: bool, status: int, data: array<string, mixed>|null, error: ?string}
+     */
+    private static function developerWrite(string $method, string $documentedPath, ?array $payload): array
+    {
+        $c = self::config();
+        $method = strtoupper($method);
+        $contentType = 'application/json';
+        $json = $payload === null ? '' : (string) json_encode($payload, JSON_UNESCAPED_SLASHES);
+
+        if ($payload !== null && $json === '') {
+            return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'payload_encode_failed'];
+        }
+
+        $path = str_replace("/products/{$c['product_id']}", "/plugins/{$c['product_id']}", $documentedPath);
+        $contentMd5 = md5($json);
+        $date = date('r', time() - self::clockDiff());
+        $authType = ($c['developer_secret_key'] !== $c['developer_public_key']) ? 'FS' : 'FSP';
+        $signature = self::freemiusSignature($method, $contentMd5, $contentType, $date, $path, $c['developer_public_key'], $c['developer_secret_key']);
+
+        $headers = [
+            'Date' => $date,
+            'Content-MD5' => $contentMd5,
+            'Authorization' => "{$authType} {$c['developer_id']}:{$c['developer_public_key']}:{$signature}",
+        ];
+
+        try {
+            $res = Http::baseUrl($c['api_url'])
+                ->accept($contentType)
+                ->withHeaders($headers)
+                ->withBody($json, $contentType)
+                ->timeout(self::REQUEST_TIMEOUT)
+                ->connectTimeout(self::CONNECT_TIMEOUT)
+                // A money-affecting write: never auto-retry.
+                ->send($method, $path);
+        } catch (\Throwable) {
+            return ['ok' => false, 'status' => 0, 'data' => null, 'error' => 'transport_error'];
+        }
+
+        $data = null;
+
+        try {
+            $data = $res->json();
+        } catch (\Throwable) {
+            $data = null;
+        }
+
+        return [
+            'ok' => $res->successful(),
+            'status' => $res->status(),
+            'data' => is_array($data) ? ($data['pricing'] ?? $data) : null,
+            'error' => $res->successful() ? null : 'http_'.$res->status(),
+        ];
+    }
+
+    /**
+     * Freemius developer-scope request signature (official algorithm).
+     *
+     * NOTE: the official SDK base64url-encodes the HEX digest, so we mirror that
+     * exactly (not the raw bytes) to stay byte-compatible with the API.
+     */
+    public static function freemiusSignature(
+        string $method,
+        string $contentMd5,
+        string $contentType,
+        string $date,
+        string $resourcePath,
+        string $publicKey,
+        string $secretKey,
+    ): string {
+        $stringToSign = implode("\n", [strtoupper($method), $contentMd5, $contentType, $date, $resourcePath]);
+        $hex = hash_hmac('sha256', $stringToSign, $secretKey);
+
+        return rtrim(strtr(base64_encode($hex), '+/', '-_'), '=');
+    }
+
+    /**
+     * Clock difference (seconds) between this server and the Freemius API,
+     * derived from the public `ping.json` endpoint. Falls back to 0 on failure.
+     */
+    private static function clockDiff(): int
+    {
+        static $diff = null;
+
+        if ($diff !== null) {
+            return $diff;
+        }
+
+        try {
+            $res = Http::timeout(self::CONNECT_TIMEOUT)
+                ->connectTimeout(self::CONNECT_TIMEOUT)
+                ->get(self::config()['api_url'].'/v1/ping.json');
+
+            $timestamp = $res->successful() ? $res->json('timestamp') : null;
+            $diff = $timestamp !== null ? time() - (int) strtotime((string) $timestamp) : 0;
+        } catch (\Throwable) {
+            $diff = 0;
+        }
+
+        return $diff;
     }
 
     /**

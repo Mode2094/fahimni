@@ -36,7 +36,7 @@ export default function MyLearningPage() {
       dashboardApi.studentLessons().catch(() => [] as any[]),
       favoritesApi.list().catch(() => [] as any[]),
     ]).then(([enrolled, lessonList, favList]) => {
-      setEnrollments(enrolled.map((e: any) => ({ id: e.course_id || e.id, title: e.course?.title || 'Course', progress: Number(e.progress_percent) || 0, status: e.status || 'active' })));
+      setEnrollments(enrolled.map((e: any) => ({ id: e.course_id || e.id, title: e.course?.title || t('كورس', 'Course'), progress: Number(e.progress_percent) || 0, status: e.status || 'active' })));
       setLessons(lessonList || []);
       setFavorites(new Set((favList || []).map((f: any) => f.id)));
     }).finally(() => setLoading(false));
@@ -47,7 +47,7 @@ export default function MyLearningPage() {
       enrollmentsApi.myCourses().catch(() => [] as any[]),
       dashboardApi.studentLessons().catch(() => [] as any[]),
     ]).then(([enrolled, lessonList]) => {
-      setEnrollments(enrolled.map((e: any) => ({ id: e.course_id || e.id, title: e.course?.title || 'Course', progress: Number(e.progress_percent) || 0, status: e.status || 'active' })));
+      setEnrollments(enrolled.map((e: any) => ({ id: e.course_id || e.id, title: e.course?.title || t('كورس', 'Course'), progress: Number(e.progress_percent) || 0, status: e.status || 'active' })));
       setLessons(lessonList || []);
     });
   };
@@ -143,7 +143,7 @@ export default function MyLearningPage() {
             {redeemed ? (
               <div className="w-full sm:w-auto pop-in flex items-center justify-between gap-3 rounded-2xl bg-emerald-500/15 border border-emerald-400/25 px-4 py-3 text-emerald-300 text-sm">
                 <span className="flex items-center gap-2"><CheckCircle className="h-5 w-5 shrink-0" />{t('تم التسجيل بنجاح — افتح كورسك الآن', 'Enrolled — open your course now')}</span>
-                <button onClick={() => setRedeemed(false)} className="text-white/50 hover:text-white transition-colors"><X className="h-4 w-4" /></button>
+                <button onClick={() => setRedeemed(false)} aria-label={t('إغلاق', 'Close')} className="text-white/50 hover:text-white transition-colors"><X className="h-4 w-4" /></button>
               </div>
             ) : (
               <div className="flex flex-col sm:flex-row gap-2.5 w-full sm:w-auto sm:min-w-[380px]">
@@ -152,6 +152,7 @@ export default function MyLearningPage() {
                   onChange={(e) => setCode(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && redeem()}
                   placeholder={t('XXXX-XXXX-XXXX', 'XXXX-XXXX-XXXX')}
+                  aria-label={t('رمز البطاقة', 'Card code')}
                   className="h-12 flex-1 bg-white/8 border-white/15 text-white placeholder:text-white/30 font-mono text-center tracking-[0.2em] rounded-xl"
                   dir="ltr"
                 />
@@ -274,6 +275,7 @@ export default function MyLearningPage() {
                   onClick={() => toggleFavorite(c.id)}
                   className="absolute top-1/2 -translate-y-1/2 end-4 flex h-11 w-11 items-center justify-center rounded-full bg-white border shadow-sm hover:scale-110 transition"
                   title={t('مفضلة', 'Favorite')}
+                  aria-label={favorites.has(c.id) ? t('إزالة من المفضلة', 'Remove from favorites') : t('إضافة للمفضلة', 'Add to favorites')}
                 >
                   <Heart className={`h-4 w-4 ${favorites.has(c.id) ? 'fill-rose-500 text-rose-500' : 'text-gray-400'}`} />
                 </button>

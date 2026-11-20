@@ -87,6 +87,17 @@ class RenewalAndGradingTest extends TenantTestCase
         ]);
 
         \Illuminate\Support\Facades\Http::fake([
+            // The new plan's displayed price must be provable against Freemius
+            // (checkout price guard) before the upgrade link is issued.
+            'api.freemius.test/v1/products/777/plans/2020/pricing.json' => \Illuminate\Support\Facades\Http::response([
+                'pricing' => [[
+                    'id' => '5005',
+                    'plan_id' => '2020',
+                    'currency' => 'usd',
+                    'monthly_price' => 20.00,
+                    'annual_price' => 200.00,
+                ]],
+            ]),
             'api.freemius.test/v1/products/777/licenses/LIC-UP/checkout/link.json' => \Illuminate\Support\Facades\Http::response([
                 'url' => 'https://checkout.freemius.test/upgrade/xyz',
                 'settings' => [],

@@ -140,6 +140,45 @@ mask_url() {
   printf '%s' "$1" | sed -E 's#(https?://)[^/@]+@#\1***@#'
 }
 
+# ── backup freshness ─────────────────────────────────────────────────────────
+# Age, in whole hours, of a backup archive whose basename carries the upload
+# timestamp `db-<UTC %Y%m%dT%H%M%SZ>` (see backup-offsite.sh). Prints the age.
+# Returns non-zero when the name has no parseable timestamp, so callers fail
+# closed. A future-dated stamp is clamped to 0 (clock skew is not freshness).
+backup_age_hours() {
+  local name ts epoch now age
+  name="$(basename "${1:-}")"
+  ts="$(printf '%s' "$name" | grep -oE 'db-[0-9]{8}T[0-9]{6}Z' | head -1)"
+  [[ -n "$ts" ]] || return 1
+  ts="${ts#db-}"
+  # BSD/macOS first, then GNU coreutils.
+  epoch="$(date -j -u -f '%Y%m%dT%H%M%SZ' "$ts" +%s 2>/dev/null)" \
+    || epoch="$(date -u -d "${ts:0:4}-${ts:4:2}-${ts:6:2}T${ts:9:2}:${ts:11:2}:${ts:13:2}Z" +%s 2>/dev/null)" \
+    || return 1
+  [[ -n "$epoch" ]] || return 1
+  now="$(date -u +%s)"
+  age=$(( (now - epoch) / 3600 ))
+  if (( age < 0 )); then age=0; fi
+  printf '%s' "$age"
+}
+
+# Fail closed unless $1 (a backup archive whose name carries the upload
+# timestamp) is at most $2 hours old. $2 empty or 0 disables the check, so the
+# default behaviour of the callers is unchanged.
+assert_backup_fresh() {
+  local file="$1" max="${2:-}" age
+  [[ -n "$max" && "$max" != "0" ]] || return 0
+  case "$max" in
+    *[!0-9]*) die "--max-age-hours must be a whole number of hours (got '$max')" ;;
+  esac
+  age="$(backup_age_hours "$file")" \
+    || die "cannot read a backup timestamp from '$(basename "$file")' — refusing --max-age-hours"
+  if (( age > max )); then
+    die "the backup is ${age}h old (> --max-age-hours ${max}h) — take a fresh backup before deploying"
+  fi
+  log "backup freshness ok: ${age}h old (limit ${max}h)"
+}
+
 # ── memory sizing ────────────────────────────────────────────────────────────
 # Normalize docker-style sizes (512mb, 256M, 1G, 1g) to MiB. A bare number is
 # treated as MiB. Returns non-zero on anything unparseable.

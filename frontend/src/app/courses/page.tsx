@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { BookOpen, Plus, Loader2, Trash2, Pencil, Eye, EyeOff, Layers, FileQuestion, ClipboardList, Users, Award } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { track } from '@/lib/analytics';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -64,6 +65,8 @@ export default function CoursesPage() {
       };
       const res = await fetch(`${API}/courses${editing ? `/${editing.id}` : ''}`, { method: editing ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
+      // First course ever for this teacher → fire the activation conversion.
+      if (!editing && courses.length === 0) track('first_course_created', { content_name: 'teacher_first_course' });
       toast.success(editing ? t('تم تحديث الكورس', 'Course updated') : t('تم إنشاء الكورس', 'Course created'));
       setShowForm(false); load();
     } catch { toast.error('Failed'); }

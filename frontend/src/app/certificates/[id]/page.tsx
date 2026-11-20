@@ -6,7 +6,8 @@ import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import CertificateView from '@/components/certificate/certificate-view';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ArrowRight, Loader2, Printer, Share2, Check, Link2, MessageCircle } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ArrowLeft, ArrowRight, Loader2, Printer, Share2, Check, Link2, MessageCircle, Award } from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -40,7 +41,7 @@ export default function CertificatePage({ params }: { params: Promise<{ id: stri
         await navigator.clipboard.writeText(verifyUrl);
         setCopied(true); setTimeout(() => setCopied(false), 2000);
         toast.success(t('تم نسخ رابط الشهادة', 'Certificate link copied'));
-      } catch { toast.error('Failed'); }
+      } catch { toast.error(t('فشل', 'Failed')); }
       return;
     }
     try {
@@ -50,18 +51,18 @@ export default function CertificatePage({ params }: { params: Promise<{ id: stri
       await navigator.clipboard.writeText(verifyUrl);
       setCopied(true); setTimeout(() => setCopied(false), 2000);
       toast.success(t('تم نسخ رابط الشهادة', 'Certificate link copied'));
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('فشل', 'Failed')); }
   };
 
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>;
-  if (!cert) return <div className="text-center py-16 text-gray-400">{t('الشهادة غير موجودة', 'Certificate not found')}</div>;
+  if (!cert) return <EmptyState icon={Award} title={t('الشهادة غير موجودة', 'Certificate not found')} />;
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex items-start justify-between flex-wrap gap-4 print:hidden">
         <div>
           <a href="/certificates" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-2">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />} {t('رجوع للشهادات', 'Back to certificates')}</a>
-          <h1 className="text-2xl font-bold">{cert.course_title}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">{cert.course_title}</h1>
           <p className="text-sm text-gray-400 mt-1">{t('شهادة إتمام مع تحقق QR', 'Completion certificate with QR verification')}</p>
         </div>
         <div className="flex items-center gap-2 print:hidden flex-wrap">

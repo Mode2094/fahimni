@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/store';
+import { track } from '@/lib/analytics';
 
 type Stage = 'working' | '2fa' | 'error';
 
@@ -104,6 +105,9 @@ function GoogleCallbackInner() {
 
     // Success marker: the OAuth callback already set the HttpOnly session
     // cookie — no token ever travels in the URL.
+    if (params.get('trial_started') === '1' && (roleHint || 'teacher') === 'teacher') {
+      track('trial_start', { content_name: 'teacher_trial' });
+    }
     void hydrateSession();
   }, [fail, hydrateSession]);
 

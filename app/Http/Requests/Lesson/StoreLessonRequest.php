@@ -24,6 +24,8 @@ class StoreLessonRequest extends FormRequest
             'is_free_preview' => 'nullable|boolean',
             'lesson_type' => 'nullable|string|max:20',
             'metadata' => 'nullable|array',
+            'metadata.exercise_exam_id' => ['nullable', 'string', new TenantScopedExists('exams')],
+            'metadata.exercise_position' => 'nullable|string|in:after_video,after_content',
         ];
     }
 }

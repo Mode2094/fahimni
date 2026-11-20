@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Mail\PlatformNotification;
 use App\Models\User;
 use App\Support\TOTP;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
@@ -69,6 +71,26 @@ class WebSessionAuthTest extends TenantTestCase
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $user->email);
+    }
+
+    public function test_web_login_exposes_the_users_tenants_for_client_scoping(): void
+    {
+        $tenant = $this->makeTenant();
+        $user = $this->makeWebUser();
+        $this->attachToTenant($user, $tenant, 'teacher');
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password-123',
+        ], $this->statefulHeaders());
+
+        $response->assertOk();
+
+        // Regression: login must expose the workspace list (like /auth/me and
+        // /auth/register). Without it the SPA cannot resolve X-Tenant-Id after a
+        // client-side login, so every tenant-scoped call — including
+        // /teacher/plan that drives the "choose a plan" gate — 400s.
+        $response->assertJsonPath('user.tenants.0.id', $tenant->id);
     }
 
     public function test_session_authenticates_tenant_scoped_endpoints(): void
@@ -185,6 +207,23 @@ class WebSessionAuthTest extends TenantTestCase
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $email);
+    }
+
+    public function test_registration_queues_a_welcome_email(): void
+    {
+        Mail::fake();
+
+        $email = 'welcome-'.strtolower(Str::random(8)).'@test.local';
+
+        $this->postJson('/api/v1/auth/register', [
+            'name' => 'New Welcome User',
+            'email' => $email,
+            'password' => 'password-123',
+            'password_confirmation' => 'password-123',
+        ], $this->statefulHeaders())->assertStatus(201);
+
+        // A welcome email must be queued (separate from the verification email).
+        Mail::assertQueued(PlatformNotification::class, fn ($mail) => $mail->hasTo($email));
     }
 
     public function test_google_callback_route_uses_the_web_session_stack(): void

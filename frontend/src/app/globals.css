@@ -414,3 +414,21 @@ html.rtl { direction: rtl; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
 .typing-dot { animation: typingDot 1.2s ease-in-out infinite; }
+
+/* ─── Accessibility: honor prefers-reduced-motion everywhere ─────────────
+   Teacher storefronts must never force motion on visitors who asked the OS
+   to reduce it. Disable the decorative enter/floating/shine animations and
+   make scroll-reveal content immediately visible. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .animate-in,
+  .float-y,
+  .float-y-delay,
+  .pop-in,
+  .bar-striped,
+  .eq-bar,
+  .typing-dot,
+  .cert-shine::after { animation: none !important; opacity: 1 !important; }
+  .cta-shine::after { display: none !important; }
+  .card-hover:hover { transform: none !important; }
+}

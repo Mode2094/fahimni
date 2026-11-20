@@ -146,14 +146,44 @@ class MonitoringController extends Controller
         return response()->json([
             'errors' => $errors->map(fn (FrontendError $e) => [
                 'id' => $e->id,
+                'tenant_id' => $e->tenant_id,
                 'app' => $e->app,
                 'type' => $e->type,
+                'name' => $this->errorName($e),
                 'message' => $e->message,
                 'url' => $e->url,
+                'method' => $e->method,
                 'status' => $e->status,
                 'stack_hash' => $e->stack_hash,
+                'user_agent' => $e->user_agent,
+                'locale' => $e->locale,
+                'metadata' => $e->metadata ?? [],
                 'created_at' => $e->created_at?->toIso8601String(),
             ]),
+            'total' => FrontendError::count(),
         ]);
+    }
+
+    /**
+     * اسم مقروء للخطأ: نوعه + أول سطر من رسالته (للعرض في القائمة قبل الفتح).
+     */
+    private function errorName(FrontendError $e): string
+    {
+        $typeLabels = [
+            'error' => 'خطأ جافاسكربت',
+            'unhandledrejection' => 'وعد مرفوض',
+            'http' => 'خطأ طلب شبكة',
+            'proxy' => 'خطأ وسيط السيرفر',
+            'console' => 'رسالة وحدة التحكم',
+        ];
+
+        $label = $typeLabels[$e->type] ?? ($e->type ?: 'خطأ');
+        $firstLine = trim(strtok((string) $e->message, "\n") ?: '');
+
+        if ($firstLine === '') {
+            return $label;
+        }
+
+        return $label.' — '.mb_substr($firstLine, 0, 90);
     }
 }

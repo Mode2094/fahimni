@@ -1,7 +1,7 @@
 'use client';
 
 /** زر تسجيل الدخول عبر Google — يبدأ OAuth بالدور المطلوب. */
-export default function GoogleLoginButton({ role, label, formData, onClick }: { role: 'teacher' | 'student' | 'admin'; label?: string; formData?: { name?: string; phone?: string }; onClick?: () => boolean | void | Promise<boolean | void> }) {
+export default function GoogleLoginButton({ role, label, formData, onClick, variant = 'outline' }: { role: 'teacher' | 'student' | 'admin'; label?: string; formData?: { name?: string; phone?: string }; onClick?: () => boolean | void | Promise<boolean | void>; variant?: 'outline' | 'primary' }) {
   const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
   const start = async () => {
@@ -31,7 +31,11 @@ export default function GoogleLoginButton({ role, label, formData, onClick }: { 
     <button
       type="button"
       onClick={start}
-      className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+      className={
+        variant === 'primary'
+          ? 'flex w-full items-center justify-center gap-2.5 rounded-xl border-2 border-teal-500/70 bg-white px-4 py-3 text-base font-bold text-slate-800 shadow-md shadow-teal-500/10 ring-2 ring-teal-500/10 transition hover:bg-teal-50/40 hover:shadow-lg'
+          : 'flex w-full items-center justify-center gap-2.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50'
+      }
     >
       <svg className="h-5 w-5" viewBox="0 0 48 48" aria-hidden="true">
         <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.3 6.5 29.4 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z" />

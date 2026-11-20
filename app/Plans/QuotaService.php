@@ -95,6 +95,13 @@ class QuotaService
      */
     public function status(string $tenantId): array
     {
+        // A tenant with no active plan/trial has *nothing* granted. Reporting
+        // "unlimited" for it would tell a pending-payment workspace that it owns
+        // every resource for free (the trial-disabled registration bug). The UI
+        // redirects these tenants to plan selection; this keeps the payload
+        // honest for every other consumer (mobile app, badges) too.
+        $active = $this->engine->snapshot($tenantId)['active'];
+
         $usage = $this->usage->all($tenantId);
         $status = [];
 
@@ -106,19 +113,33 @@ class QuotaService
                 $limitBytes = $limit === 'unlimited' || ! is_numeric($limit)
                     ? null
                     : (int) $limit * 1024 * 1024;
-                $status[$resource] = $this->entry($used, $limitBytes, 'bytes');
+                $status[$resource] = $this->entry($used, $limitBytes, 'bytes', $active);
 
                 continue;
             }
 
-            $status[$resource] = $this->entry($used, $limit, 'count');
+            $status[$resource] = $this->entry($used, $limit, 'count', $active);
         }
 
         return $status;
     }
 
-    private function entry(int|float $used, mixed $limit, string $unit): array
+    private function entry(int|float $used, mixed $limit, string $unit, bool $active = true): array
     {
+        // No active plan → locked, never unlimited. `limit: 0` so any consumer
+        // that ignores `locked` still renders zero rather than "∞".
+        if (! $active) {
+            return [
+                'used' => $used,
+                'limit' => 0,
+                'remaining' => 0,
+                'pct' => 0,
+                'unlimited' => false,
+                'locked' => true,
+                'unit' => $unit,
+            ];
+        }
+
         $unlimited = $limit === null || $limit === 'unlimited' || $limit === 0;
 
         if ($unlimited) {

@@ -41,6 +41,12 @@ deploy/state/
 frontend/.env.local
 frontend/.env.*.local
 
+# Playwright (interactive-question browser tests)
+/frontend/test-results
+/frontend/playwright-report
+/frontend/blob-report
+/frontend/.playwright
+
 # Agent tooling (local only)
 /.claude-flow/
 /.opencode/node_modules/

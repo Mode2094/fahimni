@@ -14,7 +14,7 @@ class ExamAttempt extends Model
     use BelongsToTenant, HasFactory, HasUuid;
 
     protected $fillable = [
-        'tenant_id', 'exam_id', 'user_id', 'attempt_number', 'status',
+        'tenant_id', 'exam_id', 'user_id', 'academic_term_id', 'attempt_number', 'status',
         'score', 'total_points', 'percentage', 'passed',
         'needs_review', 'reviewed_at', 'reviewed_by',
         'started_at', 'submitted_at', 'time_spent_seconds', 'metadata',
@@ -46,6 +46,11 @@ class ExamAttempt extends Model
     public function student(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function academicTerm(): BelongsTo
+    {
+        return $this->belongsTo(AcademicTerm::class);
     }
 
     public function answers(): HasMany

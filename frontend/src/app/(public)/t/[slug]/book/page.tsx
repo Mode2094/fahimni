@@ -104,8 +104,8 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
       <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
         <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button onClick={() => router.push(`/t/${slug}`)} className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100"><ChevronRight className="h-4 w-4" /></button>
-            <h1 className="font-bold">{t('حجز موعد', 'Book an appointment')}</h1>
+            <button onClick={() => router.push(`/t/${slug}`)} className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100" aria-label={t('رجوع', 'Back')}><ChevronRight className="h-4 w-4" /></button>
+            <h1 className="text-lg sm:text-xl font-bold">{t('حجز موعد', 'Book an appointment')}</h1>
           </div>
           {!loggedIn && (
             <a href={`/register?redirect=/t/${slug}/book`}><Button size="sm" className="rounded-full gap-1.5"><Lock className="h-3.5 w-3.5" />{t('تسجيل الدخول للحجز', 'Log in to book')}</Button></a>
@@ -138,14 +138,14 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
             {/* Step 1: choose service or appointment */}
             <Card className="border-0 shadow-sm">
               <CardContent className="p-6">
-                <h3 className="font-semibold mb-1">{t('١. اختر نوع الحجز', '1. Choose booking type')}</h3>
+                <h3 className="font-semibold mb-1">{t('1. اختر نوع الحجز', '1. Choose booking type')}</h3>
                 <div className="grid sm:grid-cols-2 gap-3">
                   <button onClick={startOver} className={`flex items-start gap-3 p-4 rounded-xl border text-right transition ${mode === 'appointment' ? 'border-teal-300 bg-teal-50' : 'border-gray-200 hover:border-gray-300'}`}>
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-100 shrink-0"><CalendarClock className="h-5 w-5 text-teal-700" /></div>
                     <div><p className="font-semibold text-sm">{t('موعد', 'Appointment')}</p><p className="text-xs text-gray-500 mt-0.5">{t('حجز موعد مباشر مع المعلم', 'Book a time directly with the teacher')}</p></div>
                   </button>
-                  <button onClick={() => setMode('service')} className={`flex items-start gap-3 p-4 rounded-xl border text-right transition ${mode === 'service' && !selectedService ? 'border-violet-300 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 shrink-0"><HandCoins className="h-5 w-5 text-violet-600" /></div>
+                  <button onClick={() => setMode('service')} className={`flex items-start gap-3 p-4 rounded-xl border text-right transition ${mode === 'service' && !selectedService ? 'border-teal-300 bg-teal-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-100 shrink-0"><HandCoins className="h-5 w-5 text-teal-700" /></div>
                     <div><p className="font-semibold text-sm">{t('خدمة مدفوعة', 'Paid service')}</p><p className="text-xs text-gray-500 mt-0.5">{t('استشارة أو جلسة فردية', 'Consultation or 1-on-1 session')}</p></div>
                   </button>
                 </div>
@@ -156,20 +156,20 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
             {mode === 'service' && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="p-6">
-                  <h3 className="font-semibold mb-3">{t('٢. اختر الخدمة', '2. Choose a service')}</h3>
+                  <h3 className="font-semibold mb-3">{t('2. اختر الخدمة', '2. Choose a service')}</h3>
                   {services.length === 0 ? (
                     <p className="text-sm text-gray-400">{t('لا توجد خدمات متاحة حالياً', 'No services available yet')}</p>
                   ) : (
                     <div className="space-y-3">
                       {services.map(s => (
-                        <button key={s.id} onClick={() => pickService(s)} className={`w-full flex items-start gap-3 p-4 rounded-xl border text-right transition ${selectedService?.id === s.id ? 'border-violet-300 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                          <div className="flex h-10 w-10 items-center justify-center rounded-xl shrink-0" style={{ backgroundColor: s.type === 'consultation' ? '#0d948815' : '#7c3aed15' }}>
-                            {s.type === 'consultation' ? <MessageSquareQuote className="h-5 w-5 text-teal-700" /> : <GraduationCap className="h-5 w-5 text-violet-600" />}
+                        <button key={s.id} onClick={() => pickService(s)} className={`w-full flex items-start gap-3 p-4 rounded-xl border text-right transition ${selectedService?.id === s.id ? 'border-teal-300 bg-teal-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl shrink-0" style={{ backgroundColor: '#0d948815' }}>
+                            {s.type === 'consultation' ? <MessageSquareQuote className="h-5 w-5 text-teal-700" /> : <GraduationCap className="h-5 w-5 text-teal-700" />}
                           </div>
                           <div className="flex-1">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <p className="font-semibold text-sm">{s.title}</p>
-                              <span className="font-bold text-violet-700 text-sm">{s.price} {s.currency}</span>
+                              <span className="font-bold text-teal-700 text-sm">{s.price} {s.currency}</span>
                             </div>
                             {s.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{s.description}</p>}
                             <div className="flex items-center gap-3 text-xs text-gray-400 mt-1">
@@ -189,25 +189,25 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
             {(mode === 'appointment' || selectedService) && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="p-6 space-y-4">
-                  <h3 className="font-semibold">{t('٣. اختر الموعد', '3. Choose a time')}</h3>
+                  <h3 className="font-semibold">{t('3. اختر الموعد', '3. Choose a time')}</h3>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>{t('المعلم', 'Teacher')}</Label>
-                      <select value={teacherId} onChange={(e) => { setTeacherId(e.target.value); setSelectedSlot(null); }} className="h-11 border border-gray-200 rounded-lg px-3 w-full text-sm bg-white">
+                      <Label htmlFor="teacher">{t('المعلم', 'Teacher')}</Label>
+                      <select id="teacher" value={teacherId} onChange={(e) => { setTeacherId(e.target.value); setSelectedSlot(null); }} className="h-11 border border-gray-200 rounded-lg px-3 w-full text-sm bg-white">
                         {teachers.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <Label>{t('التاريخ', 'Date')}</Label>
-                      <Input type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(e) => { setDate(e.target.value); setSelectedSlot(null); }} className="h-11" />
+                      <Label htmlFor="date">{t('التاريخ', 'Date')}</Label>
+                      <Input id="date" type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(e) => { setDate(e.target.value); setSelectedSlot(null); }} className="h-11" />
                     </div>
                   </div>
                   {selectedTeacher && (
                     <p className="text-xs text-gray-500 flex items-center gap-1.5"><User className="h-3 w-3" />{t('ستحجز مع', 'You are booking with')}: <b>{selectedTeacher.name}</b>{selectedService ? ` · ${selectedService.title}` : ''}</p>
                   )}
                   {date && (
-                    <div>
-                      <Label>{t('الأوقات المتاحة', 'Available slots')}</Label>
+                    <div role="group" aria-labelledby="slots-label">
+                      <Label id="slots-label">{t('الأوقات المتاحة', 'Available slots')}</Label>
                       {slotsLoading ? (
                         <div className="flex justify-center py-6"><Loader2 className="h-6 w-6 animate-spin text-teal-600" /></div>
                       ) : slots.length === 0 ? (
@@ -215,7 +215,7 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
                       ) : (
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-2">
                           {slots.map(sl => (
-                            <button key={sl.starts_at} onClick={() => setSelectedSlot(sl)} className={`py-2.5 rounded-xl border text-sm font-medium transition ${selectedSlot?.starts_at === sl.starts_at ? 'border-blue-400 bg-teal-600 text-white' : 'border-gray-200 hover:border-teal-300'}`}>
+                            <button key={sl.starts_at} onClick={() => setSelectedSlot(sl)} className={`py-2.5 rounded-xl border text-sm font-medium transition ${selectedSlot?.starts_at === sl.starts_at ? 'border-teal-400 bg-teal-600 text-white' : 'border-gray-200 hover:border-teal-300'}`}>
                               {sl.start_time}
                             </button>
                           ))}
@@ -225,16 +225,16 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
                   )}
                   {mode === 'service' && selectedService && (
                     <div className="space-y-2">
-                      <Label>{t('ملاحظات (اختياري)', 'Notes (optional)')}</Label>
-                      <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-[60px]" placeholder={t('مثال: عندي سؤال حول الجبر', 'e.g. I have a question about algebra')} />
+                      <Label htmlFor="notes">{t('ملاحظات (اختياري)', 'Notes (optional)')}</Label>
+                      <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-[60px]" placeholder={t('مثال: عندي سؤال حول الجبر', 'e.g. I have a question about algebra')} />
                     </div>
                   )}
                   {mode === 'service' && selectedService && availableGateways.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>{t('طريقة الدفع', 'Payment method')}</Label>
+                    <div className="space-y-2" role="group" aria-labelledby="payment-label">
+                      <Label id="payment-label">{t('طريقة الدفع', 'Payment method')}</Label>
                       <div className="flex gap-2 flex-wrap">
                         {availableGateways.map(([key, g]: any) => (
-                          <button key={key} onClick={() => setGateway(key)} className={`px-4 py-2.5 rounded-xl border text-sm font-medium capitalize transition ${gateway === key ? 'border-blue-400 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-500'}`}>
+                          <button key={key} onClick={() => setGateway(key)} className={`px-4 py-2.5 rounded-xl border text-sm font-medium capitalize transition ${gateway === key ? 'border-teal-400 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-500'}`}>
                             {key}
                           </button>
                         ))}
