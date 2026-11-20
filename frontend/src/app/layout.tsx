@@ -58,6 +58,11 @@ export const viewport: Viewport = {
   themeColor: '#0d9488',
   width: 'device-width',
   initialScale: 1,
+  // Opt into the full screen so `env(safe-area-inset-*)` is honoured on iPhone
+  // (notch + home indicator). The panel shell pads its own header/drawer and
+  // the assistant button respects the bottom inset, so nothing sits under the
+  // system UI.
+  viewportFit: 'cover',
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

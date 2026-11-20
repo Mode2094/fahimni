@@ -54,7 +54,7 @@ export default function AskMe() {
   return (
     <>
       {open && (
-        <div className="assistant-pop fixed bottom-24 start-6 z-50 flex h-[min(580px,calc(100dvh-9rem))] w-[390px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[1.5rem] bg-white shadow-2xl shadow-slate-900/20 ring-1 ring-slate-900/5">
+        <div className="assistant-pop fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] start-4 z-40 flex h-[min(580px,calc(100dvh-9rem))] w-[390px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-[1.5rem] bg-white shadow-2xl shadow-slate-900/20 ring-1 ring-slate-900/5 sm:start-6">
           {/* الترويسة */}
           <div className="relative shrink-0 bg-gradient-to-l from-indigo-700 via-indigo-600 to-violet-600 px-4 py-3.5 text-white">
             <div className="absolute -start-8 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
@@ -156,7 +156,7 @@ export default function AskMe() {
       )}
 
       {/* الزر العائم */}
-      <div className="fixed bottom-6 start-6 z-50 flex flex-col items-start gap-2">
+      <div className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] start-4 z-40 flex flex-col items-start gap-2 sm:start-6">
         {!open && !seen && (
           <button
             onClick={() => useAskMe.getState().openPanel()}
@@ -169,6 +169,7 @@ export default function AskMe() {
 
         <button
           onClick={toggle}
+          data-testid="askme-fab"
           aria-label={isAr ? 'اسألني' : 'Ask Me'}
           className={`group relative grid h-14 w-14 place-items-center rounded-full bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 text-white shadow-xl shadow-indigo-500/40 transition-all duration-300 hover:scale-110 hover:shadow-2xl hover:shadow-indigo-500/50 active:scale-95 ${open ? 'rotate-90' : ''}`}
         >
