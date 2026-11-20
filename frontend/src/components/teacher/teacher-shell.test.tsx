@@ -18,7 +18,6 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/components/layout/panel-shell', () => ({
   PanelShell: ({ children }: any) => <div data-testid="panel">{children}</div>,
 }));
-vi.mock('@/components/assistant/ask-me', () => ({ default: () => null }));
 
 function seedTeacher({ superAdmin = false } = {}) {
   useAuth.setState({

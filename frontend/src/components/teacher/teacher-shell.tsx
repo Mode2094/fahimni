@@ -4,7 +4,6 @@ import { usePlan } from '@/store/plan';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { PanelShell } from '@/components/layout/panel-shell';
-import AskMe from '@/components/assistant/ask-me';
 
 export default function TeacherShell({ children }: { children: React.ReactNode }) {
   const { check, user } = useAuth();
@@ -50,7 +49,6 @@ export default function TeacherShell({ children }: { children: React.ReactNode }
   return (
     <PanelShell variant="teacher">
       {children}
-      <AskMe />
     </PanelShell>
   );
 }

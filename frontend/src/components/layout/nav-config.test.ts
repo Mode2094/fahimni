@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { TEACHER_NAV } from './nav-config';
+import { TEACHER_NAV, isTeacherRoute } from './nav-config';
+
+/**
+ * The AI assistant lives in the teacher sidebar (not a floating button):
+ * there must be exactly one «اسألني عن المنصة» entry and it must open inside
+ * the teacher panel shell.
+ */
+describe('teacher assistant nav entry', () => {
+  const items = TEACHER_NAV.flatMap((g) => g.items);
+
+  it('exposes the assistant as a single sidebar item', () => {
+    const assistantItems = items.filter((i) => i.href === '/teacher/assistant');
+    expect(assistantItems).toHaveLength(1);
+    expect(assistantItems[0].ar).toBe('اسألني عن المنصة');
+    // No plan gate: the assistant is available on every plan.
+    expect(assistantItems[0].gate).toBeFalsy();
+  });
+
+  it('renders the assistant page inside the teacher shell', () => {
+    expect(isTeacherRoute('/teacher/assistant')).toBe(true);
+  });
+});
 
 /**
  * Regression: the "Live Sessions" nav item was rendered for every plan, so a
