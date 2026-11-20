@@ -15,23 +15,26 @@ import {
   ADMIN_NAV, TEACHER_NAV, STUDENT_NAV, STUDENT_BOTTOM_NAV, navLabelFor,
   type NavGroup, type NavItem,
 } from './nav-config';
+import { TeacherNotificationBell } from './teacher-notification-bell';
 
-/* ── Unread badges for notifications / messages ── */
+/* ── Unread badges for notifications / messages / platform notices ── */
 function useUnread() {
   const [notif, setNotif] = useState(0);
   const [chat, setChat] = useState(0);
+  const [adminNotif, setAdminNotif] = useState(0);
   useEffect(() => {
     const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
     const headers = { 'X-Tenant-Id': localStorage.getItem('tenant_id') || '', Accept: 'application/json' };
     const load = () => {
       fetch(`${API}/notifications/unread-count`, { headers }).then(r => r.json()).then(d => setNotif(d.unread_count || 0)).catch(() => {});
       fetch(`${API}/conversations/unread-total`, { headers }).then(r => r.json()).then(d => setChat(d.total || 0)).catch(() => {});
+      fetch(`${API}/admin-notifications/unread-count`, { headers }).then(r => r.json()).then(d => setAdminNotif(d.unread_count || 0)).catch(() => {});
     };
     load();
     const i = setInterval(load, 30000);
     return () => clearInterval(i);
   }, []);
-  return { notif, chat };
+  return { notif, chat, adminNotif };
 }
 
 type SidebarProps = {
@@ -46,13 +49,14 @@ function SidebarNav({ groups, collapsed, variant, showAccount = true }: SidebarP
   const { locale } = useLocale();
   const { user, logout } = useAuth();
   const { gates } = usePlan();
-  const { notif, chat } = useUnread();
+  const { notif, chat, adminNotif } = useUnread();
   const path = usePathname();
   const isAdmin = variant === 'admin';
 
   const badgeFor = (item: NavItem): number => {
     if (item.badge === 'notifications') return notif;
     if (item.badge === 'messages') return chat;
+    if (item.badge === 'adminNotifications') return adminNotif;
     return 0;
   };
 
@@ -267,6 +271,7 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
           <div className="ms-auto flex shrink-0 items-center gap-1.5">
             {settings.logo_url && <img src={settings.logo_url} alt="logo" className="hidden h-7 w-7 rounded-lg object-cover sm:block" />}
             {!settings.logo_url && <Image src="/logo.png" alt="logo" width={28} height={28} className="hidden h-7 w-7 rounded-lg object-cover sm:block" />}
+            {variant === 'teacher' && <TeacherNotificationBell />}
             <button
               onClick={() => setLocale(locale === 'ar' ? 'en' : 'ar')}
               className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted"

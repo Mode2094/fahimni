@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
+use App\Http\Controllers\Api\AdminTeacherNotificationController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\Api\AssignmentController;
@@ -64,6 +65,7 @@ use App\Http\Controllers\Api\StudentCertificateController;
 use App\Http\Controllers\Api\StudentProfileController;
 use App\Http\Controllers\Api\SubscriptionPlanController;
 use App\Http\Controllers\Api\TeacherAnalyticsController;
+use App\Http\Controllers\Api\TeacherAdminNotificationController;
 use App\Http\Controllers\Api\TeacherAvailabilityController;
 use App\Http\Controllers\Api\TeacherBlogController;
 use App\Http\Controllers\Api\TeacherBookingController;
@@ -372,6 +374,23 @@ Route::prefix('v1')->group(function () {
                 Route::put('tickets/{ticket}/status', [AdminController::class, 'ticketStatus']);
                 Route::put('tickets/{ticket}/assign', [AdminController::class, 'ticketAssign']);
 
+                // ─── Platform notifications to teachers (Super Admin) ──
+                // Separate from tenant announcements: audience is every
+                // eligible teacher account on the platform. Static segments
+                // are declared before the {id} wildcard.
+                Route::prefix('teacher-notifications')->group(function () {
+                    Route::get('/', [AdminTeacherNotificationController::class, 'index']);
+                    Route::post('/', [AdminTeacherNotificationController::class, 'store']);
+                    Route::get('teachers', [AdminTeacherNotificationController::class, 'teachers']);
+                    Route::post('recipients', [AdminTeacherNotificationController::class, 'recipients']);
+                    Route::post('contact', [AdminTeacherNotificationController::class, 'contact']);
+                    Route::get('{id}', [AdminTeacherNotificationController::class, 'show']);
+                    Route::put('{id}', [AdminTeacherNotificationController::class, 'update']);
+                    Route::post('{id}/send', [AdminTeacherNotificationController::class, 'send']);
+                    Route::post('{id}/retract', [AdminTeacherNotificationController::class, 'retract']);
+                    Route::delete('{id}', [AdminTeacherNotificationController::class, 'destroy']);
+                });
+
                 Route::get('error-logs', [AdminController::class, 'errorLogs']);
                 Route::delete('error-logs/{log}', [AdminController::class, 'errorLogDestroy']);
                 Route::post('error-logs/clear', [AdminController::class, 'errorLogsClear']);
@@ -484,6 +503,17 @@ Route::prefix('v1')->group(function () {
                 Route::post('{id}/read', [NotificationController::class, 'markAsRead']);
                 Route::post('read-all', [NotificationController::class, 'markAllAsRead']);
                 Route::get('unread-count', [NotificationController::class, 'unreadCount']);
+            });
+
+            // ─── Platform notifications from the Super Admin (teachers) ──
+            // Read-only for teachers: no delete route exists by design.
+            Route::prefix('admin-notifications')->middleware('role:teacher,owner,admin')->group(function () {
+                Route::get('/', [TeacherAdminNotificationController::class, 'index']);
+                Route::get('unread-count', [TeacherAdminNotificationController::class, 'unreadCount']);
+                Route::post('read-all', [TeacherAdminNotificationController::class, 'markAllRead']);
+                Route::get('{id}', [TeacherAdminNotificationController::class, 'show']);
+                Route::post('{id}/read', [TeacherAdminNotificationController::class, 'markRead']);
+                Route::post('{id}/contact', [TeacherAdminNotificationController::class, 'contact']);
             });
 
             // ─── Notification Preferences ────────────────
