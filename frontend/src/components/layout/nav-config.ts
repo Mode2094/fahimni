@@ -86,6 +86,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/teacher/dashboard', icon: LayoutDashboard, ar: 'لوحة التحكم', en: 'Dashboard' },
       { href: '/courses', icon: BookOpen, ar: 'الكورسات', en: 'Courses', match: ['/courses'] },
       { href: '/students', icon: Users, ar: 'الطلاب', en: 'Students' },
+      { href: '/teacher/terms', icon: CalendarDays, ar: 'الفصول الدراسية', en: 'Academic Terms', match: ['/teacher/terms'] },
       { href: '/teacher/cards', icon: Ticket, ar: 'البطاقات', en: 'Cards' },
       { href: '/teacher/student-app', icon: Smartphone, ar: 'تطبيق الطلاب', en: 'Student App', hideWithApp: true },
     ],

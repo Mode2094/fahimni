@@ -144,7 +144,7 @@ class CourseController extends Controller
         $enrolled = Enrollment::withoutTenant()
             ->where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->exists();
 
         if (! $isSuper && ! $inTenant && ! $enrolled) {

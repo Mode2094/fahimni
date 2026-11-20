@@ -187,7 +187,7 @@ class ScheduledLessonController extends Controller
                 // teacher's calendar.
                 $q->whereHas('course.enrollments', function ($eq) use ($request) {
                     $eq->where('user_id', $request->user()->id)
-                        ->whereIn('status', ['active', 'completed']);
+                        ->effective();
                 });
             })
             ->orderBy('lesson_date')

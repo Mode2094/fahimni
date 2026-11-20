@@ -37,7 +37,7 @@ class ExamController extends Controller
                     ->where('is_published', true)
                     ->whereHas('course.enrollments', function ($q) use ($request) {
                         $q->where('user_id', $request->user()->id)
-                            ->whereIn('status', ['active', 'completed'])
+                            ->effective()
                             ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now()));
                     })
             )

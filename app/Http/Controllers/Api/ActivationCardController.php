@@ -14,7 +14,9 @@ use App\Models\CardRedemption;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Plans\QuotaService;
+use App\Services\EnrollmentService;
 use App\Services\StudentGamificationService;
+use App\Services\StudentSeatService;
 use App\Support\AuditLogger;
 use App\Support\CardExcelParser;
 use App\Support\DevicePolicy;
@@ -143,8 +145,14 @@ class ActivationCardController extends Controller
             return response()->json(['message' => 'Card has expired.'], 410);
         }
 
-        $exists = Enrollment::where('course_id', $card->course_id)
+        // Only a currently-effective enrollment blocks a new redemption; an
+        // archived term's history must not stop a student re-joining the
+        // course next term.
+        $exists = Enrollment::withoutTenant()
+            ->where('tenant_id', $tenantId)
+            ->where('course_id', $card->course_id)
             ->where('user_id', $user->id)
+            ->effective()
             ->exists();
 
         if ($exists) {
@@ -157,6 +165,11 @@ class ActivationCardController extends Controller
         // both enroll with the same card.
         try {
             $redemption = DB::transaction(function () use ($card, $user, $request, $tenantId) {
+                // Canonical lock order everywhere: tenant seat mutex first,
+                // then the card row. Prevents two concurrent redemptions from
+                // overshooting the tenant's student limit.
+                app(StudentSeatService::class)->lockTenant((string) $tenantId);
+
                 $locked = ActivationCard::whereKey($card->id)
                     ->lockForUpdate()
                     ->first();
@@ -171,28 +184,20 @@ class ActivationCardController extends Controller
                     return 'expired';
                 }
 
-                // The (course_id, user_id) unique constraint may fire when
-                // two different cards for the same course are redeemed
-                // concurrently — map it to a clean 409, never a 500.
-                try {
-                    $enrollment = Enrollment::create([
-                        'id' => UuidV7::generate(),
-                        'tenant_id' => $tenantId,
-                        'course_id' => $locked->course_id,
-                        'user_id' => $user->id,
-                        'status' => 'active',
-                        'enrolled_at' => now(),
-                        'source' => 'card',
-                        'metadata' => ['card_code' => $locked->code, 'card_id' => $locked->id],
-                    ]);
-                } catch (QueryException $e) {
-                    if ($e->getCode() === '23505' || str_contains($e->getMessage(), 'UNIQUE constraint')) {
-                        throw new HttpResponseException(
-                            response()->json(['message' => 'You are already enrolled in this course.'], 409)
-                        );
-                    }
-                    throw $e;
+                $course = Course::find($locked->course_id);
+
+                if (! $course) {
+                    throw new HttpResponseException(
+                        response()->json(['message' => 'Course not found.'], 404)
+                    );
                 }
+
+                // Seat limit, duplicate protection and per-course cap are all
+                // enforced here (tenant row already locked above).
+                $enrollment = app(EnrollmentService::class)->enroll($course, $user, [
+                    'source' => 'card',
+                    'metadata' => ['card_code' => $locked->code, 'card_id' => $locked->id],
+                ]);
 
                 $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id');
                 if ($deviceId) {

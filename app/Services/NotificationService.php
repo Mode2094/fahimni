@@ -211,6 +211,11 @@ class NotificationService
         $studentIds = DB::table('enrollments')
             ->where('tenant_id', $tenantId)
             ->where('course_id', $courseId)
+            // Only currently-effective enrollees: an archived term's history
+            // must not deliver this course's messages to past students.
+            ->whereIn('status', ['active', 'completed'])
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->distinct()
             ->pluck('user_id');
 
         $teacherIds = DB::table('tenant_user')

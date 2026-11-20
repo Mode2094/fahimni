@@ -34,7 +34,7 @@ class AssignmentController extends Controller
         return Enrollment::withoutTenant()
             ->where('course_id', $courseId)
             ->where('user_id', $request->user()->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->exists();
     }
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\AcademicTermReminderJob;
 use App\Jobs\ExpirePendingBookingsJob;
 use App\Jobs\ExpireActivationCardsJob;
 use App\Jobs\ExpireSubscriptionsJob;
@@ -31,6 +32,10 @@ Schedule::job(new RenewalReminderJob)->dailyAt('08:00');
 
 // Daily post-expiry countdown inside the grace window.
 Schedule::job(new ExpiryFollowUpJob)->dailyAt('08:30');
+
+// Warn teachers before an academic term ends (notification only — never
+// archives students automatically).
+Schedule::job(new AcademicTermReminderJob)->dailyAt('08:15');
 
 // NOTE: automatic deletion of tenant content on subscription expiry is
 // DISABLED by policy. Teacher/student content is never destroyed because a
