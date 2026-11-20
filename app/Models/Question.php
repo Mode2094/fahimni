@@ -15,6 +15,22 @@ class Question extends Model
 {
     use BelongsToTenant, HasFactory, HasUuid, SoftDeletes;
 
+    /**
+     * The interactive HTML question type. Its display payload (html/css/js)
+     * and its hidden grading rules both live in `metadata`, under the
+     * `interactive` and `grading` keys respectively, so the answer key is
+     * never part of the code sent to the student.
+     */
+    public const TYPE_INTERACTIVE_HTML = 'interactive_html';
+
+    /** Every supported question type. Kept in one place so the requests and
+     *  the grader cannot drift apart. */
+    public const TYPES = [
+        'multiple_choice', 'true_false', 'drag_drop', 'matching',
+        'ordering', 'writing', 'fill_blank', 'file_upload',
+        'interactive_html',
+    ];
+
     protected $fillable = [
         'tenant_id', 'course_id', 'section_id', 'question_type',
         'question_text', 'difficulty', 'category', 'points',

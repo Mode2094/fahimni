@@ -23,13 +23,14 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
+import { gradingKeyToText, parseGradingKey } from '@/lib/interactive-question';
 import { getDeviceId } from '@/lib/device';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson' };
 const EMPTY_EXAM = { title: '', description: '', duration_minutes: '30', pass_mark_percent: '50', max_attempts: '3', random_questions_count: '', shuffle_questions: true, anti_cheat_enabled: true, is_published: false };
-const EMPTY_QUESTION: QuestionDraft = { question_text: '', question_type: 'multiple_choice', points: '1', exam_id: '', section_id: '', options: [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }], image_url: '', pairs: [], items: [], answers: [''], keywords: '' };
+const EMPTY_QUESTION: QuestionDraft = { question_text: '', question_type: 'multiple_choice', points: '1', exam_id: '', section_id: '', options: [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }], image_url: '', pairs: [], items: [], answers: [''], keywords: '', interactive_html: '', interactive_css: '', interactive_js: '', interactive_height: '360', interactive_auto_capture: true, grading_mode: 'manual', grading_rule: 'single_choice', grading_key: '', grading_tolerance: '' };
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -530,6 +531,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       items: (qq.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text || ''),
       answers: (qq.metadata?.answers || ['']).map((a: any) => String(a)),
       keywords: (qq.metadata?.keywords || []).join(', '),
+      interactive_html: qq.metadata?.interactive?.html || '',
+      interactive_css: qq.metadata?.interactive?.css || '',
+      interactive_js: qq.metadata?.interactive?.js || '',
+      interactive_height: String(qq.metadata?.interactive?.height ?? 360),
+      interactive_auto_capture: qq.metadata?.interactive?.auto_capture !== false,
+      grading_mode: qq.metadata?.grading?.mode === 'auto' ? 'auto' : 'manual',
+      grading_rule: qq.metadata?.grading?.rule || 'single_choice',
+      grading_key: gradingKeyToText(qq.metadata?.grading?.key),
+      grading_tolerance: qq.metadata?.grading?.tolerance != null ? String(qq.metadata.grading.tolerance) : '',
     });
     setQOpen(true);
   };
@@ -543,6 +553,26 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (q.question_type === 'ordering') meta.items = q.items.filter((i: any) => String(i).trim());
       if (q.question_type === 'fill_blank') meta.answers = q.answers.filter((a: any) => String(a).trim());
       if (q.question_type === 'writing') meta.keywords = q.keywords.split(',').map((k: string) => k.trim()).filter(Boolean);
+      if (q.question_type === 'interactive_html') {
+        meta.interactive = {
+          html: q.interactive_html,
+          css: q.interactive_css,
+          js: q.interactive_js,
+          height: Number(q.interactive_height) || 360,
+          auto_capture: !!q.interactive_auto_capture,
+        };
+        // The grading key is deliberately kept out of `interactive` so it can
+        // never be serialized to a student.
+        const grading: any = { mode: q.grading_mode };
+        if (q.grading_mode === 'auto') {
+          grading.rule = q.grading_rule;
+          grading.key = parseGradingKey(q.grading_key);
+          if (q.grading_rule === 'numeric' && String(q.grading_tolerance).trim() !== '') {
+            grading.tolerance = Number(q.grading_tolerance);
+          }
+        }
+        meta.grading = grading;
+      }
 
       const payload: any = { question_text: q.question_text, question_type: q.question_type, points: Number(q.points) || 1, course_id: id, section_id: q.section_id || null, metadata: meta };
       if (q.question_type === 'multiple_choice') payload.options = q.options.filter((o: any) => o.option_text.trim());
@@ -714,7 +744,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   };
 
   const qTypeIcon = (t: string) =>
-    t === 'multiple_choice' ? '☑️' : t === 'true_false' ? '✅' : t === 'drag_drop' ? '🧲' : t === 'matching' ? '🔗' : t === 'ordering' ? '🔢' : t === 'fill_blank' ? '✍️' : t === 'written' ? '📝' : '📎';
+    t === 'multiple_choice' ? '☑️' : t === 'true_false' ? '✅' : t === 'drag_drop' ? '🧲' : t === 'matching' ? '🔗' : t === 'ordering' ? '🔢' : t === 'fill_blank' ? '✍️' : t === 'written' ? '📝' : t === 'interactive_html' ? '🧪' : '📎';
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -937,7 +967,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         </div>
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                        <span>{qTypeIcon(qq.question_type)} {qq.question_type === 'multiple_choice' ? t('اختيار متعدد', 'MCQ') : qq.question_type === 'true_false' ? t('صح / خطأ', 'True/False') : qq.question_type}</span>
+                        <span>{qTypeIcon(qq.question_type)} {qq.question_type === 'multiple_choice' ? t('اختيار متعدد', 'MCQ') : qq.question_type === 'true_false' ? t('صح / خطأ', 'True/False') : qq.question_type === 'interactive_html' ? t('سؤال تفاعلي', 'Interactive') : qq.question_type}</span>
                         <span>· {qq.points} {t('نقطة', 'pts')}</span>
                       </div>
                       {qq.options?.filter((o: any) => o.is_correct).map((o: any, oi: number) => (

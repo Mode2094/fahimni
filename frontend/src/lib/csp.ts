@@ -22,6 +22,13 @@ export const CSP_HEADER = 'Content-Security-Policy';
 /** Custom request header the proxy also exposes for server components. */
 export const NONCE_HEADER = 'x-nonce';
 
+/**
+ * Route that serves the isolated document for interactive (teacher-authored)
+ * HTML questions. It is intentionally OUTSIDE the app's nonce CSP: the doc runs
+ * in a `sandbox` iframe with an opaque origin and its own locked-down policy.
+ */
+export const SANDBOX_PATH = '/embed/question';
+
 /** Generate a 128-bit base64 nonce — the shape Next.js expects in `'nonce-…'`. */
 export function generateNonce(): string {
   const bytes = new Uint8Array(16);
@@ -66,6 +73,41 @@ export function buildCsp(nonce: string, isDev: boolean = process.env.NODE_ENV !=
     "frame-src 'self' https://www.youtube.com https://player.vimeo.com https://www.google.com https://meet.jit.si https://iframe.videodelivery.net https://www.paypal.com https://*.paypal.com https://checkout.freemius.com https://*.freemius.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
+  ].join('; ');
+}
+
+/**
+ * Build the Content-Security-Policy for the interactive-question sandbox
+ * document, which executes teacher-authored HTML/CSS/JS.
+ *
+ * This is a SEPARATE policy for a SEPARATE document — it never weakens the
+ * app's own nonce + `'strict-dynamic'` policy. The `sandbox` directive forces
+ * an opaque origin even if the document is opened directly (top-level), so the
+ * teacher's code can never read app cookies, storage, or other questions.
+ *
+ * Network is denied by default (`connect-src 'none'`, images limited to inline
+ * data/blob) so a question cannot exfiltrate an answer to a third party.
+ */
+export function buildSandboxCsp(): string {
+  return [
+    "default-src 'none'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "form-action 'none'",
+    "connect-src 'none'",
+    "frame-src 'none'",
+    "media-src 'none'",
+    "worker-src 'none'",
+    "manifest-src 'none'",
+    // Inline data/blob only — no remote fetch, no exfiltration channel.
+    "img-src data: blob:",
+    "font-src data:",
+    "style-src 'unsafe-inline'",
+    // The teacher's JS is the whole point; it is confined to the opaque origin
+    // and can only reach the host through the validated postMessage protocol.
+    "script-src 'unsafe-inline'",
+    'sandbox allow-scripts',
   ].join('; ');
 }
 

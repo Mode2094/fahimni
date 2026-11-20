@@ -51,6 +51,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       fill_blank: ['املأ الفراغ', 'Fill blank'],
       writing: ['إجابة كتابية', 'Written'],
       file_upload: ['رفع ملف', 'File upload'],
+      interactive_html: ['سؤال تفاعلي', 'Interactive'],
     };
     const l = map[tp] || [tp, tp];
     return locale === 'ar' ? l[0] : l[1];
@@ -113,6 +114,11 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       }
     };
     const onBlur = () => {
+      // Focus moving into the interactive-question sandbox iframe is the
+      // student answering that question, not leaving the exam. Tab switches are
+      // still caught by the visibilitychange handler above.
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.tagName === 'IFRAME' && active.dataset.fahimniInteractive === 'true') return;
       if (document.hasFocus() === false) {
         setViolations((v) => v + 1);
       }

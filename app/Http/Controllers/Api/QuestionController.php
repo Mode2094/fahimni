@@ -104,7 +104,15 @@ class QuestionController extends Controller
 
         $this->authorize('update', $question);
 
-        $question->update($request->validated());
+        $data = $request->validated();
+        // metadata carries nested type-specific keys; validated() only returns
+        // keys that have their own rules, so persist the raw payload instead of
+        // silently dropping e.g. image_url or the hidden grading key.
+        if ($request->has('metadata')) {
+            $data['metadata'] = $request->input('metadata');
+        }
+
+        $question->update($data);
 
         return response()->json([
             'question' => new QuestionResource($question->fresh()->load('options')),
