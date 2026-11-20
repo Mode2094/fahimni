@@ -104,6 +104,10 @@ class QuestionController extends Controller
 
         $this->authorize('update', $question);
 
+        // Persist only the validated payload: nested keys now have their own
+        // rules (including size limits and the grading schema), so the raw
+        // metadata array can no longer be used to bypass them or to drop the
+        // required interactive payload.
         $question->update($request->validated());
 
         return response()->json([

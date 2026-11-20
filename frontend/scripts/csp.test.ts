@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { CSP_HEADER, NONCE_HEADER, buildCsp, extractNonce, generateNonce, withNoTransform } from '../src/lib/csp.ts';
+import { CSP_HEADER, NONCE_HEADER, SANDBOX_PATH, buildCsp, buildSandboxCsp, extractNonce, generateNonce, withNoTransform } from '../src/lib/csp.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (rel: string) => readFileSync(join(here, '..', rel), 'utf8');
@@ -116,4 +116,72 @@ test('proxy sets no-transform on HTML responses (Cloudflare email-obfuscation op
     /response\.headers\.set\(\s*'Cache-Control'\s*,\s*withNoTransform\(/,
     'withCsp() must emit Cache-Control: no-transform so Cloudflare leaves our HTML unmodified',
   );
+});
+
+test('the interactive-question sandbox document uses its OWN locked-down policy', () => {
+  const csp = buildSandboxCsp();
+  const directives = Object.fromEntries(
+    csp.split('; ').map((d) => {
+      const i = d.indexOf(' ');
+      return i < 0 ? [d, ''] : [d.slice(0, i), d.slice(i + 1)];
+    }),
+  );
+
+  // Deny everything by default; no network, no frames, no forms.
+  assert.equal(directives['default-src'], "'none'");
+  assert.equal(directives['connect-src'], "'none'");
+  assert.equal(directives['frame-src'], "'none'");
+  assert.equal(directives['form-action'], "'none'");
+  assert.equal(directives['worker-src'], "'none'");
+  assert.equal(directives['object-src'], "'none'");
+  assert.equal(directives['base-uri'], "'none'");
+  // Only inline data/blob images and data fonts — no remote fetch channel.
+  assert.equal(directives['img-src'], 'data: blob:');
+  assert.equal(directives['font-src'], 'data:');
+  // The sandbox must force an opaque origin and allow scripts only.
+  assert.equal(directives['sandbox'], 'allow-scripts');
+  assert.doesNotMatch(csp, /allow-same-origin/, 'the sandbox must never gain a same-origin escape');
+  // Only frame-ancestors may name our origin; every execution/network directive
+  // must stay origin-free so a leak is impossible.
+  assert.equal(directives['frame-ancestors'], "'self'");
+  for (const key of ['default-src', 'connect-src', 'img-src', 'font-src', 'script-src', 'style-src', 'form-action', 'frame-src', 'media-src', 'worker-src', 'object-src', 'base-uri', 'manifest-src']) {
+    assert.doesNotMatch(directives[key] ?? '', /'self'/, `${key} must not trust our origin`);
+  }
+});
+
+test('the sandbox policy never leaks into the app policy (isolation is additive)', () => {
+  const app = buildCsp('N', false);
+
+  assert.doesNotMatch(app, /default-src 'none'/, 'the app policy must keep its own default-src');
+  assert.doesNotMatch(app, /sandbox allow-scripts/, 'the app must not run in a sandbox document');
+  assert.match(app, /frame-src 'self'/, 'the app must still be able to frame its own /embed document');
+});
+
+test('the sandbox route serves the harness with the sandbox CSP and is skipped by the app proxy', () => {
+  const route = src('src/app/embed/question/route.ts');
+  assert.match(route, /buildSandboxCsp/, 'route must apply the sandbox policy');
+  assert.match(route, /sandboxHarnessHtml/, 'route must serve the harness document');
+  assert.match(route, /'Content-Security-Policy': buildSandboxCsp\(\)/);
+  assert.match(route, /X-Content-Type-Options/, 'route must set nosniff');
+
+  const proxy = src('src/proxy.ts');
+  assert.match(proxy, /SANDBOX_PATH/, 'proxy must import the sandbox path');
+  assert.match(
+    proxy,
+    /pathname === SANDBOX_PATH/,
+    'proxy must skip the nonce policy for the sandbox document',
+  );
+});
+
+test('the harness never combines allow-scripts with allow-same-origin and never reflects teacher content', () => {
+  const harness = src('src/lib/sandbox-harness.ts');
+
+  // The iframe sandbox attribute lives in the React component; assert both.
+  const component = src('src/components/exam/interactive-html-question.tsx');
+  assert.match(component, /sandbox="allow-scripts"/, 'iframe must be sandboxed with allow-scripts only');
+  assert.doesNotMatch(component, /sandbox="[^"]*allow-same-origin/, 'allow-same-origin removes the isolation guarantee');
+
+  // The harness only trusts messages from the parent window and its own channel.
+  assert.match(harness, /event\.source !== window\.parent/);
+  assert.match(harness, /fahimni-question/);
 });

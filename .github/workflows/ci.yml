@@ -99,6 +99,41 @@ jobs:
           NEXT_PUBLIC_PLATFORM_DOMAIN: app.example.com
         run: npm run build
 
+  e2e-sandbox:
+    # The interactive-HTML question sandbox can only be verified in a real
+    # browser: CSP enforcement, the `sandbox` iframe attribute, opaque origins
+    # and postMessage all live in Chromium. This job loads the real sandbox
+    # document from `next start` and drives the whole protocol.
+    name: Playwright (interactive-question sandbox)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: /api/v1
+          NEXT_PUBLIC_PLATFORM_DOMAIN: app.example.com
+        run: npm run build
+
+      - name: Run sandbox browser tests
+        run: npm run test:e2e
+
   deploy-assets:
     name: Deploy assets (shellcheck + compose + Caddy merge)
     runs-on: ubuntu-latest

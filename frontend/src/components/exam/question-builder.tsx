@@ -8,10 +8,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ImagePlus, X, CheckCircle2, Plus, ArrowUp, ArrowDown, FunctionSquare, Atom, Trash2, Loader2 } from 'lucide-react';
 import { Latex } from '@/components/exam/latex';
+import { InteractiveHtmlEditor, type InteractiveHtmlDraft } from '@/components/exam/interactive-html-editor';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-export type QuestionDraft = {
+export type QuestionDraft = InteractiveHtmlDraft & {
   question_text: string;
   question_type: string;
   points: string;
@@ -34,6 +35,7 @@ const QUESTION_TYPES = [
   { id: 'fill_blank', ar: 'املأ الفراغ', en: 'Fill the blank', icon: '✍️' },
   { id: 'writing', ar: 'إجابة كتابية', en: 'Written answer', icon: '📝' },
   { id: 'file_upload', ar: 'رفع ملف', en: 'File upload', icon: '📎' },
+  { id: 'interactive_html', ar: 'سؤال تفاعلي', en: 'Interactive (HTML)', icon: '🧪' },
 ];
 
 const MATH_SYMBOLS = ['α', 'β', 'γ', 'θ', 'λ', 'π', '√', '∑', '∫', '∞', '≈', '≠', '≤', '≥', '×', '÷', '±', '→', '←', '⇒', '⇔', 'Δ', '∂', '°', '′', '²', '³'];
@@ -251,6 +253,10 @@ export function QuestionBuilder({ value, onChange, sections, exams }: {
           <Input value={value.keywords} onChange={(e) => set({ keywords: e.target.value })} className="h-10" dir="ltr" placeholder="mitochondria, ATP, الطاقة" />
           <p className="text-[11px] text-gray-400">{t('إذا كتب الطالب أي كلمة منها تُصحح إجابته صحيحة', 'If the student writes any of them, the answer is graded correct')}</p>
         </div>
+      )}
+
+      {value.question_type === 'interactive_html' && (
+        <InteractiveHtmlEditor value={value} onChange={set} />
       )}
 
       {/* Attachments */}

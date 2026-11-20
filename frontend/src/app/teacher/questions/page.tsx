@@ -14,8 +14,15 @@ import { TableSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { HelpCircle, Plus, Trash2, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { InteractiveHtmlEditor, type InteractiveHtmlDraft } from '@/components/exam/interactive-html-editor';
+import { parseGradingKey } from '@/lib/interactive-question';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+const EMPTY_INTERACTIVE: InteractiveHtmlDraft = {
+  interactive_html: '', interactive_css: '', interactive_js: '', interactive_height: '360',
+  interactive_auto_capture: true, grading_mode: 'manual', grading_rule: 'single_choice', grading_key: '', grading_tolerance: '',
+};
 
 export default function QuestionsPage() {
   const { check } = useAuth();
@@ -26,6 +33,7 @@ export default function QuestionsPage() {
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ question_text: '', question_type: 'multiple_choice', points: '10', options: [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }], correct_answer: 'true' });
+  const [interactive, setInteractive] = useState<InteractiveHtmlDraft>(EMPTY_INTERACTIVE);
   const [removingId, setRemovingId] = useState('');
 
   const headers = () => {
@@ -52,11 +60,31 @@ export default function QuestionsPage() {
     try {
       const payload: any = { exam_id: selectedExam, question_text: form.question_text, question_type: form.question_type, points: Number(form.points) };
       if (form.question_type === 'true_false') payload.correct_answer = form.correct_answer;
+      else if (form.question_type === 'interactive_html') {
+        const grading: any = { mode: interactive.grading_mode };
+        if (interactive.grading_mode === 'auto') {
+          grading.rule = interactive.grading_rule;
+          grading.key = parseGradingKey(interactive.grading_key);
+          if (interactive.grading_rule === 'numeric' && String(interactive.grading_tolerance).trim() !== '') {
+            grading.tolerance = Number(interactive.grading_tolerance);
+          }
+        }
+        payload.metadata = {
+          interactive: {
+            html: interactive.interactive_html,
+            css: interactive.interactive_css,
+            js: interactive.interactive_js,
+            height: Number(interactive.interactive_height) || 360,
+            auto_capture: !!interactive.interactive_auto_capture,
+          },
+          grading,
+        };
+      }
       else payload.options = form.options.map((o: any) => ({ option_text: o.option_text, is_correct: !!o.is_correct }));
       const res = await fetch(`${API}/questions`, { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
       if (!res.ok) { const d = await res.json(); toast.error(d.message || 'Failed'); return; }
       toast.success(locale === 'ar' ? 'تم إضافة السؤال' : 'Question added');
-      setShowForm(false); loadQuestions(selectedExam);
+      setShowForm(false); setInteractive(EMPTY_INTERACTIVE); loadQuestions(selectedExam);
     } catch { toast.error('Failed'); }
   };
 
@@ -119,12 +147,12 @@ export default function QuestionsPage() {
           </div></Card>
         )}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>{locale === 'ar' ? 'سؤال جديد' : 'New Question'}</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>{locale === 'ar' ? 'سؤال جديد' : 'New Question'}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2"><Label>{locale === 'ar' ? 'النوع' : 'Type'}</Label>
                 <Select value={form.question_type} onChange={(e) => setForm({ ...form, question_type: e.target.value })} className="h-11">
-                  <option value="multiple_choice">{locale === 'ar' ? 'اختيار من متعدد' : 'MCQ'}</option><option value="true_false">{locale === 'ar' ? 'صح/خطأ' : 'True/False'}</option>
+                  <option value="multiple_choice">{locale === 'ar' ? 'اختيار من متعدد' : 'MCQ'}</option><option value="true_false">{locale === 'ar' ? 'صح/خطأ' : 'True/False'}</option><option value="interactive_html">{locale === 'ar' ? 'سؤال تفاعلي (HTML)' : 'Interactive (HTML)'}</option>
                 </Select>
               </div>
               <div className="space-y-2"><Label>{locale === 'ar' ? 'النقاط' : 'Points'}</Label><Input type="number" value={form.points} onChange={(e) => setForm({ ...form, points: e.target.value })} className="h-11" /></div>
@@ -136,6 +164,8 @@ export default function QuestionsPage() {
                   <button key={v} onClick={() => setForm({ ...form, correct_answer: v })} className={`flex-1 py-2.5 rounded-lg border text-sm ${form.correct_answer === v ? 'bg-green-500 text-white border-green-500' : 'bg-white text-gray-600'}`}>{v === 'true' ? (locale === 'ar' ? 'صح' : 'True') : (locale === 'ar' ? 'خطأ' : 'False')}</button>
                 ))}</div>
               </div>
+            ) : form.question_type === 'interactive_html' ? (
+              <InteractiveHtmlEditor value={interactive} onChange={(patch) => setInteractive((prev) => ({ ...prev, ...patch }))} />
             ) : (
               <div className="space-y-3"><Label>{locale === 'ar' ? 'الخيارات' : 'Options'}</Label>
                 {form.options.map((o: any, i: number) => (

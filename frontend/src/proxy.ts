@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { CSP_HEADER, NONCE_HEADER, buildCsp, generateNonce, withNoTransform } from './lib/csp';
+import { CSP_HEADER, NONCE_HEADER, SANDBOX_PATH, buildCsp, generateNonce, withNoTransform } from './lib/csp';
 
 // Server-side fetch: must be an absolute URL inside the Docker network
 // (nginx) or localhost in dev — never the browser-relative '/api/v1'.
@@ -43,8 +43,11 @@ export async function proxy(request: NextRequest) {
   const host = request.headers.get('host')?.split(':')[0]?.toLowerCase() || '';
 
   // Skip API/BFF (JSON), assets, storage and file-like paths — CSP is only
-  // meaningful on HTML documents.
+  // meaningful on HTML documents. The interactive-question sandbox document
+  // sets its OWN policy (see SANDBOX_PATH + buildSandboxCsp), so the app's
+  // nonce policy must not be applied to it.
   if (
+    pathname === SANDBOX_PATH ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/storage') ||

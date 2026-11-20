@@ -11,6 +11,7 @@ use App\Models\ExamAnswer;
 use App\Models\ExamAttempt;
 use App\Models\ExamQuestion;
 use App\Models\Question;
+use App\Services\InteractiveHtmlGrader;
 use App\Services\StudentGamificationService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
@@ -41,6 +42,24 @@ class ExamAttemptController extends Controller
      */
     private function studentSafeMetadata(array $metadata, string $questionType): array
     {
+        // interactive_html uses an explicit ALLOWLIST, not a denylist: the
+        // teacher's html/css/js is display-only and the hidden answer key lives
+        // in metadata.grading. Only the interactive payload may reach a
+        // student, so a future metadata key can never leak by default.
+        if ($questionType === Question::TYPE_INTERACTIVE_HTML) {
+            $interactive = is_array($metadata['interactive'] ?? null) ? $metadata['interactive'] : [];
+
+            return [
+                'interactive' => [
+                    'html' => (string) ($interactive['html'] ?? ''),
+                    'css' => (string) ($interactive['css'] ?? ''),
+                    'js' => (string) ($interactive['js'] ?? ''),
+                    'height' => (int) ($interactive['height'] ?? 360),
+                    'auto_capture' => (bool) ($interactive['auto_capture'] ?? true),
+                ],
+            ];
+        }
+
         $safe = collect($metadata)->except(self::ANSWER_KEY_METADATA_KEYS)->all();
 
         if ($questionType === 'drag_drop' || $questionType === 'matching') {
@@ -347,15 +366,25 @@ class ExamAttemptController extends Controller
             $question = $examQuestion->question;
             $pointsMax = (float) ($examQuestion->points_override ?? $question->points);
 
-            // Writing and file answers cannot be auto-graded truthfully: the
-            // attempt is flagged for manual review and only the teacher's
-            // score counts.
-            if (in_array($question->question_type, ['writing', 'file_upload'], true)) {
+            // Writing and file answers cannot be auto-graded truthfully, and an
+            // interactive question without a decisive key must be reviewed too:
+            // the attempt is flagged and only the teacher's score counts.
+            if (in_array($question->question_type, ['writing', 'file_upload'], true)
+                || ($question->question_type === Question::TYPE_INTERACTIVE_HTML
+                    && $this->interactiveGrader()->requiresManualReview($question))) {
                 $needsReview = true;
             }
 
+            // Reject an unbounded interactive-html blob before it is compared or
+            // persisted (scoped to that type so existing answer limits for the
+            // eight original types are unchanged).
+            if ($question->question_type === Question::TYPE_INTERACTIVE_HTML
+                && ! $this->interactiveGrader()->isWithinSizeLimit($ans['given_answer'])) {
+                abort(422, 'Answer is too large.');
+            }
+
             $isCorrect = $this->checkAnswer($question, $ans['given_answer']);
-            $pointsEarned = $isCorrect ? $pointsMax : 0;
+            $pointsEarned = $isCorrect === true ? $pointsMax : 0;
             $earnedPoints += $pointsEarned;
 
             $answersData[] = [
@@ -570,6 +599,11 @@ class ExamAttemptController extends Controller
         return min(max((int) $request->input('per_page', 20), 1), 100);
     }
 
+    private function interactiveGrader(): InteractiveHtmlGrader
+    {
+        return app(InteractiveHtmlGrader::class);
+    }
+
     /**
      * The academic term that scopes this student's attempts for a course:
      * their current effective enrollment's term, or NULL when it is not
@@ -601,8 +635,12 @@ class ExamAttemptController extends Controller
             : $query->where('academic_term_id', $termId);
     }
 
-    private function checkAnswer(Question $question, mixed $givenAnswer): bool
+    private function checkAnswer(Question $question, mixed $givenAnswer): ?bool
     {
+        if ($question->question_type === Question::TYPE_INTERACTIVE_HTML) {
+            return $this->interactiveGrader()->grade($question, $givenAnswer);
+        }
+
         if ($question->question_type === 'multiple_choice') {
             $correctOptions = $question->options->where('is_correct', true)->pluck('id')->toArray();
 
