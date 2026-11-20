@@ -28,7 +28,7 @@ import { getDeviceId } from '@/lib/device';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson' };
+const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson', exercise_exam_id: '', exercise_position: 'after_video' };
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -168,7 +168,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const openLesAdd = (sid: string) => { setLesTarget(null); setLesSection(sid); setLes({ ...EMPTY_LESSON }); setLesOpen(true); };
   const openLesEdit = (l: any) => {
     setLesTarget(l); setLesSection(l.section_id);
-    setLes({ title: l.title || '', is_free_preview: !!l.is_free_preview, kind: 'lesson' });
+    setLes({
+      title: l.title || '', is_free_preview: !!l.is_free_preview, kind: 'lesson',
+      exercise_exam_id: l.metadata?.exercise_exam_id || '',
+      exercise_position: l.metadata?.exercise_position || 'after_video',
+    });
     setLesOpen(true);
     resetContentForm();
     loadLesContents(l.id);
@@ -176,7 +180,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const saveLesson = async () => {
     if (!les.title.trim()) { toast.error(t('أدخل عنوان الدرس', 'Enter lesson title')); return; }
     try {
-      const body = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview, sort_order: lesTarget ? lesTarget.sort_order : undefined };
+      const body: any = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview, sort_order: lesTarget ? lesTarget.sort_order : undefined };
+      // Only a video lesson can carry an attached exercise; the id is the SAME
+      // exam engine used everywhere else, so no separate grading system exists.
+      if (lesTarget && isVideoLesson(lesTarget)) {
+        body.metadata = {
+          exercise_exam_id: les.exercise_exam_id || null,
+          exercise_position: les.exercise_position || 'after_video',
+        };
+      }
       const res = await fetch(`${API}/lessons${lesTarget ? `/${lesTarget.id}` : ''}`, { method: lesTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
       toast.success(lesTarget ? t('تم تحديث الدرس', 'Lesson updated') : t('تم إضافة الدرس', 'Lesson added'));
@@ -580,6 +592,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch { /* */ }
   };
   const isLiveLesson = (l: any) => (l.contents || []).some((c: any) => c.content_type === 'live');
+  const isVideoLesson = (l: any) => l.lesson_type === 'video' || (l.contents || []).some((c: any) => c.content_type === 'video');
 
   // ─── محرر الاختبار المفتوح (إعدادات + أسئلة كيان واحد) ───
   const [viewerExam, setViewerExam] = useState<any>(null);
@@ -886,6 +899,38 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
               </div>
             ) : (
               <p className="text-xs text-gray-400 bg-slate-50 rounded-xl p-3">{t('احفظ الدرس أولاً ثم افتحه لإضافة المحتوى (فيديو، PDF، صوت، نص، ملفات)', 'Save the lesson first, then open it to add content (video, PDF, audio, text, files)')}</p>
+            )}
+
+            {/* ربط تمرين بدرس الفيديو — نفس محرك الاختبارات بلا درجات مكررة */}
+            {lesTarget && isVideoLesson(lesTarget) && (
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="h-4 w-4 text-violet-600" />
+                  <p className="text-sm font-bold">{t('تمرين مرتبط بالدرس', 'Exercise attached to lesson')}</p>
+                </div>
+                <p className="text-[11px] text-gray-400">{t('اربط اختباراً ليتدرّب الطالب بعد مشاهدة الفيديو. يُستخدم نفس نظام المحاولات والتصحيح — بلا نظام درجات مكرر.', 'Attach an exam so the student practises after the video. The same attempt & grading engine is used — no duplicated scores.')}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t('الاختبار', 'Exam')}</Label>
+                    <select value={les.exercise_exam_id || ''} onChange={(e) => setLes({ ...les, exercise_exam_id: e.target.value })} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                      <option value="">{t('بدون تمرين', 'No exercise')}</option>
+                      {exams.map((e: any) => <option key={e.id} value={e.id}>{e.title}{e.is_published ? '' : ` (${t('مسودة', 'draft')})`}</option>)}
+                    </select>
+                  </div>
+                  {les.exercise_exam_id && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t('الموضع', 'Position')}</Label>
+                      <select value={les.exercise_position} onChange={(e) => setLes({ ...les, exercise_position: e.target.value })} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                        <option value="after_video">{t('أسفل الفيديو مباشرة', 'Right below the video')}</option>
+                        <option value="after_content">{t('بعد كل محتوى الدرس', 'After all lesson content')}</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+                {les.exercise_exam_id && !exams.find((e: any) => e.id === les.exercise_exam_id)?.is_published && (
+                  <p className="text-[11px] text-amber-600">{t('الاختبار مسودة — لن يظهر للطالب حتى تنشره.', 'The exam is a draft — students will not see it until you publish it.')}</p>
+                )}
+              </div>
             )}
           </div>
           <DialogFooter>

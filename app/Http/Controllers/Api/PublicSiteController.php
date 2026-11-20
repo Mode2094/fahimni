@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ActivationCard;
 use App\Models\Course;
+use App\Models\Exam;
+use App\Models\ExamAttempt;
 use App\Models\Lesson;
 use App\Models\Post;
 use App\Models\SubscriptionPlan;
@@ -402,6 +404,52 @@ class PublicSiteController extends Controller
             return $payload;
         });
 
+        // A video lesson may carry one attached exercise. It is the SAME exam
+        // engine as a standalone exam (one attempt system, one grading system),
+        // never a duplicated score. Unpublished exams are never exposed, and a
+        // foreign-tenant exam id can never be reached (tenant scope + explicit
+        // match on the exam's tenant).
+        $exercise = null;
+        $attachedExamId = $lesson->metadata['exercise_exam_id'] ?? null;
+
+        if ($attachedExamId && $user) {
+            $exam = Exam::where('id', $attachedExamId)
+                ->where('tenant_id', $course->tenant_id)
+                ->withCount('questions')
+                ->first();
+
+            if ($exam && ($exam->is_published || $isOwner)) {
+                $attempts = ExamAttempt::where('exam_id', $exam->id)
+                    ->where('user_id', $user->id)
+                    ->where('status', 'submitted')
+                    ->orderByDesc('created_at')
+                    ->get(['id', 'score', 'total_points', 'percentage', 'passed']);
+
+                $used = $attempts->count();
+                $attemptsLeft = $exam->max_attempts > 0 ? max(0, $exam->max_attempts - $used) : -1;
+                $best = $attempts->max('percentage');
+                $last = $attempts->first();
+
+                $exercise = [
+                    'exam_id' => $exam->id,
+                    'title' => $exam->title,
+                    'description' => $exam->description,
+                    'questions_count' => (int) $exam->questions_count,
+                    'duration_minutes' => $exam->duration_minutes,
+                    'pass_mark_percent' => (float) $exam->pass_mark_percent,
+                    'max_attempts' => $exam->max_attempts,
+                    'attempts_used' => $used,
+                    'attempts_left' => $attemptsLeft,
+                    'best_percentage' => $best !== null ? (float) $best : null,
+                    'position' => $lesson->metadata['exercise_position'] ?? 'after_video',
+                    'last' => $last ? [
+                        'percentage' => (float) $last->percentage,
+                        'passed' => (bool) $last->passed,
+                    ] : null,
+                ];
+            }
+        }
+
         return response()->json([
             'course' => $this->coursePayload($course),
             'lesson' => [
@@ -412,6 +460,7 @@ class PublicSiteController extends Controller
                 'enrolled' => $enrolled,
             ],
             'contents' => $contents,
+            'exercise' => $exercise,
         ]);
     }
 
