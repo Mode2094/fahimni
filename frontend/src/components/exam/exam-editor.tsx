@@ -484,7 +484,7 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                             )}
                             <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => openEdit(q)} title={t('تعديل السؤال', 'Edit')} aria-label={t('تعديل السؤال', 'Edit')}><Pencil className="h-3.5 w-3.5" /></Button>
                             <Button size="sm" variant="ghost" className="rounded-full text-xs text-slate-600" onClick={() => copyQuestion(q)} title={t('نسخ سؤال', 'Copy question')} aria-label={t('نسخ سؤال', 'Copy question')}><Copy className="h-3.5 w-3.5" /></Button>
-                            {inBank && <Button size="sm" variant="ghost" className="rounded-full text-red-500" onClick={() => deleteFromBank(q)} title={t('حذف نهائي', 'Delete')}><Trash2 className="h-3.5 w-3.5" /></Button>}
+                            {inBank && <Button size="sm" variant="ghost" className="rounded-full text-red-500" onClick={() => deleteFromBank(q)} aria-label={t('حذف نهائي', 'Delete')} title={t('حذف نهائي', 'Delete')}><Trash2 className="h-3.5 w-3.5" /></Button>}
                           </div>
                         );
                       })}

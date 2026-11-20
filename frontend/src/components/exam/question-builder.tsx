@@ -226,8 +226,8 @@ export function QuestionBuilder({ value, onChange, sections, exams, lockExam = f
           {value.items.map((it, i) => (
             <div key={i} className="flex items-center gap-2">
               <Input value={it} onChange={(e) => set({ items: value.items.map((x, j) => j === i ? e.target.value : x) })} className="h-10" placeholder={`${t('عنصر', 'Item')} ${i + 1}`} />
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i > 0) { [a[i], a[i - 1]] = [a[i - 1], a[i]]; set({ items: a }); } }} disabled={i === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; set({ items: a }); } }} disabled={i === value.items.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i > 0) { [a[i], a[i - 1]] = [a[i - 1], a[i]]; set({ items: a }); } }} disabled={i === 0} aria-label={t('تحريك العنصر لأعلى', 'Move item up')} title={t('تحريك العنصر لأعلى', 'Move item up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; set({ items: a }); } }} disabled={i === value.items.length - 1} aria-label={t('تحريك العنصر لأسفل', 'Move item down')} title={t('تحريك العنصر لأسفل', 'Move item down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
             </div>
           ))}
         </div>

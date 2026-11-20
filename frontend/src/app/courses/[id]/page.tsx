@@ -661,9 +661,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Button size="sm" variant="ghost" onClick={() => openSecEdit(s)} className="gap-1 rounded-full text-xs"><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, -1)} disabled={si === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, 1)} disabled={si === sections.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeSection(s.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, -1)} disabled={si === 0} aria-label={t('تحريك الوحدة لأعلى', 'Move unit up')} title={t('تحريك الوحدة لأعلى', 'Move unit up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, 1)} disabled={si === sections.length - 1} aria-label={t('تحريك الوحدة لأسفل', 'Move unit down')} title={t('تحريك الوحدة لأسفل', 'Move unit down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeSection(s.id)} aria-label={t('حذف الوحدة', 'Delete unit')} title={t('حذف الوحدة', 'Delete unit')}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                   </div>
 
@@ -693,7 +693,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                                 </p>
                               </div>
                               <a href="/teacher/live"><Button size="sm" className="gap-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white"><Radio className="h-3.5 w-3.5" />{t('إدارة الحصة', 'Manage session')}</Button></a>
-                              <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
                             <div className="flex items-center gap-2">
                               <Input type="datetime-local" className="h-9 w-auto text-xs" dir="ltr"
@@ -725,9 +725,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <Button size="sm" className="gap-1 rounded-full text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={() => openLesEdit(l)}>
                             {hasContent ? <><Pencil className="h-3.5 w-3.5" />{t('إدارة المحتوى', 'Manage content')}</> : <><Plus className="h-3.5 w-3.5" />{t('إضافة محتوى', 'Add content')}</>}
                           </Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       );
                     })}
