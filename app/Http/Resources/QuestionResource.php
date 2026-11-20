@@ -48,6 +48,9 @@ class QuestionResource extends JsonResource
                 'id' => $e->id,
                 'title' => $e->title,
                 'course_id' => $e->course_id,
+                // Position of this question inside that exam, so the builder
+                // can render (and reorder) the teacher's arrangement.
+                'sort_order' => $e->pivot->sort_order,
             ])),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

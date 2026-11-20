@@ -41,11 +41,13 @@ const QUESTION_TYPES = [
 const MATH_SYMBOLS = ['α', 'β', 'γ', 'θ', 'λ', 'π', '√', '∑', '∫', '∞', '≈', '≠', '≤', '≥', '×', '÷', '±', '→', '←', '⇒', '⇔', 'Δ', '∂', '°', '′', '²', '³'];
 const CHEM_SYMBOLS = ['H₂O', 'CO₂', 'NaCl', 'O₂', 'N₂', 'H₂', '→', '⇌', '↑', '↓', 'Δ', '°C', '(aq)', '(s)', '(l)', '(g)', '⁻', '⁺', '₂', '₃', '₄', '+', 'e⁻'];
 
-export function QuestionBuilder({ value, onChange, sections, exams }: {
+export function QuestionBuilder({ value, onChange, sections, exams, lockExam = false }: {
   value: QuestionDraft;
   onChange: (d: QuestionDraft) => void;
   sections: { id: string; title: string }[];
   exams: { id: string; title: string }[];
+  /** When true the exam is fixed by the surrounding editor (no re-binding). */
+  lockExam?: boolean;
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -260,21 +262,28 @@ export function QuestionBuilder({ value, onChange, sections, exams }: {
       )}
 
       {/* Attachments */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className={lockExam ? 'space-y-2' : 'grid grid-cols-2 gap-4'}>
         <div className="space-y-2">
           <Label>{t('ربط بقسم', 'Attach to section')}</Label>
-          <select value={value.section_id} onChange={(e) => set({ section_id: e.target.value })} className="h-10 border border-gray-200 rounded-lg px-3 w-full text-sm bg-white">
+          <select value={value.section_id} onChange={(e) => set({ section_id: e.target.value })} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm">
             <option value="">{t('بدون قسم', 'No section')}</option>
             {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
           </select>
         </div>
-        <div className="space-y-2">
-          <Label>{t('ربط باختبار', 'Attach to exam')}</Label>
-          <select value={value.exam_id} onChange={(e) => set({ exam_id: e.target.value })} className="h-10 border border-gray-200 rounded-lg px-3 w-full text-sm bg-white">
-            <option value="">{t('بدون ربط', 'No exam')}</option>
-            {exams.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
-          </select>
-        </div>
+        {lockExam ? (
+          <p className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+            <CheckCircle2 className="h-3.5 w-3.5 text-violet-500" />
+            {t('سيُضاف هذا السؤال إلى الاختبار الحالي مباشرة', 'This question is added to the current exam')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <Label>{t('ربط باختبار', 'Attach to exam')}</Label>
+            <select value={value.exam_id} onChange={(e) => set({ exam_id: e.target.value })} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm">
+              <option value="">{t('بدون ربط', 'No exam')}</option>
+              {exams.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2 max-w-[140px]">

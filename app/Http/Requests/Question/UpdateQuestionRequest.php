@@ -69,6 +69,12 @@ class UpdateQuestionRequest extends FormRequest
             'metadata.answers.*' => 'nullable|string|max:2000',
             'metadata.keywords' => 'nullable|array|max:100',
             'metadata.keywords.*' => 'nullable|string|max:100',
+            // Options are replaced wholesale when present, mirroring the create
+            // path so editing an MCQ actually persists its answers.
+            'options' => 'sometimes|array|min:2',
+            'options.*.option_text' => 'required|string|max:5000',
+            'options.*.is_correct' => 'nullable|boolean',
+            'options.*.sort_order' => 'nullable|integer|min:0',
         ];
 
         // Type-specific completeness, mirroring StoreQuestionRequest so an
@@ -115,6 +121,19 @@ class UpdateQuestionRequest extends FormRequest
                     'metadata.grading.key',
                     'An auto-graded interactive question must define a hidden answer key.'
                 );
+            }
+        });
+
+        $validator->after(function ($validator) {
+            if (! $this->has('options') || ! in_array($this->effectiveType(), ['multiple_choice', 'true_false'], true)) {
+                return;
+            }
+
+            $hasCorrect = collect($this->input('options', []))
+                ->contains(fn ($o) => (bool) ($o['is_correct'] ?? false));
+
+            if (! $hasCorrect) {
+                $validator->errors()->add('options', 'At least one option must be marked as correct.');
             }
         });
     }

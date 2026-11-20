@@ -287,6 +287,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('exams/{exam}', [ExamController::class, 'destroy']);
             Route::post('exams/{exam}/publish', [ExamController::class, 'publish']);
             Route::post('exams/{exam}/add-questions', [ExamController::class, 'addQuestions']);
+            Route::post('exams/{exam}/questions/reorder', [ExamController::class, 'reorderQuestions']);
             Route::delete('exams/{exam}/questions/{question}', [ExamController::class, 'removeQuestion']);
 
             // Exam Sections
