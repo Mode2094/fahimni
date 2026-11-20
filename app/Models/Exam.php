@@ -62,7 +62,10 @@ class Exam extends Model
     public function questions()
     {
         return $this->belongsToMany(Question::class, 'exam_questions')
-            ->withPivot('sort_order', 'points_override');
+            ->withPivot('sort_order', 'points_override')
+            // The teacher-defined order lives on the pivot; keep it stable both
+            // for the builder and for a student's attempt payload.
+            ->orderBy('exam_questions.sort_order');
     }
 
     public function attempts(): HasMany

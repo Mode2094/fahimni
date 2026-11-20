@@ -240,6 +240,7 @@ class ExamAttemptController extends Controller
 
         $examQuestions = ExamQuestion::where('exam_id', $exam->id)
             ->with('question.options')
+            ->orderBy('sort_order')
             ->get()
             // Skip soft-deleted questions so they can never break a run.
             ->reject(fn ($eq) => ! $eq->question)

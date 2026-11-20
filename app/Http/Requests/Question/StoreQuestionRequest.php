@@ -104,7 +104,7 @@ class StoreQuestionRequest extends FormRequest
                 );
             }
 
-            if ($this->input('question_type') !== 'multiple_choice') {
+            if (! in_array($this->input('question_type'), ['multiple_choice', 'true_false'], true)) {
                 return;
             }
 
