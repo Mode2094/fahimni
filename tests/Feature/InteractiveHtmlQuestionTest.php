@@ -736,4 +736,158 @@ class InteractiveHtmlQuestionTest extends TenantTestCase
         $this->assertEquals(100.0, (float) $submit->json('result.percentage'));
         $this->assertFalse($submit->json('result.needs_review'));
     }
+
+    // ─────────────── (7) the independent "سؤال HTML" (custom_html) type ───────────────
+
+    /**
+     * The HTML question is a SEPARATE teacher-facing type that reuses the same
+     * sandbox + grader. These tests lock the split so a future change cannot
+     * quietly merge it back into `interactive_html` (the regression we fix).
+     */
+    public function test_question_type_registry_keeps_both_sandbox_types_independent(): void
+    {
+        $this->assertContains('interactive_html', Question::TYPES);
+        $this->assertContains('custom_html', Question::TYPES);
+        $this->assertCount(10, Question::TYPES);
+
+        $this->assertSame(['interactive_html', 'custom_html'], Question::SANDBOX_TYPES);
+        $this->assertNotSame(Question::TYPE_INTERACTIVE_HTML, Question::TYPE_CUSTOM_HTML);
+        $this->assertTrue(Question::isSandboxType('custom_html'));
+        $this->assertTrue(Question::isSandboxType('interactive_html'));
+        $this->assertFalse(Question::isSandboxType('multiple_choice'));
+        $this->assertFalse(Question::isSandboxType(null));
+    }
+
+    private function customHtml(Tenant $tenant, array $grading, string $html = '<h1>Hi</h1>', string $js = ''): Question
+    {
+        return Question::create([
+            'id' => UuidV7::generate(), 'tenant_id' => $tenant->id,
+            'question_type' => Question::TYPE_CUSTOM_HTML,
+            'question_text' => 'HTML question', 'points' => 10, 'is_active' => true,
+            'metadata' => [
+                'interactive' => ['html' => $html, 'css' => 'body{margin:0}', 'js' => $js, 'height' => 320, 'auto_capture' => true],
+                'grading' => $grading,
+            ],
+        ]);
+    }
+
+    public function test_teacher_can_create_a_custom_html_question_through_the_api(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        $headers = $this->authHeaders($this->teacher($tenant), $tenant);
+
+        $create = $this->withHeaders($headers)->postJson('/api/v1/questions', [
+            'question_type' => 'custom_html',
+            'question_text' => 'Paste a full HTML document',
+            'points' => 5,
+            'metadata' => [
+                'interactive' => ['html' => '<!doctype html><h1>x</h1>', 'css' => 'h1{color:red}', 'js' => 'FahimniQuestion.setAnswer(7)', 'height' => 300, 'auto_capture' => true],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 7],
+            ],
+        ]);
+
+        $create->assertCreated();
+        $id = $create->json('question.id');
+        $this->assertDatabaseHas('questions', ['id' => $id, 'question_type' => 'custom_html']);
+
+        $stored = Question::withoutTenant()->findOrFail($id);
+        $this->assertSame('<!doctype html><h1>x</h1>', $stored->metadata['interactive']['html']);
+        $this->assertSame(7, $stored->metadata['grading']['key']);
+    }
+
+    public function test_custom_html_enforces_the_same_payload_and_key_rules(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        $headers = $this->authHeaders($this->teacher($tenant), $tenant);
+
+        // Missing the payload.
+        $this->withHeaders($headers)->postJson('/api/v1/questions', [
+            'question_type' => 'custom_html',
+            'question_text' => 'x',
+            'metadata' => ['grading' => ['mode' => 'manual']],
+        ])->assertStatus(422)->assertJsonValidationErrors('metadata.interactive.html');
+
+        // Auto grading without a hidden key.
+        $this->withHeaders($headers)->postJson('/api/v1/questions', [
+            'question_type' => 'custom_html',
+            'question_text' => 'x',
+            'metadata' => [
+                'interactive' => ['html' => '<div></div>'],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice'],
+            ],
+        ])->assertStatus(422)->assertJsonValidationErrors('metadata.grading.key');
+    }
+
+    public function test_custom_html_grades_and_never_leaks_its_key(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        [$course, $section, $student] = $this->studentWithCourse($tenant);
+        $this->enroll($tenant, $course, $student);
+
+        $question = $this->customHtml(
+            $tenant,
+            ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 'SECRET_HTML_KEY'],
+            '<button>answer</button>',
+            'FahimniQuestion.setAnswer("student")'
+        );
+        $exam = $this->examWith($tenant, $course, $section, [[$question, 10]], 50);
+
+        $studentHeaders = $this->authHeaders($student, $tenant);
+        $start = $this->withHeaders($studentHeaders)->postJson("/api/v1/exams/{$exam->id}/attempt");
+        $start->assertOk();
+        $attemptId = $start->json('attempt.id');
+        $row = collect($start->json('questions'))->firstWhere('question_id', $question->id);
+
+        $this->assertSame('custom_html', $row['question_type']);
+        $this->assertSame('<button>answer</button>', $row['metadata']['interactive']['html']);
+        $this->assertArrayNotHasKey('grading', $row['metadata']);
+        $this->assertStringNotContainsString('SECRET_HTML_KEY', json_encode($start->json('questions')));
+
+        $submit = $this->withHeaders($studentHeaders)->postJson(
+            "/api/v1/exams/{$exam->id}/attempts/{$attemptId}/submit",
+            ['answers' => [[
+                'exam_question_id' => $row['exam_question_id'],
+                'question_id' => $question->id,
+                'given_answer' => 'SECRET_HTML_KEY',
+            ]]]
+        );
+        $submit->assertOk();
+        $this->assertEquals(10.0, (float) $submit->json('result.score'));
+        $this->assertFalse($submit->json('result.needs_review'));
+    }
+
+    public function test_custom_html_and_interactive_html_coexist_in_one_exam_without_sharing_type(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        [$course, $section, $student] = $this->studentWithCourse($tenant);
+        $this->enroll($tenant, $course, $student);
+
+        $interactive = $this->interactive($tenant, ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 1]);
+        $html = $this->customHtml($tenant, ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 2]);
+
+        $exam = $this->examWith($tenant, $course, $section, [[$interactive, 10], [$html, 10]], 0);
+
+        $headers = $this->authHeaders($student, $tenant);
+        $start = $this->withHeaders($headers)->postJson("/api/v1/exams/{$exam->id}/attempt");
+        $attemptId = $start->json('attempt.id');
+        $byQuestion = collect($start->json('questions'))->keyBy('question_id');
+
+        // Both types survive side by side, each keeping its own id.
+        $this->assertSame('interactive_html', $byQuestion[$interactive->id]['question_type']);
+        $this->assertSame('custom_html', $byQuestion[$html->id]['question_type']);
+
+        $submit = $this->withHeaders($headers)->postJson("/api/v1/exams/{$exam->id}/attempts/{$attemptId}/submit", [
+            'answers' => [
+                ['exam_question_id' => $byQuestion[$interactive->id]['exam_question_id'], 'question_id' => $interactive->id, 'given_answer' => '1'],
+                ['exam_question_id' => $byQuestion[$html->id]['exam_question_id'], 'question_id' => $html->id, 'given_answer' => '2'],
+            ],
+        ]);
+        $submit->assertOk();
+        $this->assertEquals(20.0, (float) $submit->json('result.score'));
+        $this->assertFalse($submit->json('result.needs_review'));
+    }
 }

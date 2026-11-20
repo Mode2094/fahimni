@@ -173,7 +173,7 @@ export function QuestionRenderer({ q, value, onChange }: {
     return <FileUploadAnswer value={typeof value === 'string' ? value : ''} onChange={onChange} />;
   }
 
-  if (type === 'interactive_html') {
+  if (type === 'interactive_html' || type === 'custom_html') {
     const interactive = md.interactive || {};
     return (
       <InteractiveHtmlQuestion

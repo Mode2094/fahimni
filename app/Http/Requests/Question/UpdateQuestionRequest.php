@@ -78,9 +78,9 @@ class UpdateQuestionRequest extends FormRequest
         ];
 
         // Type-specific completeness, mirroring StoreQuestionRequest so an
-        // update can never leave an interactive question without its payload.
+        // update can never leave an interactive/HTML question without its payload.
         return match ($questionType) {
-            'interactive_html' => [
+            'interactive_html', 'custom_html' => [
                 ...$rules,
                 'metadata.interactive' => 'sometimes|required|array',
                 'metadata.interactive.html' => 'sometimes|required|string|max:200000',
@@ -101,11 +101,11 @@ class UpdateQuestionRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
-            if ($this->effectiveType() !== 'interactive_html' || ! $this->exists('metadata')) {
+            if (! Question::isSandboxType($this->effectiveType()) || ! $this->exists('metadata')) {
                 return;
             }
 
-            // Metadata is a full replacement on update, so an interactive
+            // Metadata is a full replacement on update, so an interactive/HTML
             // payload must be present — it may not be dropped to bypass the
             // size/shape checks or to strip the hidden grading rule.
             if (! is_array($this->input('metadata.interactive'))) {

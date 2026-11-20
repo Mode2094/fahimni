@@ -13,13 +13,13 @@ import { gradingKeyToText, parseGradingKey } from '@/lib/interactive-question';
 import { useLocale } from '@/store/locale';
 import { toast } from 'sonner';
 import {
-  X, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Loader2, ClipboardList,
+  Plus, Pencil, Trash2, ArrowUp, ArrowDown, Loader2, ClipboardList,
   CheckCircle2, XCircle, Search, HelpCircle, ArrowRight, ArrowLeft,
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-/** The nine question types, with a label + emoji for the list/filter UI. */
+/** The ten question types, with a label + emoji for the list/filter UI. */
 export const QUESTION_TYPE_META: Record<string, { ar: string; en: string; icon: string }> = {
   multiple_choice: { ar: 'اختيار متعدد', en: 'Multiple choice', icon: '☑️' },
   true_false: { ar: 'صح / خطأ', en: 'True / False', icon: '✅' },
@@ -30,6 +30,7 @@ export const QUESTION_TYPE_META: Record<string, { ar: string; en: string; icon: 
   writing: { ar: 'إجابة كتابية', en: 'Written answer', icon: '📝' },
   file_upload: { ar: 'رفع ملف', en: 'File upload', icon: '📎' },
   interactive_html: { ar: 'سؤال تفاعلي', en: 'Interactive (HTML)', icon: '🧪' },
+  custom_html: { ar: 'سؤال HTML', en: 'HTML question', icon: '🌐' },
 };
 
 const EMPTY_QUESTION: QuestionDraft = {
@@ -52,8 +53,10 @@ export type ExamEditorProps = {
 
 /**
  * The single place a teacher manages one exam: its settings and its questions,
- * side by side, in a wide full-screen panel. Questions are authored with the one
- * shared QuestionBuilder (all nine types incl. the interactive HTML sandbox),
+ * together, inside the course content area (never a full-screen overlay, so the
+ * main sidebar stays visible and usable). Questions are authored with the one
+ * shared QuestionBuilder (all ten types, including the interactive question and
+ * the separate HTML question, both sandboxed),
  * and saved questions from the course can be attached with a click. Removing a
  * question only detaches it from the exam — the question and any historical
  * results are never deleted.
@@ -260,7 +263,7 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
       if (draft.question_type === 'ordering') meta.items = draft.items.filter((i) => String(i).trim());
       if (draft.question_type === 'fill_blank') meta.answers = draft.answers.filter((a) => String(a).trim());
       if (draft.question_type === 'writing') meta.keywords = draft.keywords.split(',').map((k) => k.trim()).filter(Boolean);
-      if (draft.question_type === 'interactive_html') {
+      if (draft.question_type === 'interactive_html' || draft.question_type === 'custom_html') {
         meta.interactive = {
           html: draft.interactive_html,
           css: draft.interactive_css,
@@ -311,9 +314,14 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-slate-50" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
-      {/* Header */}
-      <header className="flex items-center gap-3 border-b bg-white px-4 py-3 sm:px-6">
+    <div className="space-y-4" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
+      {/* Header — stays inside the course content, so the main sidebar remains
+          visible and usable while the teacher edits this exam. */}
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <Button variant="outline" className="gap-2 rounded-full" onClick={onClose}>
+          {locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+          {t('رجوع إلى الكورس', 'Back to course')}
+        </Button>
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100">
           <ClipboardList className="h-5 w-5 text-violet-600" />
         </span>
@@ -326,11 +334,10 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
         <Badge className={exam.is_published ? 'border-0 bg-green-50 text-green-600' : 'border-0 bg-gray-100 text-gray-500'}>
           {exam.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}
         </Badge>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('إغلاق', 'Close')}><X className="h-5 w-5" /></Button>
-      </header>
+      </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1.5 border-b bg-white px-4 py-2 sm:px-6">
+      <div className="flex gap-1.5">
         <button onClick={() => setInnerTab('questions')} className={`rounded-full px-5 py-2 text-sm font-bold transition ${innerTab === 'questions' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-slate-100'}`}>
           {t('الأسئلة', 'Questions')} ({examQuestions.length})
         </button>
@@ -339,9 +346,8 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-          {/* ── Question authoring view ── */}
+      <div className="mx-auto max-w-5xl">
+        {/* ── Question authoring view ── */}
           {innerTab === 'questions' && draft ? (
             <div className="space-y-4">
               <Button variant="ghost" className="gap-2 rounded-full" onClick={closeDraft}>
@@ -494,7 +500,6 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
               </div>
             </div>
           )}
-        </div>
       </div>
     </div>
   );

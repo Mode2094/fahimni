@@ -23,12 +23,32 @@ class Question extends Model
      */
     public const TYPE_INTERACTIVE_HTML = 'interactive_html';
 
+    /**
+     * The standalone HTML question type ("سؤال HTML"). It is a distinct
+     * teacher-facing option from the interactive question, but it reuses the
+     * exact same display payload (`metadata.interactive`) and hidden grading
+     * payload (`metadata.grading`), so the isolated sandbox and the server-side
+     * grader serve both without touching saved `interactive_html` data.
+     */
+    public const TYPE_CUSTOM_HTML = 'custom_html';
+
+    /**
+     * Sandboxed HTML types that share the interactive payload/grader. Kept in
+     * one place so the requests and the grader cannot drift apart.
+     */
+    public const SANDBOX_TYPES = [self::TYPE_INTERACTIVE_HTML, self::TYPE_CUSTOM_HTML];
+
+    public static function isSandboxType(?string $type): bool
+    {
+        return $type !== null && in_array($type, self::SANDBOX_TYPES, true);
+    }
+
     /** Every supported question type. Kept in one place so the requests and
      *  the grader cannot drift apart. */
     public const TYPES = [
         'multiple_choice', 'true_false', 'drag_drop', 'matching',
         'ordering', 'writing', 'fill_blank', 'file_upload',
-        'interactive_html',
+        'interactive_html', 'custom_html',
     ];
 
     protected $fillable = [

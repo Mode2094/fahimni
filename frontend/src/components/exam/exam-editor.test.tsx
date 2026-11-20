@@ -129,4 +129,54 @@ describe('ExamEditor', () => {
     expect(put?.body.title).toBe('اختبار الوحدة');
     expect(put?.body.is_published).toBe(false);
   });
+
+  it('renders inside the course content flow, never as a full-screen overlay', () => {
+    // A regression guard: the editor used to be `fixed inset-0 z-50` and hid the
+    // whole platform (sidebar included). It must stay in the normal flow.
+    const { container } = renderEditor();
+    const root = container.firstElementChild as HTMLElement;
+
+    expect(root.className).not.toContain('fixed');
+    expect(root.className).not.toContain('inset-0');
+    expect(root.className).not.toContain('z-50');
+    // The sidebar lives outside this subtree in PanelShell; with the editor in
+    // normal flow it can no longer be covered.
+    expect(root.className).toContain('space-y-4');
+  });
+
+  it('creates a new HTML question with its own type (custom_html) and sandbox payload', async () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByText('سؤال جديد'));
+
+    // The HTML option is independent from the interactive one.
+    fireEvent.click(screen.getByText('سؤال HTML'));
+
+    // Question text (first textarea) + the HTML/CSS/JS code area.
+    fireEvent.change(container.querySelector('textarea') as HTMLTextAreaElement, { target: { value: 'اكتب مستند HTML' } });
+    fireEvent.change(screen.getByPlaceholderText('الصق وسم HTML هنا…'), { target: { value: '<h1>مرحبا</h1>' } });
+
+    fireEvent.click(screen.getByText('حفظ السؤال'));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/questions'));
+    expect(post?.body.question_type).toBe('custom_html');
+    expect(post?.body.exam_id).toBe('exam-1');
+    expect(post?.body.metadata.interactive.html).toBe('<h1>مرحبا</h1>');
+  });
+
+  it('still creates an interactive question with its original type (interactive_html)', async () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByText('سؤال جديد'));
+    fireEvent.click(screen.getByText('سؤال تفاعلي'));
+
+    fireEvent.change(container.querySelector('textarea') as HTMLTextAreaElement, { target: { value: 'عنصر تفاعلي' } });
+    fireEvent.change(screen.getByPlaceholderText('الصق وسم HTML هنا…'), { target: { value: '<button>x</button>' } });
+
+    fireEvent.click(screen.getByText('حفظ السؤال'));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/questions'));
+    expect(post?.body.question_type).toBe('interactive_html');
+    expect(post?.body.metadata.interactive.html).toBe('<button>x</button>');
+  });
 });

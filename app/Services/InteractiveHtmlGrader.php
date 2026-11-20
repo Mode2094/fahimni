@@ -5,7 +5,8 @@ namespace App\Services;
 use App\Models\Question;
 
 /**
- * Server-side grader for `interactive_html` questions.
+ * Server-side grader for the sandboxed HTML questions (`interactive_html`
+ * and `custom_html`).
  *
  * The teacher's HTML/CSS/JS never decides a score: the sandboxed browser frame
  * only reports the value the student produced. This service compares that

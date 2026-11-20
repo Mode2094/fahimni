@@ -66,7 +66,7 @@ class StoreQuestionRequest extends FormRequest
                 'metadata.keywords' => 'sometimes|array',
                 'metadata.keywords.*' => 'required|string|max:100',
             ],
-            'interactive_html' => [
+            'interactive_html', 'custom_html' => [
                 ...$rules,
                 // Display payload — the only part sent to a student.
                 'metadata.interactive' => 'required|array',
@@ -95,7 +95,7 @@ class StoreQuestionRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
-            if ($this->input('question_type') === 'interactive_html'
+            if (Question::isSandboxType($this->input('question_type'))
                 && $this->input('metadata.grading.mode') === InteractiveHtmlGrader::MODE_AUTO
                 && $this->input('metadata.grading.key') === null) {
                 $validator->errors()->add(

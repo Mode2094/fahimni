@@ -27,6 +27,8 @@ const PLAN_SUCCESS = ok({
     videos: { used: 5, limit: 200 },
     live_sessions: { used: 1, limit: 50 },
     recordings: { used: 0, limit: 5 },
+    files: { used: 7, limit: 100 },
+    pdfs: { used: 2, limit: 50 },
   },
 });
 
@@ -116,6 +118,23 @@ describe('Teacher Dashboard', () => {
 
     expect(await screen.findByText('الدروس القادمة')).toBeInTheDocument();
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
+  });
+
+  it('replaced the always-empty media tiles with real file usage', async () => {
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    const { container } = render(<TeacherDashboard />);
+
+    expect(await screen.findByText('الوسائط والملفات')).toBeInTheDocument();
+    // The two dead tiles (always 0 / $0.00) are gone.
+    expect(screen.queryByText('التسجيلات')).toBeNull();
+    expect(screen.queryByText('التكلفة التقديرية (الشهر)')).toBeNull();
+    expect(container.textContent).not.toContain('$0.00');
+    // Real counted resources replace them.
+    expect(screen.getByText('الملفات')).toBeInTheDocument();
+    expect(screen.getByText('ملفات PDF')).toBeInTheDocument();
+    expect(screen.getByText('7 / 100')).toBeInTheDocument();
+    expect(screen.getByText('2 / 50')).toBeInTheDocument();
   });
 
   it('shows the platform publish card with the teacher link and a settings shortcut', async () => {

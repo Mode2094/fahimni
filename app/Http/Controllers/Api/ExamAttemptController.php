@@ -42,11 +42,12 @@ class ExamAttemptController extends Controller
      */
     private function studentSafeMetadata(array $metadata, string $questionType): array
     {
-        // interactive_html uses an explicit ALLOWLIST, not a denylist: the
-        // teacher's html/css/js is display-only and the hidden answer key lives
-        // in metadata.grading. Only the interactive payload may reach a
-        // student, so a future metadata key can never leak by default.
-        if ($questionType === Question::TYPE_INTERACTIVE_HTML) {
+        // The sandboxed HTML types (interactive_html / custom_html) use an
+        // explicit ALLOWLIST, not a denylist: the teacher's html/css/js is
+        // display-only and the hidden answer key lives in metadata.grading.
+        // Only the interactive payload may reach a student, so a future
+        // metadata key can never leak by default.
+        if (Question::isSandboxType($questionType)) {
             $interactive = is_array($metadata['interactive'] ?? null) ? $metadata['interactive'] : [];
 
             return [
@@ -367,19 +368,19 @@ class ExamAttemptController extends Controller
             $question = $examQuestion->question;
             $pointsMax = (float) ($examQuestion->points_override ?? $question->points);
 
-            // Writing and file answers cannot be auto-graded truthfully, and an
-            // interactive question without a decisive key must be reviewed too:
-            // the attempt is flagged and only the teacher's score counts.
+            // Writing and file answers cannot be auto-graded truthfully, and a
+            // sandboxed HTML question without a decisive key must be reviewed
+            // too: the attempt is flagged and only the teacher's score counts.
             if (in_array($question->question_type, ['writing', 'file_upload'], true)
-                || ($question->question_type === Question::TYPE_INTERACTIVE_HTML
+                || (Question::isSandboxType($question->question_type)
                     && $this->interactiveGrader()->requiresManualReview($question))) {
                 $needsReview = true;
             }
 
-            // Reject an unbounded interactive-html blob before it is compared or
-            // persisted (scoped to that type so existing answer limits for the
+            // Reject an unbounded sandboxed answer blob before it is compared or
+            // persisted (scoped to those types so existing answer limits for the
             // eight original types are unchanged).
-            if ($question->question_type === Question::TYPE_INTERACTIVE_HTML
+            if (Question::isSandboxType($question->question_type)
                 && ! $this->interactiveGrader()->isWithinSizeLimit($ans['given_answer'])) {
                 abort(422, 'Answer is too large.');
             }
@@ -638,7 +639,7 @@ class ExamAttemptController extends Controller
 
     private function checkAnswer(Question $question, mixed $givenAnswer): ?bool
     {
-        if ($question->question_type === Question::TYPE_INTERACTIVE_HTML) {
+        if (Question::isSandboxType($question->question_type)) {
             return $this->interactiveGrader()->grade($question, $givenAnswer);
         }
 
