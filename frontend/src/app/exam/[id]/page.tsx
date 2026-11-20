@@ -52,6 +52,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       writing: ['إجابة كتابية', 'Written'],
       file_upload: ['رفع ملف', 'File upload'],
       interactive_html: ['سؤال تفاعلي', 'Interactive'],
+      custom_html: ['سؤال HTML', 'HTML'],
     };
     const l = map[tp] || [tp, tp];
     return locale === 'ar' ? l[0] : l[1];

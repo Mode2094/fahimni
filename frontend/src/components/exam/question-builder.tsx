@@ -36,6 +36,7 @@ const QUESTION_TYPES = [
   { id: 'writing', ar: 'إجابة كتابية', en: 'Written answer', icon: '📝' },
   { id: 'file_upload', ar: 'رفع ملف', en: 'File upload', icon: '📎' },
   { id: 'interactive_html', ar: 'سؤال تفاعلي', en: 'Interactive (HTML)', icon: '🧪' },
+  { id: 'custom_html', ar: 'سؤال HTML', en: 'HTML question', icon: '🌐' },
 ];
 
 const MATH_SYMBOLS = ['α', 'β', 'γ', 'θ', 'λ', 'π', '√', '∑', '∫', '∞', '≈', '≠', '≤', '≥', '×', '÷', '±', '→', '←', '⇒', '⇔', 'Δ', '∂', '°', '′', '²', '³'];
@@ -257,8 +258,15 @@ export function QuestionBuilder({ value, onChange, sections, exams, lockExam = f
         </div>
       )}
 
-      {value.question_type === 'interactive_html' && (
-        <InteractiveHtmlEditor value={value} onChange={set} />
+      {(value.question_type === 'interactive_html' || value.question_type === 'custom_html') && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-400">
+            {value.question_type === 'custom_html'
+              ? t('سؤال HTML: الصق مستند HTML كاملاً مع CSS وJavaScript، مع معاينة حية وحفظ وتصحيح.', 'HTML question: paste a full HTML document with CSS and JavaScript, with live preview, saving and grading.')
+              : t('سؤال تفاعلي: ابنِ عنصراً تفاعلياً داخل إطار معزول (كما كان).', 'Interactive question: build an interactive widget inside an isolated frame (unchanged).')}
+          </p>
+          <InteractiveHtmlEditor value={value} onChange={set} />
+        </div>
       )}
 
       {/* Attachments */}

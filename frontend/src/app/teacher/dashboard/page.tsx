@@ -358,17 +358,17 @@ export default function TeacherDashboard() {
             })}
           </div>
 
-          {/* الوسائط: فيديوهات/بث/تسجيلات + التكلفة (بلا تكرار التخزين) */}
+          {/* الوسائط والملفات: فيديوهات/بث + ملفات/PDF (بلا تكرار التخزين) */}
           <div className="mt-5 border-t border-slate-100 pt-5">
-            <h3 className="text-sm font-bold mb-3 flex items-center gap-2"><Film className="h-4 w-4 text-teal-600" />{t('الوسائط', 'Media')}</h3>
+            <h3 className="text-sm font-bold mb-3 flex items-center gap-2"><Film className="h-4 w-4 text-teal-600" />{t('الوسائط والملفات', 'Media & files')}</h3>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
                 { label: t('الفيديوهات', 'Videos'), value: `${usage?.videos?.used ?? 0} / ${usage?.videos?.unlimited ? '∞' : (usage?.videos?.limit ?? 0)}` },
                 { label: t('جلسات البث', 'Live sessions'), value: `${usage?.live_sessions?.used ?? 0} / ${usage?.live_sessions?.unlimited ? '∞' : (usage?.live_sessions?.limit ?? 0)}` },
-                { label: t('التسجيلات', 'Recordings'), value: `${usage?.recordings?.used ?? 0} / ${usage?.recordings?.unlimited ? '∞' : (usage?.recordings?.limit ?? 0)}` },
-                { label: t('التكلفة التقديرية (الشهر)', 'Est. cost (month)'), value: `$${(Number((analytics as any)?.monthly_infra_cost ?? 0)).toFixed(2)}`, muted: true },
+                { label: t('الملفات', 'Files'), value: `${usage?.files?.used ?? 0} / ${usage?.files?.unlimited ? '∞' : (usage?.files?.limit ?? 0)}` },
+                { label: t('ملفات PDF', 'PDFs'), value: `${usage?.pdfs?.used ?? 0} / ${usage?.pdfs?.unlimited ? '∞' : (usage?.pdfs?.limit ?? 0)}` },
               ].map((m, i) => (
-                <div key={i} className={`rounded-xl border border-slate-100 px-4 py-3 ${m.muted ? 'bg-teal-50/50' : ''}`}>
+                <div key={i} className="rounded-xl border border-slate-100 px-4 py-3">
                   <p className="text-xs text-gray-500 font-semibold">{m.label}</p>
                   <p className="text-base font-bold mt-0.5">{m.value}</p>
                 </div>

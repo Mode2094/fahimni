@@ -593,6 +593,10 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      {/* The whole course content is hidden while an exam is being edited, so
+          the exam editor takes over the content area while the main sidebar
+          stays visible and usable. */}
+      <div className={viewerExam ? 'hidden' : 'space-y-6'}>
       {/* ─── رأس الكورس ─────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
@@ -781,8 +785,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <Button variant="outline" onClick={openSecAdd} className="gap-2 rounded-full w-full border-dashed py-3"><Plus className="h-4 w-4" />{t('إضافة وحدة', 'Add unit')}</Button>
         </div>
       )}
+      </div>
 
-      {/* ─── محرر الاختبار الموحّد (إعدادات + أسئلة في مكان واحد) ───────── */}
+      {/* ─── محرر الاختبار الموحّد — داخل مساحة محتوى الكورس (بلا تغطية الشاشة) ───────── */}
       {viewerExam && (
         <ExamEditor
           exam={viewerExam}
