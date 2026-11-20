@@ -8,6 +8,7 @@ use App\Models\Course;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
 class AnnouncementController extends Controller
@@ -26,49 +27,54 @@ class AnnouncementController extends Controller
 
         $role = $user->tenantPivots()
             ->where('tenant_id', $tenantId)
+            ->where('status', 'active')
             ->first()?->role;
 
-        $isStaff = in_array($role, ['teacher', 'owner', 'admin'], true);
+        // Staff capability is derived from the session membership (pivot role)
+        // — never from client-side state — and mirrored to the frontend so the
+        // create/send controls match exactly what the API will authorise.
+        $isStaff = $user->is_super_admin
+            || in_array($role, ['teacher', 'owner', 'admin'], true);
 
-        $query = Announcement::where('tenant_id', $tenantId);
+        // Keep the entire OR-tree inside a single tenant-scoped group: an
+        // ungrouped `orWhere` would let a draft from another tenant leak in.
+        $query = Announcement::where('tenant_id', $tenantId)
+            ->where(function ($q) use ($role, $user, $tenantId) {
+                // (Sent AND audience-visible) …
+                $q->where(function ($sent) use ($role, $user, $tenantId) {
+                    $sent->where('status', 'sent')->whereNotNull('published_at');
 
-        // (Sent AND audience-visible) OR (own drafts — so teachers can
-        // manage announcements before publishing them).
-        $query->where(function ($q) use ($role, $user, $tenantId) {
-            $q->where('status', 'sent')
-                ->whereNotNull('published_at');
+                    $sent->where(function ($aud) use ($role, $user, $tenantId) {
+                        $aud->where('audience', 'all');
 
-            $q->where(function ($aud) use ($role, $user, $tenantId) {
-                $aud->where('audience', 'all');
+                        $studentRoles = ['student', 'parent'];
+                        if (in_array($role, $studentRoles, true)) {
+                            $aud->orWhere('audience', 'students');
+                        } else {
+                            $aud->orWhere('audience', 'teachers')
+                                ->orWhere('audience', 'admins');
+                        }
 
-                $studentRoles = ['student', 'parent'];
-                if (in_array($role, $studentRoles, true)) {
-                    $aud->orWhere('audience', 'students');
-                } else {
-                    $aud->orWhere('audience', 'teachers')
-                        ->orWhere('audience', 'admins');
-                }
-
-                $aud->orWhere(function ($courseQ) use ($user, $tenantId) {
-                    $courseQ->where('audience', 'course')
-                        ->whereExists(function ($exists) use ($user, $tenantId) {
-                            $exists->selectRaw('1')
-                                ->from('enrollments')
-                                ->whereColumn('enrollments.course_id', 'announcements.course_id')
-                                ->where('enrollments.user_id', $user->id)
-                                ->where('enrollments.tenant_id', $tenantId)
-                                ->whereIn('enrollments.status', ['active', 'completed'])
-                                ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
+                        $aud->orWhere(function ($courseQ) use ($user, $tenantId) {
+                            $courseQ->where('audience', 'course')
+                                ->whereExists(function ($exists) use ($user, $tenantId) {
+                                    $exists->selectRaw('1')
+                                        ->from('enrollments')
+                                        ->whereColumn('enrollments.course_id', 'announcements.course_id')
+                                        ->where('enrollments.user_id', $user->id)
+                                        ->where('enrollments.tenant_id', $tenantId)
+                                        ->whereIn('enrollments.status', ['active', 'completed'])
+                                        ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
+                                });
                         });
+
+                        $aud->orWhere('sender_id', $user->id);
+                    });
                 });
 
-                $aud->orWhere('sender_id', $user->id);
+                // … OR own drafts, so the author can manage them before publishing.
+                $q->orWhere(fn ($d) => $d->where('sender_id', $user->id)->where('status', 'draft'));
             });
-        });
-
-        if ($isStaff) {
-            $query->orWhere(fn ($d) => $d->where('sender_id', $user->id)->where('status', 'draft'));
-        }
 
         $announcements = $query
             ->with('sender:id,name,avatar_url')
@@ -82,6 +88,7 @@ class AnnouncementController extends Controller
                 'last_page' => $announcements->lastPage(),
                 'per_page' => $announcements->perPage(),
                 'total' => $announcements->total(),
+                'can_manage' => $isStaff,
             ],
         ]);
     }
@@ -201,47 +208,71 @@ class AnnouncementController extends Controller
         $tenantId = $request->current_tenant->id;
         $this->authorizeSender($request, $tenantId);
 
-        $announcement = Announcement::where('tenant_id', $tenantId)->findOrFail($id);
+        // Claim + publish atomically. The row lock (and the re-check under it)
+        // makes a double-click / concurrent request a single send instead of
+        // two identical fan-outs.
+        $recipientCount = DB::transaction(function () use ($request, $tenantId, $id) {
+            $announcement = Announcement::where('tenant_id', $tenantId)
+                ->lockForUpdate()
+                ->findOrFail($id);
 
-        abort_if($announcement->status === 'sent', 422, 'Announcement already sent.');
+            abort_if($announcement->status === 'sent', 422, 'Announcement already sent.');
 
-        $recipients = $this->notificationService->resolveAudience(
-            $tenantId,
-            $announcement->audience,
-            $announcement->course_id,
-        );
+            // In-app delivery is the guaranteed channel: the announcement must
+            // always show up in the student's notifications even when mail /
+            // push are disabled or unconfigured.
+            $channels = is_array($announcement->channels) ? $announcement->channels : [];
+            if (! in_array('database', $channels, true)) {
+                $channels[] = 'database';
+            }
 
-        $this->notificationService->dispatch(
-            notifiable: $recipients,
-            type: 'announcement.published',
-            title: $announcement->title,
-            body: $announcement->body,
-            sender: $request->user(),
-            tenantId: $tenantId,
-            data: [
-                'announcement_id' => $announcement->id,
-                'audience' => $announcement->audience,
-                'action_url' => url('/announcements'),
-            ],
-            channels: $announcement->channels,
-        );
+            $recipients = $this->notificationService->resolveAudience(
+                $tenantId,
+                $announcement->audience,
+                $announcement->course_id,
+            );
 
-        $announcement->update([
-            'status' => 'sent',
-            'published_at' => now(),
-            'scheduled_at' => null,
-        ]);
+            $this->notificationService->dispatch(
+                notifiable: $recipients,
+                type: 'announcement.published',
+                title: $announcement->title,
+                body: $announcement->body,
+                sender: $request->user(),
+                tenantId: $tenantId,
+                data: [
+                    'announcement_id' => $announcement->id,
+                    'audience' => $announcement->audience,
+                    'action_url' => '/announcements?open='.$announcement->id,
+                ],
+                channels: $channels,
+            );
+
+            $announcement->update([
+                'status' => 'sent',
+                'published_at' => now(),
+                'scheduled_at' => null,
+            ]);
+
+            return $recipients->count();
+        });
 
         return response()->json([
             'message' => 'Announcement sent.',
-            'recipient_count' => $recipients->count(),
+            'recipient_count' => $recipientCount,
         ]);
     }
 
     private function authorizeSender(Request $request, string $tenantId): void
     {
-        $role = $request->user()->tenantPivots()
+        $user = $request->user();
+
+        if ($user->is_super_admin) {
+            return;
+        }
+
+        $role = $user->tenantPivots()
             ->where('tenant_id', $tenantId)
+            ->where('status', 'active')
             ->first()?->role;
 
         abort_if(! in_array($role, ['teacher', 'owner', 'admin'], true), 403, 'Teacher access required.');

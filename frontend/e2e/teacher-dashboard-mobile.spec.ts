@@ -96,19 +96,18 @@ test.describe('Teacher dashboard — mobile redesign', () => {
     await ctx.close();
   });
 
-  test('phone: copy link works, drawer opens/closes, assistant never covers the stats', async ({ browser }) => {
+  test('phone: copy link works, drawer opens/closes, no floating assistant covers the stats', async ({ browser }) => {
     const ctx = await browser.newContext({ storageState: session, permissions: ['clipboard-read', 'clipboard-write'] });
     const page = await ctx.newPage();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/teacher/dashboard');
     await expect(page.getByTestId('stats-grid')).toBeVisible();
 
-    // The floating assistant must not sit over the statistics.
-    const fab = await page.getByTestId('askme-fab').boundingBox();
-    const grid = await page.getByTestId('stats-grid').boundingBox();
-    expect(fab && grid, 'assistant button and stats grid are both mounted').toBeTruthy();
-    const overlaps = !(fab!.y >= grid!.y + grid!.height || fab!.y + fab!.height <= grid!.y);
-    expect(overlaps, 'assistant FAB overlaps the stats grid').toBe(false);
+    // The AI assistant lives in the sidebar now — the floating button and the
+    // «اسألني عن منصتك» bubble must be completely gone, so nothing overlaps the
+    // statistics or the navigation/logout controls.
+    await expect(page.getByTestId('askme-fab')).toHaveCount(0);
+    await expect(page.getByText('اسألني عن منصتك')).toHaveCount(0);
 
     // Copy the platform link in one tap — the real clipboard must receive it.
     const copyBtn = page.getByRole('button', { name: /نسخ رابط المنصة|Copy platform link/ });

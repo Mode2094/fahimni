@@ -31,6 +31,7 @@ const TYPE_LABELS: Record<string, { ar: string; en: string }> = {
   'payment.completed': { ar: 'اكتمال دفعة', en: 'Payment completed' },
   'announcement.published': { ar: 'إعلانات عامة', en: 'Announcements' },
   'chat.message': { ar: 'رسائل المحادثة', en: 'Chat messages' },
+  'community.reply': { ar: 'ردود المجتمع', en: 'Community replies' },
 };
 
 /* ترجمة إشعارات قديمة مخزنة بالإنجليزية حسب نوعها */
@@ -90,6 +91,20 @@ export default function NotificationsPage() {
     await notificationsApi.markAsRead(id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString(), read_in_app: true } : n)));
     refreshUnread();
+  };
+
+  /**
+   * A notification may point somewhere (full announcement, community thread).
+   * Open it and mark read in one gesture. The mark-read request must finish
+   * BEFORE navigating: a fire-and-forget request is aborted by the navigation
+   * and the unread flag would silently survive.
+   */
+  const openNotification = async (n: any) => {
+    const url = typeof n.data?.action_url === 'string' ? n.data.action_url : null;
+    if (!n.read_at) {
+      try { await markRead(n.id); } catch { /* navigate anyway */ }
+    }
+    if (url) window.location.href = url;
   };
 
   const markAll = async () => {
@@ -164,10 +179,11 @@ export default function NotificationsPage() {
               notifications.map((raw) => {
                 const n = locale === 'ar' ? translateLegacyNotification(raw, t) : raw;
                 return (
-                <button key={n.id} type="button" onClick={() => !n.read_at && markRead(n.id)} className={`flex w-full items-start gap-3 p-3 rounded-xl border cursor-pointer text-start transition-colors ${n.read_at ? 'border-gray-100 bg-white' : 'border-teal-100 bg-teal-50/60'}`}>
+                <button key={n.id} type="button" onClick={() => openNotification(n)} className={`flex w-full items-start gap-3 p-3 rounded-xl border cursor-pointer text-start transition-colors ${n.read_at ? 'border-gray-100 bg-white' : 'border-teal-100 bg-teal-50/60'}`}>
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
                     {n.type === 'chat.message' ? <MessageSquare className="h-4 w-4 text-violet-500" />
                       : n.type === 'announcement.published' ? <Megaphone className="h-4 w-4 text-amber-500" />
+                      : n.type === 'community.reply' ? <MessagesSquare className="h-4 w-4 text-teal-600" />
                       : <Bell className="h-4 w-4 text-teal-600" />}
                   </span>
                   <span className="block flex-1 min-w-0">

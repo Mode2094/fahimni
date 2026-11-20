@@ -104,6 +104,7 @@ export const pushTokens = {
 
 export const announcementsApi = {
   list: (perPage = 20) => api.get<{ announcements: any[]; meta: any }>(`/announcements?per_page=${perPage}`).then(r => r.data),
+  get: (id: string) => api.get<{ announcement: any }>(`/announcements/${id}`).then(r => r.data.announcement),
   create: (d: any) => api.post('/announcements', d),
   update: (id: string, d: any) => api.put(`/announcements/${id}`, d),
   remove: (id: string) => api.delete(`/announcements/${id}`),
