@@ -118,6 +118,22 @@ describe('Teacher Dashboard', () => {
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
   });
 
+  it('shows the platform publish card with the teacher link and a settings shortcut', async () => {
+    vi.stubGlobal('fetch', routeFetch({
+      ...FULL_SUCCESS,
+      '/teacher/domain': () => ok({ slug: 'sami', page_url: 'https://fahimni.me/t/sami', domain: null, verified: false }),
+    }));
+
+    const { container } = render(<TeacherDashboard />);
+
+    expect(await screen.findByText('نشر المنصة')).toBeInTheDocument();
+    // The link is shown without the scheme, LTR-isolated, and openable.
+    expect(screen.getByText('fahimni.me/t/sami')).toBeInTheDocument();
+    expect(container.querySelector('a[href="https://fahimni.me/t/sami"]')).toBeTruthy();
+    // The quick route into the platform settings that the teacher asked for.
+    expect(container.querySelector('a[href="/teacher/settings"]')).toBeTruthy();
+  });
+
   it('switches every label to English when the locale is English', async () => {
     useLocale.setState({ locale: 'en' });
     vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
