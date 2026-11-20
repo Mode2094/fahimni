@@ -104,12 +104,27 @@ class ExamAttemptController extends Controller
 
         $this->authorize('view', $exam);
 
+        $user = $request->user();
+
+        // Staff (teacher/owner/admin of the exam's tenant) review every
+        // student's attempt; a student only ever sees their own. Tenant
+        // isolation is enforced by `authorize('view')` above plus the global
+        // tenant scope, so a foreign-tenant teacher can never reach this list.
+        $isStaff = $user->is_super_admin
+            || $this->isTenantStaff($request, (string) $exam->tenant_id);
+
         $attempts = ExamAttempt::where('exam_id', $examId)
-            ->with('student.roles')
-            ->when(
-                ! $request->user()->is_super_admin,
-                fn ($q) => $q->where('user_id', $request->user()->id)
-            )
+            ->when(! $isStaff, fn ($q) => $q->where('user_id', $user->id))
+            ->with([
+                'student.roles',
+                'exam.course',
+                'exam.section',
+                // Answers drive the review list (student answers, HTML
+                // previews, manual-review questions and skill performance).
+                // ExamAnswerResource hides the key and question payload from
+                // non-staff, so a student cannot read another's answers.
+                'answers.question.options',
+            ])
             ->orderByDesc('created_at')
             ->paginate($this->perPage($request));
 
@@ -121,6 +136,154 @@ class ExamAttemptController extends Controller
                 'per_page' => $attempts->perPage(),
                 'total' => $attempts->total(),
             ],
+        ]);
+    }
+
+    /**
+     * Build the student-facing question payload for an exam's questions.
+     *
+     * Shared by a real attempt (`start`) and the teacher preview so the preview
+     * is exactly the student experience: identical sanitised metadata (the
+     * answer key never leaks) and identical ordering/shuffling.
+     */
+    private function questionsPayload(\Illuminate\Support\Collection $examQuestions, Exam $exam): \Illuminate\Support\Collection
+    {
+        return $examQuestions->map(function ($eq) use ($exam) {
+            $q = $eq->question;
+            $metadata = $q->metadata ?? [];
+
+            $data = [
+                'exam_question_id' => $eq->id,
+                'question_id' => $q->id,
+                'question_type' => $q->question_type,
+                'question_text' => $q->question_text,
+                'points' => $eq->points_override ?? $q->points,
+            ];
+
+            if ($exam->shuffle_options && $q->options) {
+                $q->options = $q->options->shuffle();
+            }
+
+            $data['options'] = $q->options->map(fn ($o) => [
+                'id' => $o->id,
+                'option_text' => $o->option_text,
+                'sort_order' => $o->sort_order,
+            ]);
+
+            $data['metadata'] = $this->studentSafeMetadata($metadata, $q->question_type);
+            $data['image_url'] = $metadata['image_url'] ?? null;
+
+            return $data;
+        })->values();
+    }
+
+    /**
+     * Teacher-only "preview as a student". Returns the exact student payload
+     * (including unpublished exams and inside the tenant) WITHOUT creating an
+     * ExamAttempt: no real student is recorded, no attempt slot is consumed, no
+     * score is stored, and nothing is published. Gated by `viewQuestions`, so a
+     * student can never reach it.
+     */
+    public function preview(string $examId): JsonResponse
+    {
+        $exam = Exam::findOrFail($examId);
+
+        $this->authorize('viewQuestions', $exam);
+
+        $examQuestions = ExamQuestion::where('exam_id', $exam->id)
+            ->with('question.options')
+            ->orderBy('sort_order')
+            ->get()
+            ->reject(fn ($eq) => ! $eq->question)
+            ->values();
+
+        return response()->json([
+            'preview' => true,
+            'attempt' => null,
+            'questions' => $this->questionsPayload($examQuestions, $exam),
+            'deadline' => $exam->duration_minutes > 0 ? now()->addMinutes($exam->duration_minutes)->toIso8601String() : null,
+            'attempts_left' => null,
+            'exam' => [
+                'title' => $exam->title,
+                'duration_minutes' => $exam->duration_minutes,
+                'pass_mark_percent' => $exam->pass_mark_percent,
+                'shuffle_questions' => $exam->shuffle_questions,
+                // Anti-cheat is never armed in preview: it must not auto-submit
+                // the teacher for inspecting their own exam.
+                'anti_cheat_enabled' => false,
+            ],
+        ]);
+    }
+
+    /**
+     * Teacher-only dry-run grading for a preview. Runs the SAME auto-grader as a
+     * real submit (including the isolated interactive-html grader) so the
+     * teacher can verify auto and manual review behaviour — but persists
+     * nothing: no ExamAnswer rows, no scores, no gamification.
+     */
+    public function previewGrade(Request $request, string $examId): JsonResponse
+    {
+        $exam = Exam::findOrFail($examId);
+
+        $this->authorize('viewQuestions', $exam);
+
+        $validated = $request->validate([
+            'answers' => 'present|array',
+            'answers.*.exam_question_id' => 'required|string',
+            'answers.*.given_answer' => 'nullable',
+        ]);
+
+        $examQuestions = ExamQuestion::where('exam_id', $exam->id)
+            ->with('question.options')
+            ->get()
+            ->reject(fn ($eq) => ! $eq->question)
+            ->keyBy('id');
+
+        $totalPoints = (float) $examQuestions->sum(fn ($eq) => $eq->points_override ?? $eq->question->points);
+        $earned = 0.0;
+        $needsReview = false;
+        $perAnswer = [];
+
+        foreach ($validated['answers'] as $ans) {
+            $examQuestion = $examQuestions[$ans['exam_question_id']] ?? null;
+            if (! $examQuestion) {
+                continue;
+            }
+
+            $question = $examQuestion->question;
+            $pointsMax = (float) ($examQuestion->points_override ?? $question->points);
+            $given = $ans['given_answer'] ?? null;
+
+            $isCorrect = $this->checkAnswer($question, $given);
+            $pointsEarned = $isCorrect === true ? $pointsMax : 0.0;
+            $earned += $pointsEarned;
+
+            if ($isCorrect === null) {
+                $needsReview = true;
+            }
+
+            $perAnswer[] = [
+                'exam_question_id' => $examQuestion->id,
+                'is_correct' => $isCorrect,
+                'points_earned' => $pointsEarned,
+                'points_max' => $pointsMax,
+            ];
+        }
+
+        $percentage = $totalPoints > 0 ? round(($earned / $totalPoints) * 100, 2) : 0;
+
+        return response()->json([
+            'preview' => true,
+            'result' => [
+                'score' => $earned,
+                'total' => $totalPoints,
+                'percentage' => $percentage,
+                'passed' => ! $needsReview && $percentage >= (float) $exam->pass_mark_percent,
+                'needs_review' => $needsReview,
+                'pass_mark' => $exam->pass_mark_percent,
+                'attempts_left' => null,
+            ],
+            'answers' => $perAnswer,
         ]);
     }
 
@@ -260,35 +423,7 @@ class ExamAttemptController extends Controller
             $examQuestions = $examQuestions->shuffle();
         }
 
-        $questionsData = $examQuestions->map(function ($eq) use ($exam) {
-            $q = $eq->question;
-            $metadata = $q->metadata ?? [];
-
-            $data = [
-                'exam_question_id' => $eq->id,
-                'question_id' => $q->id,
-                'question_type' => $q->question_type,
-                'question_text' => $q->question_text,
-                'points' => $eq->points_override ?? $q->points,
-            ];
-
-            if ($exam->shuffle_options && $q->options) {
-                $q->options = $q->options->shuffle();
-            }
-
-            $data['options'] = $q->options->map(fn ($o) => [
-                'id' => $o->id,
-                'option_text' => $o->option_text,
-                'sort_order' => $o->sort_order,
-            ]);
-
-            // Never leak the answer key: grading metadata is replaced by a
-            // student-safe presentation (shuffled items, blank counts).
-            $data['metadata'] = $this->studentSafeMetadata($metadata, $q->question_type);
-            $data['image_url'] = $metadata['image_url'] ?? null;
-
-            return $data;
-        });
+        $questionsData = $this->questionsPayload($examQuestions, $exam);
 
         $attemptsUsed = $this->scopeToTerm(
             ExamAttempt::where('exam_id', $exam->id)

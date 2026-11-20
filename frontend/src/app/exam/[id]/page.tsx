@@ -37,6 +37,13 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [violations, setViolations] = useState(0);
   const [antiCheat, setAntiCheat] = useState(false);
   const [warnShown, setWarnShown] = useState(false);
+  const [previewAnswers, setPreviewAnswers] = useState<any[]>([]);
+  // Teacher preview: `?preview=1` replays the exact student experience against
+  // the preview endpoints — no attempt is recorded, no score stored, and no
+  // anti-cheat (verifying an exam must not auto-submit the teacher).
+  const [previewMode] = useState(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('preview') === '1',
+  );
   const submitRef = useRef<(() => void) | null>(null);
   const submittedRef = useRef(false);
   const startedAtRef = useRef(0);
@@ -140,19 +147,22 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
 
   const startExam = async () => {
     setLoading(true);
-    const token = localStorage.getItem('lms_authed');
     const tid = localStorage.getItem('tenant_id');
     try {
-      const res = await fetch(`${API}/exams/${id}/attempt`, { method: 'POST', headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' } });
+      const res = await fetch(`${API}/exams/${id}/${previewMode ? 'preview' : 'attempt'}`, {
+        method: 'POST',
+        headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' },
+      });
       const d = await res.json();
       if (!res.ok) { toast.error(d.message || t('فشل', 'Failed')); return; }
-      setAttemptId(d.attempt.id);
+      if (!previewMode) setAttemptId(d.attempt.id);
       setQuestions(d.questions || []);
-      setAntiCheat(!!d.exam?.anti_cheat_enabled);
+      setAntiCheat(previewMode ? false : !!d.exam?.anti_cheat_enabled);
       setViolations(0);
       setWarnShown(false);
       submittedRef.current = false;
       setAnswers({});
+      setPreviewAnswers([]);
       setCurrent(0);
       setResult(null);
       if (d.deadline) setDeadline(new Date(d.deadline).getTime());
@@ -168,7 +178,6 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSubmitting(true);
-    const token = localStorage.getItem('lms_authed');
     const tid = localStorage.getItem('tenant_id');
     try {
       const payload = questions.map(q => {
@@ -176,6 +185,23 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         const given = a === undefined ? '' : typeof a === 'string' ? a : JSON.stringify(a);
         return { exam_question_id: q.exam_question_id, question_id: q.question_id, given_answer: given, time_spent_seconds: 0 };
       }).filter(a => a.given_answer !== '');
+
+      if (previewMode) {
+        const res = await fetch(`${API}/exams/${id}/preview/grade`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tid || '', Accept: 'application/json' },
+          body: JSON.stringify({ answers: payload }),
+        });
+        const d = await res.json();
+        if (!res.ok) { submittedRef.current = false; toast.error(d.message || t('فشل', 'Failed')); return; }
+        setResult(d.result);
+        setPreviewAnswers(d.answers || []);
+        setStarted(false);
+        setDeadline(null);
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch(`${API}/exams/${id}/attempts/${attemptId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tid || '', Accept: 'application/json' },
@@ -214,6 +240,12 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   if (!started) {
     return (
       <div className="max-w-2xl mx-auto space-y-8 py-8 px-4">
+        {previewMode && (
+          <div className="flex items-start gap-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800" role="status">
+            <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{t('وضع المعاينة (كما يراها الطالب): لا تُسجَّل محاولة، ولا تُحفظ درجات، ولا تُحتسب ضدّ الطلاب. تظهر حتى لو كان الاختبار غير منشور.', 'Preview mode (exactly as a student sees it): no attempt is recorded, no score is saved, and nothing counts against students. Works even for an unpublished exam.')}</span>
+          </div>
+        )}
         <Card className="border-0 shadow-sm p-8 text-center space-y-6">
           <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 mx-auto"><AlertTriangle className="h-10 w-10 text-primary" /></div>
           <h1 className="text-3xl font-bold">{exam?.title || t('اختبار', 'Exam')}</h1>
@@ -228,26 +260,58 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
               <h2 className="text-3xl font-bold">{result.passed ? t('مبروك!', 'Passed!') : t('حاول مرة أخرى', 'Try again')}</h2>
               <div className="text-6xl font-bold">{result.percentage}%</div>
               <div className="text-sm text-gray-500">{result.score} / {result.total} · {t('النجاح', 'Pass')}: {result.pass_mark}%</div>
+              {result.needs_review && (
+                <p className="text-xs text-amber-600">{t('تتضمن إجابات تحتاج مراجعة يدوية (كتابية/ملف/HTML) — لا تُحتسب صحيحة تلقائياً.', 'Contains answers that need manual review (written/file/HTML) — never auto-marked correct.')}</p>
+              )}
+              {previewMode && previewAnswers.length > 0 && (
+                <div className="space-y-1.5 rounded-xl border border-violet-100 bg-violet-50/40 p-3 text-start">
+                  <p className="text-xs font-bold text-violet-800">{t('نتيجة التصحيح التجريبي لكل سؤال', 'Dry-run grading per question')}</p>
+                  {previewAnswers.map((a, i) => (
+                    <div key={a.exam_question_id} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600">{t('سؤال', 'Q')} {i + 1} · {a.points_earned}/{a.points_max} {t('نقطة', 'pts')}</span>
+                      {a.is_correct === true ? (
+                        <Badge className="border-0 bg-emerald-100 text-emerald-700">{t('صحيح', 'Correct')}</Badge>
+                      ) : a.is_correct === false ? (
+                        <Badge className="border-0 bg-red-100 text-red-700">{t('خطأ', 'Wrong')}</Badge>
+                      ) : (
+                        <Badge className="border-0 bg-amber-100 text-amber-700">{t('يحتاج مراجعة', 'Needs review')}</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               {result.attempts_left !== undefined && result.attempts_left !== -1 && (
                 <div className="text-sm text-gray-400">{t('المحاولات المتبقية', 'Attempts left')}: <b>{result.attempts_left}</b></div>
               )}
               <div className="flex justify-center gap-3 pt-2">
-                {(result.attempts_left === undefined || result.attempts_left > 0) && (
-                  <Button onClick={startExam} className="gap-2 rounded-full"><RotateCcw className="h-4 w-4" />{t('إعادة الاختبار', 'Retake exam')}</Button>
+                {previewMode ? (
+                  <>
+                    <Button onClick={startExam} className="gap-2 rounded-full"><RotateCcw className="h-4 w-4" />{t('إعادة المعاينة', 'Preview again')}</Button>
+                    <Button variant="outline" onClick={() => window.close()}>{t('إغلاق المعاينة', 'Close preview')}</Button>
+                  </>
+                ) : (
+                  <>
+                    {(result.attempts_left === undefined || result.attempts_left > 0) && (
+                      <Button onClick={startExam} className="gap-2 rounded-full"><RotateCcw className="h-4 w-4" />{t('إعادة الاختبار', 'Retake exam')}</Button>
+                    )}
+                    <a href="/my-learning"><Button variant="outline">{t('العودة', 'Back')}</Button></a>
+                  </>
                 )}
-                <a href="/my-learning"><Button variant="outline">{t('العودة', 'Back')}</Button></a>
               </div>
             </div>
           ) : (
             <>
               <p className="text-gray-500">{t(`لديك ${exam?.duration_minutes || 30} دقيقة. نسبة النجاح ${exam?.pass_mark_percent ?? 0}%.`, `You have ${exam?.duration_minutes || 30} minutes. Pass mark ${exam?.pass_mark_percent ?? 0}%.`)}</p>
-              {exam?.anti_cheat_enabled !== false && (
+              {!previewMode && exam?.anti_cheat_enabled !== false && (
                 <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 text-amber-700 text-xs text-start">
                   <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                   <span>{t('وضع منع الغش مفعل: مغادرة الصفحة تُسجل مخالفة، و3 مخالفات = تسليم تلقائي. النسخ والنقر الأيمن معطلان.', 'Anti-cheat is ON: leaving the page counts as a violation, 3 = auto-submit. Copy & right-click are disabled.')}</span>
                 </div>
               )}
-              <Button size="lg" onClick={startExam}>{t('ابدأ الاختبار', 'Start Exam')}</Button>
+              {!previewMode && exam?.max_attempts > 0 && (
+                <p className="text-xs text-gray-400">{t(`عدد المحاولات المسموح بها لهذا الاختبار: ${exam.max_attempts}. تظهر لك المتبقي عند البدء.`, `This exam allows ${exam.max_attempts} attempts. Your remaining count is shown when you start.`)}</p>
+              )}
+              <Button size="lg" onClick={startExam}>{previewMode ? t('ابدأ المعاينة', 'Start preview') : t('ابدأ الاختبار', 'Start Exam')}</Button>
             </>
           )}
         </Card>
@@ -272,9 +336,27 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     return `${h > 0 ? h + ':' : ''}${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   };
 
+  // Submitting ends the attempt for good; if questions are still blank, make
+  // that explicit instead of silently dropping them.
+  const confirmSubmit = () => {
+    if (previewMode) { submit(); return; }
+    const unanswered = questions.length - answeredCount;
+    if (unanswered > 0 && !window.confirm(t(
+      `لديك ${unanswered} سؤالاً بلا إجابة. هل تريد تسليم الاختبار الآن؟`,
+      `You have ${unanswered} unanswered question(s). Submit the exam now?`,
+    ))) return;
+    submit();
+  };
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 py-8 px-4 select-none" style={{ userSelect: 'none' }}>
       <h1 className="sr-only">{exam?.title || t('اختبار', 'Exam')}</h1>
+      {previewMode && (
+        <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-xs font-semibold text-violet-800" role="status">
+          <ShieldAlert className="h-3.5 w-3.5" />
+          {t('وضع المعاينة — لا تُحفظ الإجابات ولا تُحتسب النتيجة.', 'Preview mode — answers and score are not saved.')}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <a href="/my-learning" className="flex items-center gap-1 text-sm text-gray-500"><ArrowLeft className="h-4 w-4" /> {t('خروج', 'Exit')}</a>
         <div className="flex items-center gap-2">
@@ -319,11 +401,20 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         <div className="text-xs text-gray-400">{answeredCount}/{questions.length} {t('مُجاب', 'answered')}</div>
         <div className="flex gap-2 flex-wrap">
           <Button variant="outline" disabled={current === 0} onClick={() => setCurrent(current - 1)}>{t('السابق', 'Prev')}</Button>
-          {current < questions.length - 1 ? (
+          {current < questions.length - 1 && (
             <Button onClick={() => setCurrent(current + 1)}>{t('التالي', 'Next')}</Button>
-          ) : (
-            <Button onClick={submit} disabled={submitting} className="gap-2">{submitting && <Loader2 className="h-4 w-4 animate-spin" />}{t('تسليم الإجابات', 'Submit answers')}</Button>
           )}
+          {/* Always offer an explicit, clearly-labelled submit — not only on the
+              last question — so a student can finish early on purpose. */}
+          <Button
+            onClick={confirmSubmit}
+            disabled={submitting}
+            className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+            aria-label={previewMode ? t('تصحيح المعاينة', 'Grade preview') : t('تسليم الاختبار', 'Submit exam')}
+          >
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+            {previewMode ? t('إنهاء المعاينة والتصحيح', 'Finish & grade preview') : t('تسليم الاختبار', 'Submit exam')}
+          </Button>
         </div>
       </div>
     </div>

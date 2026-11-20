@@ -83,6 +83,7 @@ use App\Http\Controllers\Api\TenantSettingController;
 use App\Http\Controllers\Api\TenantSubscriptionController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UserPreferenceController;
 use App\Http\Controllers\Api\VideoStreamController;
 use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
@@ -302,6 +303,9 @@ Route::prefix('v1')->group(function () {
             Route::get('exams/{exam}/attempts', [ExamAttemptController::class, 'index']);
             Route::get('exams/{exam}/questions', [ExamController::class, 'questions']);
             Route::post('exams/{exam}/attempt', [ExamAttemptController::class, 'start']);
+            // Teacher preview: same student payload, no attempt/score recorded.
+            Route::post('exams/{exam}/preview', [ExamAttemptController::class, 'preview']);
+            Route::post('exams/{exam}/preview/grade', [ExamAttemptController::class, 'previewGrade']);
             Route::post('exams/{exam}/attempts/{attempt}/submit', [ExamAttemptController::class, 'submit']);
             Route::post('exams/{exam}/attempts/{attempt}/grade', [ExamAttemptController::class, 'grade'])->middleware('role:teacher,owner,admin,permission:exams.manage');
             Route::get('exam-attempts/{attempt}', [ExamAttemptController::class, 'show']);
@@ -496,6 +500,11 @@ Route::prefix('v1')->group(function () {
             // ─── Tenant Settings ──────────────────────────
             Route::get('settings', [TenantSettingController::class, 'show']);
             Route::put('settings', [TenantSettingController::class, 'update']);
+
+            // ─── Per-user UI preferences (per teacher, per tenant) ──
+            // Stores only allowlisted, non-secret editor settings on the user row.
+            Route::get('me/preferences', [UserPreferenceController::class, 'show']);
+            Route::put('me/preferences', [UserPreferenceController::class, 'update'])->middleware('role:teacher,owner,admin');
 
             // ─── Notifications ───────────────────────────
             Route::prefix('notifications')->group(function () {
