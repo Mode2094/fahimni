@@ -9,9 +9,10 @@ import {
   IQ_CHANNEL,
   answerToSubmitValue,
   buildInitMessage,
+  buildSandboxUrl,
   clampHeight,
   createMountToken,
-  isIqChildMessage,
+  decideIqChildMessage,
   sanitizeAnswer,
 } from '@/lib/interactive-question';
 
@@ -32,9 +33,13 @@ function parseStoredValue(value: string | undefined): unknown {
 /**
  * Renders a teacher-authored interactive question inside an isolated sandbox
  * iframe and relays the student's answer back through a validated postMessage
- * protocol. The teacher's code never reaches the host document, and the host
- * only accepts `ready` / `answer` / `resize` / `error` from the exact frame
- * that carries the current mount token.
+ * protocol.
+ *
+ * The frame is bound to this mount by a random token carried in the iframe URL:
+ * the harness echoes it in its `ready` handshake, so a frame that self-navigated
+ * to another document (which cannot know the token) is refused. The host never
+ * re-sends `init` or the student's answer once the frame leaves our sandbox
+ * document, and it only ever configures the frame once per mount.
  */
 export function InteractiveHtmlQuestion({
   questionId,
@@ -64,6 +69,10 @@ export function InteractiveHtmlQuestion({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const initSentRef = useRef(false);
   const readyRef = useRef(false);
+  // Set once the frame loads a document other than the one we created. After
+  // that nothing is sent to it: no re-init, no restore of the saved answer.
+  const navigatedRef = useRef(false);
+  const loadCountRef = useRef(0);
   // The last value the sandbox itself reported. Used so a value the student
   // just produced is never echoed back as a "restore" (which would fight the
   // student's typing/caret inside the frame).
@@ -77,8 +86,7 @@ export function InteractiveHtmlQuestion({
 
   const sendInit = useCallback(() => {
     const frame = iframeRef.current;
-    if (!frame || !frame.contentWindow || initSentRef.current) return;
-    initSentRef.current = true;
+    if (!frame || !frame.contentWindow) return;
 
     frame.contentWindow.postMessage(
       buildInitMessage(token, questionId, {
@@ -94,52 +102,60 @@ export function InteractiveHtmlQuestion({
     );
   }, [token, questionId, html, css, js, height, autoCapture, locked, value]);
 
-  // Reset per-frame state and push a fresh init whenever the frame is remounted.
+  // Reset per-frame state whenever the frame is remounted (new element, new
+  // WindowProxy, fresh mount token handshake).
   useEffect(() => {
     initSentRef.current = false;
     readyRef.current = false;
+    navigatedRef.current = false;
+    loadCountRef.current = 0;
     lastFromSandboxRef.current = null;
     setReady(false);
     setError(null);
   }, [reloadKey]);
 
-  // The only channel data enters the host through. Source window + token are the
-  // trust boundary; unknown shapes are dropped.
+  // The only channel data enters the host through. The trust decision lives in
+  // the pure `decideIqChildMessage`; this effect only applies its verb.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const frame = iframeRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
-      if (!isIqChildMessage(event.data)) return;
 
-      const msg = event.data;
+      const decision = decideIqChildMessage(event.data, {
+        token,
+        initialized: initSentRef.current,
+        navigated: navigatedRef.current,
+      });
 
-      if (msg.type === 'ready') {
-        if (!msg.token) {
-          // Initial handshake from the harness — the frame is alive, send config.
+      switch (decision.kind) {
+        case 'send-init':
+          initSentRef.current = true;
           sendInit();
-        } else if (msg.token === token) {
+          break;
+        case 'ready':
           readyRef.current = true;
           setReady(true);
           setFallback(false);
+          break;
+        case 'answer': {
+          const cleaned = sanitizeAnswer(decision.value);
+          if (cleaned.ok) {
+            const next = answerToSubmitValue(cleaned.value);
+            // Remember what the frame produced so the parent's state update
+            // does not bounce back as a `restore` and fight the student's input.
+            lastFromSandboxRef.current = next;
+            onChange?.(next);
+          }
+          break;
         }
-        return;
-      }
-
-      if (msg.token !== token) return; // stale/forged frame
-
-      if (msg.type === 'answer') {
-        const cleaned = sanitizeAnswer(msg.payload?.value);
-        if (cleaned.ok) {
-          const next = answerToSubmitValue(cleaned.value);
-          // Remember what the frame produced so the parent's state update does
-          // not bounce back as a `restore` and fight the student's own input.
-          lastFromSandboxRef.current = next;
-          onChange?.(next);
-        }
-      } else if (msg.type === 'resize') {
-        setFrameHeight(clampHeight(msg.payload?.height));
-      } else if (msg.type === 'error') {
-        setError(String(msg.payload?.message ?? 'error').slice(0, 300));
+        case 'resize':
+          setFrameHeight(clampHeight(decision.height));
+          break;
+        case 'error':
+          setError(decision.message.slice(0, 300));
+          break;
+        default:
+          break;
       }
     };
 
@@ -148,10 +164,10 @@ export function InteractiveHtmlQuestion({
   }, [sendInit, token, onChange]);
 
   // Restore the stored answer when navigating back to an answered question.
-  // Skips a value the frame itself just produced, so echoing it back cannot
-  // reset the student's caret mid-typing.
+  // Skips a value the frame itself just produced, and never fires once the
+  // frame has navigated away from our sandbox document.
   useEffect(() => {
-    if (!readyRef.current) return;
+    if (!readyRef.current || navigatedRef.current) return;
     if ((value ?? '') === (lastFromSandboxRef.current ?? '')) return;
     iframeRef.current?.contentWindow?.postMessage(
       { channel: IQ_CHANNEL, type: 'restore', token, payload: { value: parseStoredValue(value) } },
@@ -161,7 +177,7 @@ export function InteractiveHtmlQuestion({
 
   // Lock the frame once the exam has been submitted.
   useEffect(() => {
-    if (!readyRef.current) return;
+    if (!readyRef.current || navigatedRef.current) return;
     iframeRef.current?.contentWindow?.postMessage(
       { channel: IQ_CHANNEL, type: 'lock', token, payload: { locked } },
       '*',
@@ -213,7 +229,7 @@ export function InteractiveHtmlQuestion({
         key={reloadKey}
         ref={iframeRef}
         title={t('سؤال تفاعلي', 'Interactive question')}
-        src={SANDBOX_PATH}
+        src={buildSandboxUrl(SANDBOX_PATH, token)}
         // No allow-same-origin: the frame gets an opaque origin and can never
         // touch app cookies, storage, or the host DOM.
         sandbox="allow-scripts"
@@ -222,8 +238,14 @@ export function InteractiveHtmlQuestion({
         // the interactive question" (expected) from "student left the exam".
         data-fahimni-interactive="true"
         onLoad={() => {
-          initSentRef.current = false;
-          sendInit();
+          // We never init from here. A second load means the frame navigated
+          // away from our sandbox document, so it becomes off-limits for good.
+          loadCountRef.current += 1;
+          if (loadCountRef.current > 1) {
+            navigatedRef.current = true;
+            readyRef.current = false;
+            setReady(false);
+          }
         }}
         className="w-full rounded-xl border bg-white"
         style={{ height: frameHeight }}

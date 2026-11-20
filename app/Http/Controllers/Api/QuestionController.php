@@ -104,15 +104,11 @@ class QuestionController extends Controller
 
         $this->authorize('update', $question);
 
-        $data = $request->validated();
-        // metadata carries nested type-specific keys; validated() only returns
-        // keys that have their own rules, so persist the raw payload instead of
-        // silently dropping e.g. image_url or the hidden grading key.
-        if ($request->has('metadata')) {
-            $data['metadata'] = $request->input('metadata');
-        }
-
-        $question->update($data);
+        // Persist only the validated payload: nested keys now have their own
+        // rules (including size limits and the grading schema), so the raw
+        // metadata array can no longer be used to bypass them or to drop the
+        // required interactive payload.
+        $question->update($request->validated());
 
         return response()->json([
             'question' => new QuestionResource($question->fresh()->load('options')),

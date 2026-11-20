@@ -1,17 +1,25 @@
 import { test, expect, type Page } from '@playwright/test';
 import { INTERACTIVE_EXAMPLES } from '../src/lib/interactive-examples';
+import {
+  IQ_CHANNEL,
+  buildInitMessage,
+  buildSandboxUrl,
+  createMountToken,
+} from '../src/lib/interactive-question';
 
 /**
  * Real-browser verification of the interactive-question sandbox.
  *
  * Nothing here is mocked: the real harness document is served by `next start`,
  * the real Content-Security-Policy is enforced by Chromium, and the frame is
- * created with the exact `sandbox="allow-scripts"` attribute the app uses. These
- * specs are the proof that TypeScript / a unit test cannot give.
+ * created with the exact `sandbox="allow-scripts"` attribute the app uses. The
+ * mount URL and init message come from the real protocol module, and the host
+ * gate below mirrors `decideIqChildMessage` (which is exercised exhaustively in
+ * Vitest). These specs are the proof that TypeScript / a unit test cannot give.
  */
 
 const SANDBOX_URL = '/embed/question';
-const CHANNEL = 'fahimni-question';
+const CHANNEL = IQ_CHANNEL;
 
 type SandboxConfig = {
   html: string;
@@ -22,14 +30,39 @@ type SandboxConfig = {
   value?: unknown;
 };
 
-/** Mount the sandbox in a same-origin host page and speak the real protocol. */
+/**
+ * Mount the sandbox in a same-origin host page and speak the real protocol.
+ * The token is baked into the iframe URL and required back on `ready`; a second
+ * frame load marks the frame as navigated and permanently ignored.
+ */
 async function mountSandbox(page: Page, cfg: SandboxConfig): Promise<string> {
-  const token = `tok-${Math.random().toString(36).slice(2)}`;
+  const token = createMountToken();
+  const url = buildSandboxUrl(SANDBOX_URL, token);
+  const init = buildInitMessage(token, 'q1', {
+    html: cfg.html,
+    css: cfg.css || '',
+    js: cfg.js || '',
+    height: cfg.height || 320,
+    autoCapture: cfg.autoCapture !== false,
+    value: cfg.value ?? null,
+    locked: false,
+  });
 
   await page.evaluate(
-    ({ cfg, token, url, channel }) => {
+    ({ url, token, init, channel }) => {
       const w = window as any;
-      w.__iq = { msgs: [] as any[], ready: false, token };
+      document.getElementById('iq-frame')?.remove();
+
+      const state = {
+        msgs: [] as any[],
+        out: [] as any[],
+        ready: false,
+        initSent: false,
+        navigated: false,
+        loads: 0,
+        token,
+      };
+      w.__iq = state;
 
       const frame = document.createElement('iframe');
       frame.id = 'iq-frame';
@@ -40,41 +73,39 @@ async function mountSandbox(page: Page, cfg: SandboxConfig): Promise<string> {
       frame.src = url;
       document.body.appendChild(frame);
 
+      // Mirrors the host component: never init from `load`, and treat any load
+      // after the first as "the frame left our sandbox document" (off-limits).
+      frame.addEventListener('load', () => {
+        state.loads += 1;
+        if (state.loads > 1) state.navigated = true;
+      });
+
       w.addEventListener('message', (event: MessageEvent) => {
         if (event.source !== frame.contentWindow) return; // source window is the trust boundary
         const data = event.data;
         if (!data || data.channel !== channel) return;
-        w.__iq.msgs.push(data);
+        state.msgs.push(data);
 
-        if (data.type === 'ready' && !data.token) {
-          frame.contentWindow!.postMessage(
-            {
-              channel,
-              type: 'init',
-              token,
-              questionId: 'q1',
-              payload: {
-                html: cfg.html,
-                css: cfg.css || '',
-                js: cfg.js || '',
-                height: cfg.height || 320,
-                autoCapture: cfg.autoCapture !== false,
-                value: cfg.value ?? null,
-                locked: false,
-              },
-            },
-            '*',
-          );
+        if (state.navigated) return;
+        if (data.type === 'ready' && data.token === token && !state.initSent) {
+          state.initSent = true;
+          state.out.push(init);
+          frame.contentWindow!.postMessage(init, '*');
         } else if (data.type === 'ready' && data.token === token) {
-          w.__iq.ready = true;
+          state.ready = true;
         }
       });
     },
-    { cfg, token, url: SANDBOX_URL, channel: CHANNEL },
+    { url, token, init, channel: CHANNEL },
   );
 
   await page.waitForFunction(() => (window as any).__iq?.ready === true, undefined, { timeout: 15_000 });
   return token;
+}
+
+/** The current sandbox frame (there is at most one `#iq-frame`). */
+function sandboxFrame(page: Page) {
+  return page.frames().find((f) => f.url().includes(SANDBOX_URL));
 }
 
 async function answers(page: Page): Promise<any[]> {
@@ -165,6 +196,165 @@ test('restores a previously saved answer when the question is revisited', async 
 
   await expect.poll(() => answers(page)).toContainEqual({ seen: { restored: 42 } });
 });
+
+test('restores scalar, number, checkbox, radio and structured answers into their fields', async ({ page }) => {
+  // A single text field reporting a bare string (the bug: restore only handled
+  // objects, so a lone field was never refilled).
+  await mountSandbox(page, { html: '<input id="a" name="a" type="text" />', value: 'hello world' });
+  await expect(page.frameLocator('#iq-frame').locator('#a')).toHaveValue('hello world');
+
+  // A single number field.
+  await mountSandbox(page, { html: '<input id="n" name="n" type="number" />', value: 42 });
+  await expect(page.frameLocator('#iq-frame').locator('#n')).toHaveValue('42');
+
+  // A single checkbox reporting a boolean.
+  await mountSandbox(page, { html: '<input id="c" name="c" type="checkbox" value="yes" />', value: true });
+  await expect(page.frameLocator('#iq-frame').locator('#c')).toBeChecked();
+
+  // A checkbox group reporting an array under one name.
+  await mountSandbox(page, {
+    html: '<input id="c1" name="c" type="checkbox" value="a" /><input id="c2" name="c" type="checkbox" value="b" /><input id="c3" name="c" type="checkbox" value="c" />',
+    value: { c: ['a', 'c'] },
+  });
+  await expect(page.frameLocator('#iq-frame').locator('#c1')).toBeChecked();
+  await expect(page.frameLocator('#iq-frame').locator('#c2')).not.toBeChecked();
+  await expect(page.frameLocator('#iq-frame').locator('#c3')).toBeChecked();
+
+  // A radio group reporting the picked value under one name.
+  await mountSandbox(page, {
+    html: '<input id="r1" name="r" type="radio" value="x" /><input id="r2" name="r" type="radio" value="y" />',
+    value: { r: 'y' },
+  });
+  await expect(page.frameLocator('#iq-frame').locator('#r2')).toBeChecked();
+  await expect(page.frameLocator('#iq-frame').locator('#r1')).not.toBeChecked();
+
+  // Structured values across several named fields.
+  await mountSandbox(page, {
+    html: '<input id="w" name="w" type="number" /><input id="h" name="h" type="number" />',
+    value: { w: 3, h: 4 },
+  });
+  await expect(page.frameLocator('#iq-frame').locator('#w')).toHaveValue('3');
+  await expect(page.frameLocator('#iq-frame').locator('#h')).toHaveValue('4');
+});
+
+test('a single-field answer survives navigating away from and back to the question', async ({ page }) => {
+  const html = '<input id="a" name="a" type="text" />';
+
+  // Answer, then leave the question (the frame is torn down).
+  await mountSandbox(page, { html });
+  await page.frameLocator('#iq-frame').locator('#a').fill('my answer');
+  await expect.poll(() => answers(page)).toContain('my answer');
+
+  // Return: a fresh mount that carries the stored answer as its initial value.
+  await mountSandbox(page, { html, value: 'my answer' });
+  await expect(page.frameLocator('#iq-frame').locator('#a')).toHaveValue('my answer');
+});
+
+test('a self-navigated frame never receives init again or the student answer', async ({ page }) => {
+  await mountSandbox(page, {
+    html: '<input id="a" name="a" type="text" />',
+    js: `FahimniQuestion.setAnswer('SECRET');`,
+  });
+  await expect.poll(() => answers(page)).toContain('SECRET');
+
+  const before = await page.evaluate(() => (window as any).__iq.out.length);
+
+  // From *inside* the frame, navigate it to a tokenless copy of the sandbox —
+  // a stand-in for any document that replaced our sandbox document.
+  await sandboxFrame(page)!.evaluate(() => {
+    window.location.href = '/embed/question';
+  });
+
+  // Give the replacement document time to ask for init; the host must refuse.
+  await page.waitForTimeout(1500);
+
+  const state = await page.evaluate(() => ({
+    out: (window as any).__iq.out.length,
+    navigated: (window as any).__iq.navigated,
+    loads: (window as any).__iq.loads,
+  }));
+
+  expect(state.loads).toBeGreaterThan(1); // the frame really navigated
+  expect(state.navigated).toBe(true);
+  expect(state.out).toBe(before); // no second init was ever posted
+
+  // The navigated document was never configured: no teacher HTML, no value.
+  const replacement = await sandboxFrame(page)!.evaluate(() => ({
+    value: (window as any).FahimniQuestion.getValue(),
+    stageHtml: document.getElementById('fq-stage')?.innerHTML ?? '',
+  }));
+  expect(replacement.stageHtml).toBe('');
+  expect(replacement.value).toBeNull();
+});
+
+test('the harness refuses an init that does not carry its own mount token', async ({ page }) => {
+  const token = createMountToken();
+
+  await page.evaluate(
+    ({ url, token, channel }) => {
+      const w = window as any;
+      const frame = document.createElement('iframe');
+      frame.id = 'iq-frame';
+      frame.setAttribute('sandbox', 'allow-scripts');
+      frame.src = url;
+      document.body.appendChild(frame);
+
+      w.addEventListener('message', (event: MessageEvent) => {
+        if (event.source !== frame.contentWindow) return;
+        if (!event.data || event.data.channel !== channel) return;
+        if (event.data.type !== 'ready') return;
+
+        // A forged init with the wrong token must be ignored …
+        frame.contentWindow!.postMessage(
+          { channel, type: 'init', token: 'WRONG-TOKEN', payload: { html: '<div id="leak">leaked</div>' } },
+          '*',
+        );
+        // … while the legitimate one still configures the frame.
+        frame.contentWindow!.postMessage(
+          { channel, type: 'init', token, payload: { html: '<div id="ok">ok</div>' } },
+          '*',
+        );
+      });
+    },
+    { url: buildSandboxUrl(SANDBOX_URL, token), token, channel: CHANNEL },
+  );
+
+  await expect(page.frameLocator('#iq-frame').locator('#ok')).toBeVisible();
+  await expect(page.frameLocator('#iq-frame').locator('#leak')).toHaveCount(0);
+});
+
+test('a duplicate init for the same mount never re-runs teacher JS', async ({ page }) => {
+  const token = await mountSandbox(page, {
+    html: '<div id="one">one</div>',
+    js: `window.__runs = (window.__runs || 0) + 1; FahimniQuestion.setAnswer(window.__runs);`,
+  });
+  await expect.poll(() => answers(page)).toContain(1);
+
+  await page.evaluate(
+    ({ token, channel }) => {
+      const frame = document.getElementById('iq-frame') as HTMLIFrameElement;
+      frame.contentWindow!.postMessage(
+        {
+          channel,
+          type: 'init',
+          token,
+          payload: {
+            html: '<div id="two">two</div>',
+            js: 'window.__runs = (window.__runs || 0) + 1; FahimniQuestion.setAnswer(window.__runs);',
+          },
+        },
+        '*',
+      );
+    },
+    { token, channel: CHANNEL },
+  );
+
+  await page.waitForTimeout(400);
+  expect(await sandboxFrame(page)!.evaluate(() => (window as any).__runs)).toBe(1);
+  await expect(page.frameLocator('#iq-frame').locator('#one')).toBeAttached();
+  await expect(page.frameLocator('#iq-frame').locator('#two')).toHaveCount(0);
+});
+
 
 test('an <script> inside the pasted HTML never executes (only the JS field does)', async ({ page }) => {
   await mountSandbox(page, {

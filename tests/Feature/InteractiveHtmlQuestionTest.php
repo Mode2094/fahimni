@@ -495,8 +495,210 @@ class InteractiveHtmlQuestionTest extends TenantTestCase
         $this->assertDatabaseHas('exam_attempts', ['id' => $attemptId, 'academic_term_id' => $term->id, 'passed' => true]);
     }
 
-    // ─────────────────────────── (6) regression: existing types ───────────────────────────
+    // ─────────────────── (5b) boolean key + update hardening ───────────────────
 
+    public function test_boolean_answer_keys_only_match_real_booleans(): void
+    {
+        $tenant = $this->tenant();
+        $grader = app(\App\Services\InteractiveHtmlGrader::class);
+
+        $cases = [
+            // [key, given, expected]
+            [true, true, true],
+            [true, 'true', true],
+            [true, 1, true],
+            [true, '1', true],
+            [true, false, false],
+            [true, 'false', false],
+            [true, 0, false],
+            [true, '', false],
+            [true, 'anything', false],
+            [true, 'yes', false],
+            [true, 2, false],
+            [true, 'TRUE', true],
+            [false, false, true],
+            [false, 'false', true],
+            [false, 0, true],
+            [false, '0', true],
+            [false, true, false],
+            [false, 'true', false],
+            [false, '', false],
+            [false, 'anything', false],
+            [false, 'no', false],
+            [false, 1, false],
+        ];
+
+        foreach ($cases as $i => [$key, $given, $expected]) {
+            $question = $this->interactive($tenant, ['mode' => 'auto', 'rule' => 'single_choice', 'key' => $key]);
+            $this->assertSame(
+                $expected,
+                $grader->grade($question, $given),
+                "case {$i}: key=".var_export($key, true).' given='.var_export($given, true)
+            );
+        }
+    }
+
+    public function test_partial_update_without_question_type_still_enforces_interactive_rules(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        $headers = $this->authHeaders($this->teacher($tenant), $tenant);
+
+        $create = $this->withHeaders($headers)->postJson('/api/v1/questions', [
+            'question_type' => 'interactive_html',
+            'question_text' => 'q',
+            'metadata' => [
+                'interactive' => ['html' => '<div></div>'],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 'A'],
+            ],
+        ]);
+        $create->assertCreated();
+        $id = $create->json('question.id');
+
+        // No question_type in the partial update, yet auto-grading without a key
+        // must still be rejected (the rules follow the persisted type).
+        $this->withHeaders($headers)->putJson("/api/v1/questions/{$id}", [
+            'question_text' => 'renamed',
+            'metadata' => [
+                'interactive' => ['html' => '<div></div>'],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice'],
+            ],
+        ])->assertStatus(422)->assertJsonValidationErrors('metadata.grading.key');
+
+        // Oversized HTML is rejected even without question_type.
+        $this->withHeaders($headers)->putJson("/api/v1/questions/{$id}", [
+            'metadata' => [
+                'interactive' => ['html' => str_repeat('h', 200001)],
+                'grading' => ['mode' => 'manual'],
+            ],
+        ])->assertStatus(422)->assertJsonValidationErrors('metadata.interactive.html');
+
+        // An unknown grading rule is rejected.
+        $this->withHeaders($headers)->putJson("/api/v1/questions/{$id}", [
+            'metadata' => [
+                'interactive' => ['html' => '<div></div>'],
+                'grading' => ['mode' => 'auto', 'rule' => 'telepathy', 'key' => 'A'],
+            ],
+        ])->assertStatus(422)->assertJsonValidationErrors('metadata.grading.rule');
+
+        // A metadata update may not silently drop the interactive payload.
+        $this->withHeaders($headers)->putJson("/api/v1/questions/{$id}", [
+            'metadata' => ['grading' => ['mode' => 'manual']],
+        ])->assertStatus(422)->assertJsonValidationErrors('metadata.interactive');
+
+        // A valid partial update (still no question_type) is accepted.
+        $ok = $this->withHeaders($headers)->putJson("/api/v1/questions/{$id}", [
+            'question_text' => 'renamed',
+            'metadata' => [
+                'interactive' => ['html' => '<div id="ok"></div>'],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 'A'],
+            ],
+        ]);
+        $ok->assertOk();
+
+        $stored = Question::withoutTenant()->findOrFail($id);
+        $this->assertSame('interactive_html', $stored->question_type);
+        $this->assertSame('<div id="ok"></div>', $stored->metadata['interactive']['html']);
+    }
+
+    public function test_update_persists_only_validated_metadata(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        $headers = $this->authHeaders($this->teacher($tenant), $tenant);
+
+        $create = $this->withHeaders($headers)->postJson('/api/v1/questions', [
+            'question_type' => 'interactive_html',
+            'question_text' => 'q',
+            'metadata' => [
+                'interactive' => ['html' => '<div></div>'],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 'A'],
+            ],
+        ]);
+        $create->assertCreated();
+        $id = $create->json('question.id');
+
+        // Known keys survive, an unknown key is not smuggled into JSONB.
+        $this->withHeaders($headers)->putJson("/api/v1/questions/{$id}", [
+            'metadata' => [
+                'image_url' => 'https://cdn.example/z.png',
+                'interactive' => ['html' => '<div></div>', 'css' => 'x{}', 'js' => 'FahimniQuestion.setAnswer(1)'],
+                'grading' => ['mode' => 'auto', 'rule' => 'single_choice', 'key' => 'A'],
+                'evil' => 'should-be-dropped',
+            ],
+        ])->assertOk();
+
+        $stored = Question::withoutTenant()->findOrFail($id);
+        $this->assertSame('https://cdn.example/z.png', $stored->metadata['image_url']);
+        $this->assertSame('A', $stored->metadata['grading']['key']);
+        $this->assertArrayNotHasKey('evil', $stored->metadata);
+    }
+
+    public function test_full_teaching_flow_create_attempt_view_submit_and_grade(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        $teacher = $this->teacher($tenant);
+        $teacherHeaders = $this->authHeaders($teacher, $tenant);
+
+        [$course, $section, $student] = $this->studentWithCourse($tenant);
+        $this->enroll($tenant, $course, $student);
+
+        // 1) Teacher creates the interactive question through the public API.
+        $create = $this->withHeaders($teacherHeaders)->postJson('/api/v1/questions', [
+            'question_type' => 'interactive_html',
+            'question_text' => 'Pick the point',
+            'course_id' => $course->id,
+            'section_id' => $section->id,
+            'points' => 10,
+            'metadata' => [
+                'interactive' => ['html' => '<svg id="s"></svg>', 'css' => 'svg{width:100%}', 'js' => '', 'height' => 320, 'auto_capture' => true],
+                'grading' => ['mode' => 'auto', 'rule' => 'json_equals', 'key' => ['x' => 2, 'y' => 5]],
+            ],
+        ]);
+        $create->assertCreated();
+        $questionId = $create->json('question.id');
+
+        $question = Question::withoutTenant()->findOrFail($questionId);
+        $exam = $this->examWith($tenant, $course, $section, [[$question, 10]], 50);
+
+        // 2) Student starts an attempt and receives the student-safe view.
+        $studentHeaders = $this->authHeaders($student, $tenant);
+        $start = $this->withHeaders($studentHeaders)->postJson("/api/v1/exams/{$exam->id}/attempt");
+        $start->assertOk();
+        $attemptId = $start->json('attempt.id');
+        $row = collect($start->json('questions'))->firstWhere('question_id', $questionId);
+
+        $this->assertNotNull($row);
+        $this->assertSame('interactive_html', $row['question_type']);
+        $this->assertSame('<svg id="s"></svg>', $row['metadata']['interactive']['html']);
+        // The hidden answer key must never reach the student view.
+        $this->assertArrayNotHasKey('grading', $row['metadata']);
+        $this->assertStringNotContainsString('json_equals', json_encode($start->json('questions')));
+
+        // 3) Student submits the correct structured answer and is auto-graded.
+        $submit = $this->withHeaders($studentHeaders)->postJson(
+            "/api/v1/exams/{$exam->id}/attempts/{$attemptId}/submit",
+            ['answers' => [[
+                'exam_question_id' => $row['exam_question_id'],
+                'question_id' => $questionId,
+                'given_answer' => json_encode(['y' => 5, 'x' => 2]),
+            ]]]
+        );
+        $submit->assertOk();
+        $this->assertEquals(10.0, (float) $submit->json('result.score'));
+        $this->assertEquals(100.0, (float) $submit->json('result.percentage'));
+        $this->assertTrue($submit->json('result.passed'));
+        $this->assertFalse($submit->json('result.needs_review'));
+
+        $this->assertDatabaseHas('exam_answers', [
+            'tenant_id' => $tenant->id,
+            'question_id' => $questionId,
+            'is_correct' => true,
+        ]);
+    }
+
+    // ─────────────────────────── (6) regression: existing types ───────────────────────────
     public function test_existing_question_types_still_grade_the_same(): void
     {
         $tenant = $this->tenant();

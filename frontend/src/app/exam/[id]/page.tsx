@@ -309,7 +309,9 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         </div>
         <h2 className="text-xl font-semibold mb-3"><Latex text={q.question_text} /></h2>
         {q.metadata?.image_url && <img src={q.metadata.image_url} className="rounded-xl border max-h-64 mb-4 object-contain" alt={t('صورة السؤال', 'Question image')} />}
-        <QuestionRenderer q={q} value={answers[q.exam_question_id] ?? (q.question_type === 'drag_drop' || q.question_type === 'matching' ? [] : q.question_type === 'ordering' ? (q.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text) : q.question_type === 'fill_blank' ? [] : '')} onChange={(v) => setAnswers({ ...answers, [q.exam_question_id]: v })} />
+        {/* key forces a fresh renderer per question: an interactive iframe must
+            not be reused across questions (no duplicate init, no stale HTML). */}
+        <QuestionRenderer key={q.exam_question_id} q={q} value={answers[q.exam_question_id] ?? (q.question_type === 'drag_drop' || q.question_type === 'matching' ? [] : q.question_type === 'ordering' ? (q.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text) : q.question_type === 'fill_blank' ? [] : '')} onChange={(v) => setAnswers({ ...answers, [q.exam_question_id]: v })} />
       </Card>
 
       <div className="flex justify-between items-center gap-3 flex-wrap">

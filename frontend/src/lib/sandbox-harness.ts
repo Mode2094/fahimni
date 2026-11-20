@@ -42,9 +42,18 @@ export const sandboxHarnessHtml = `<!DOCTYPE html>
   var PARENT_TYPES = ['init', 'restore', 'lock', 'reset'];
   var MIN_HEIGHT = 120, MAX_HEIGHT = 1600;
 
-  var token = null, questionId = null, currentValue = null;
-  var locked = false, autoCapture = true;
+  var mountToken = readMountToken();
+  var token = mountToken || null, questionId = null, currentValue = null;
+  var locked = false, autoCapture = true, initialized = false;
   var changeListeners = [], restoreListeners = [];
+
+  function readMountToken() {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var m = params.get('m');
+      return m ? String(m).slice(0, 200) : '';
+    } catch (e) { return ''; }
+  }
 
   var root = document.getElementById('fq-root');
   var stage = document.createElement('div');
@@ -93,8 +102,16 @@ export const sandboxHarnessHtml = `<!DOCTYPE html>
 
   function readField(f) {
     var t = (f.type || '').toLowerCase();
+    var tag = (f.tagName || '').toLowerCase();
     if (t === 'checkbox') return !!f.checked;
     if (t === 'radio') return f.checked ? f.value : undefined;
+    if (tag === 'select' && f.multiple) {
+      var vals = [];
+      for (var i = 0; i < f.options.length; i++) {
+        if (f.options[i].selected) vals.push(f.options[i].value);
+      }
+      return vals;
+    }
     if (t === 'number' || t === 'range') {
       if (f.value === '') return null;
       var n = Number(f.value);
@@ -132,25 +149,64 @@ export const sandboxHarnessHtml = `<!DOCTYPE html>
     return String(s).replace(/["\\\\]/g, '\\\\$&');
   }
 
+  function normBool(v) {
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'number') return v !== 0;
+    if (typeof v === 'string') {
+      var s = v.trim().toLowerCase();
+      return s === 'true' || s === '1' || s === 'on' || s === 'yes';
+    }
+    return !!v;
+  }
+
+  function setFieldValue(f, val) {
+    var t = (f.type || '').toLowerCase();
+    var tag = (f.tagName || '').toLowerCase();
+    if (t === 'checkbox') {
+      if (Array.isArray(val)) {
+        var list = [];
+        for (var a = 0; a < val.length; a++) list.push(String(val[a]));
+        f.checked = list.indexOf(String(f.value)) >= 0;
+      } else {
+        f.checked = normBool(val);
+      }
+    } else if (t === 'radio') {
+      f.checked = String(f.value) === String(val == null ? '' : val);
+    } else if (tag === 'select' && f.multiple) {
+      var want = [];
+      if (Array.isArray(val)) { for (var b = 0; b < val.length; b++) want.push(String(val[b])); }
+      else if (val != null) { want.push(String(val)); }
+      for (var o = 0; o < f.options.length; o++) {
+        f.options[o].selected = want.indexOf(String(f.options[o].value)) >= 0;
+      }
+    } else {
+      if (Array.isArray(val)) f.value = val[0] == null ? '' : String(val[0]);
+      else f.value = val == null ? '' : String(val);
+    }
+  }
+
+  // Restore a previously stored value into the native fields. Handles the
+  // scalar shapes a single field reports (text/number/checkbox/radio) as well
+  // as the object/array shapes a group of named fields reports.
   function applyValueToFields(v) {
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return;
+    var nodes = stage.querySelectorAll('input,select,textarea');
+    if (!nodes.length) return;
+
+    if (v === null || typeof v !== 'object') {
+      setFieldValue(nodes[0], v);
+      return;
+    }
+    if (Array.isArray(v)) {
+      if (nodes.length === 1) setFieldValue(nodes[0], v);
+      return;
+    }
     var keys = Object.keys(v);
     for (var i = 0; i < keys.length; i++) {
       var k = keys[i];
-      var nodes;
-      try { nodes = stage.querySelectorAll('[name="' + cssEscape(k) + '"], #' + cssEscape(k)); }
-      catch (e) { nodes = []; }
-      for (var j = 0; j < nodes.length; j++) {
-        var f = nodes[j];
-        var val = v[k];
-        if ((f.type || '').toLowerCase() === 'checkbox') {
-          f.checked = Array.isArray(val) ? val.indexOf(f.value) >= 0 : !!val;
-        } else if ((f.type || '').toLowerCase() === 'radio') {
-          f.checked = String(f.value) === String(val);
-        } else {
-          f.value = Array.isArray(val) ? (val[0] == null ? '' : String(val[0])) : (val == null ? '' : String(val));
-        }
-      }
+      var matched;
+      try { matched = stage.querySelectorAll('[name="' + cssEscape(k) + '"], #' + cssEscape(k)); }
+      catch (e) { matched = []; }
+      for (var j = 0; j < matched.length; j++) setFieldValue(matched[j], v[k]);
     }
   }
 
@@ -232,10 +288,19 @@ export const sandboxHarnessHtml = `<!DOCTYPE html>
     if (PARENT_TYPES.indexOf(data.type) < 0) return;
 
     if (data.type === 'init') {
-      token = String(data.token || '');
+      // Only this mount's own handshake may configure the frame. A document a
+      // self-navigation landed on cannot know the mount token, so it can never
+      // trigger teacher-code execution here (a tokenless document refuses init).
+      if (!mountToken || String(data.token || '') !== mountToken) return;
+      // Configure exactly once: a second init for the same mount must never run
+      // teacher JS again.
+      if (initialized) return;
+      initialized = true;
+
+      token = mountToken || String(data.token || '');
       questionId = String(data.questionId || '');
       render(data.payload || {});
-      post('ready', {}); // configured ack, now carrying the token
+      post('ready', {}); // configured ack, carrying the token
       return;
     }
     if (!token || String(data.token || '') !== token) return;
@@ -255,7 +320,7 @@ export const sandboxHarnessHtml = `<!DOCTYPE html>
 
   window.addEventListener('load', function () {
     measure();
-    post('ready', {}); // initial handshake before any token exists
+    post('ready', {}); // initial handshake, carrying the URL mount token
   });
 })();
 </script>

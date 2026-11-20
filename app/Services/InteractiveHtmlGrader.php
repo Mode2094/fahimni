@@ -211,8 +211,15 @@ class InteractiveHtmlGrader
         $a = $this->unwrap($a);
         $b = $this->unwrap($b);
 
+        // A boolean key must only match a real boolean-ish answer. Casting with
+        // `(bool)` here was a security bug: any non-empty string ("anything")
+        // compared equal to a `true` key. Normalize both sides and require a
+        // recognized boolean value on each.
         if (is_bool($a) || is_bool($b)) {
-            return (bool) $a === (bool) $b;
+            $na = $this->normalizeBool($a);
+            $nb = $this->normalizeBool($b);
+
+            return $na !== null && $nb !== null && $na === $nb;
         }
         if (is_numeric($a) && is_numeric($b)) {
             return abs((float) $a - (float) $b) < 1e-9;
@@ -222,6 +229,40 @@ class InteractiveHtmlGrader
         }
 
         return $this->scalarString($a) === $this->scalarString($b);
+    }
+
+    /**
+     * Normalize a value to a boolean, or null when it is not a recognized
+     * boolean representation. Deliberately strict: only real booleans, 1/0 and
+     * the strings true/false/1/0 (case-insensitive) qualify, so an arbitrary
+     * non-empty answer can never satisfy a boolean answer key.
+     */
+    private function normalizeBool(mixed $value): ?bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            if ((float) $value === 1.0) {
+                return true;
+            }
+            if ((float) $value === 0.0) {
+                return false;
+            }
+
+            return null;
+        }
+        if (is_string($value)) {
+            $v = strtolower(trim($value));
+            if ($v === 'true' || $v === '1') {
+                return true;
+            }
+            if ($v === 'false' || $v === '0') {
+                return false;
+            }
+        }
+
+        return null;
     }
 
     private function scalarString(mixed $value): string

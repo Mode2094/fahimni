@@ -81,6 +81,7 @@ export function CodeEditor({
   placeholder,
   minHeight = 150,
   dir = 'ltr',
+  onPasteText,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -89,6 +90,12 @@ export function CodeEditor({
   placeholder?: string;
   minHeight?: number;
   dir?: 'ltr' | 'rtl';
+  /**
+   * Optional paste interceptor. Return `true` to claim the paste (the parent
+   * handled the text, e.g. by splitting a full document across tabs) and stop
+   * the default insertion.
+   */
+  onPasteText?: (text: string) => boolean;
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -136,6 +143,11 @@ export function CodeEditor({
           ref={taRef}
           value={code}
           onChange={(e) => onChange(e.target.value)}
+          onPaste={(e) => {
+            if (!onPasteText) return;
+            const text = e.clipboardData?.getData('text/plain') ?? '';
+            if (text && onPasteText(text)) e.preventDefault();
+          }}
           onScroll={sync}
           spellCheck={false}
           dir={dir}

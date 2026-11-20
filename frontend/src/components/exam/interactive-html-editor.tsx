@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Monitor, Smartphone, Sparkles, AlertTriangle, Eye } from 'lucide-react';
 import { CodeEditor, type CodeLanguage } from '@/components/exam/code-editor';
 import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-question';
-import { IQ_LIMITS } from '@/lib/interactive-question';
+import { IQ_LIMITS, splitFullDocument } from '@/lib/interactive-question';
 import { INTERACTIVE_EXAMPLES } from '@/lib/interactive-examples';
 
 /** Flat draft fields the interactive editor owns (see `QuestionDraft`). */
@@ -68,6 +68,7 @@ export function InteractiveHtmlEditor({ value, onChange }: {
   const [previewSize, setPreviewSize] = useState<'desktop' | 'phone'>('desktop');
   const [previewValue, setPreviewValue] = useState('');
   const [showPreview, setShowPreview] = useState(true);
+  const [pasteNotice, setPasteNotice] = useState(false);
 
   const codeKey = useDebounced(
     `${value.interactive_html}\u0000${value.interactive_css}\u0000${value.interactive_js}\u0000${value.interactive_height}\u0000${value.interactive_auto_capture}`,
@@ -82,6 +83,7 @@ export function InteractiveHtmlEditor({ value, onChange }: {
 
   const loadExample = (index: number) => {
     const ex = INTERACTIVE_EXAMPLES[index];
+    setPasteNotice(false);
     onChange({
       interactive_html: ex.html,
       interactive_css: ex.css,
@@ -101,6 +103,23 @@ export function InteractiveHtmlEditor({ value, onChange }: {
     js: { val: value.interactive_js, key: 'interactive_js', max: IQ_LIMITS.js, ph: t('اكتب JavaScript… استخدم FahimniQuestion.setAnswer(value)', 'Write JavaScript… use FahimniQuestion.setAnswer(value)') },
   };
   const active = editorProps[tab];
+
+  // Pasting a whole HTML document is common from templates/AI tools. Split it
+  // into the proper tabs (parsed inertly — no <script> ever runs), while a
+  // plain fragment keeps flowing into the HTML tab as before.
+  const handleEditorPaste = (text: string): boolean => {
+    if (tab !== 'html') return false;
+    const split = splitFullDocument(text);
+    if (!split.detected) return false;
+
+    const patch: Partial<InteractiveHtmlDraft> = { interactive_html: split.html };
+    if (split.extractedCss) patch.interactive_css = split.css;
+    if (split.extractedJs) patch.interactive_js = split.js;
+    onChange(patch);
+    setPasteNotice(true);
+
+    return true;
+  };
 
   return (
     <div className="space-y-4">
@@ -148,7 +167,17 @@ export function InteractiveHtmlEditor({ value, onChange }: {
           maxLength={active.max}
           placeholder={active.ph}
           minHeight={180}
+          onPasteText={handleEditorPaste}
         />
+        {pasteNotice && (
+          <p className="flex items-center gap-1.5 text-[11px] text-teal-700">
+            <Sparkles className="h-3.5 w-3.5" />
+            {t(
+              'تم استخراج CSS/JavaScript من المستند المُلصق إلى تبويباتهما تلقائياً.',
+              'Extracted CSS/JavaScript from the pasted document into their tabs.',
+            )}
+          </p>
+        )}
         <p className="text-[11px] text-gray-400">
           {t(
             'لا يعمل وسم <script> داخل HTML — ضع كل الأكواد في تبويب JavaScript. استخدم FahimniQuestion.setAnswer() لإرسال الإجابة.',

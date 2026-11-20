@@ -14,6 +14,14 @@
 
 export const IQ_CHANNEL = 'fahimni-question';
 
+/**
+ * Query-string parameter that carries the per-mount token to the sandbox
+ * document. The harness reads it back out of its own URL and echoes it in the
+ * `ready` handshake, which lets the host prove the frame is still the sandbox
+ * document it created — a self-navigated or forged frame cannot reproduce it.
+ */
+export const IQ_MOUNT_PARAM = 'm';
+
 export const IQ_LIMITS = {
   /** Server mirrors these in StoreQuestionRequest. */
   html: 200_000,
@@ -104,6 +112,89 @@ export function isIqChildMessage(data: unknown): data is IqChildMessage {
 }
 
 /**
+ * Build the sandbox iframe URL for a mount. The token is a random capability,
+ * not teacher content: the harness only uses it to prove *which* mount it is,
+ * and an external page a self-navigation lands on can never know it.
+ */
+export function buildSandboxUrl(basePath: string, mountToken: string): string {
+  const sep = basePath.includes('?') ? '&' : '?';
+
+  return `${basePath}${sep}${IQ_MOUNT_PARAM}=${encodeURIComponent(mountToken)}`;
+}
+
+/** Read the mount token out of a `location.search`-style string (harness side). */
+export function parseMountTokenFromSearch(search: string): string {
+  const raw = String(search ?? '');
+  const query = raw.startsWith('?') ? raw.slice(1) : raw;
+  const token = new URLSearchParams(query).get(IQ_MOUNT_PARAM);
+
+  return token ? token.slice(0, 200) : '';
+}
+
+export type IqGateResult =
+  | { kind: 'ignore' }
+  | { kind: 'send-init' }
+  | { kind: 'ready' }
+  | { kind: 'answer'; value: unknown }
+  | { kind: 'resize'; height: unknown }
+  | { kind: 'error'; message: string };
+
+export interface IqHostGate {
+  /** The mount token this host generated (must be non-empty). */
+  token: string;
+  /** True once `init` has been sent for this mount. */
+  initialized: boolean;
+  /** True once the frame navigated away from our sandbox document. */
+  navigated: boolean;
+}
+
+/**
+ * The single trust decision for an inbound sandbox message. Kept pure and
+ * framework-free so it can be exhaustively unit-tested; the React host only
+ * reacts to the returned verb.
+ *
+ * Rules:
+ *  - a `navigated` frame is ignored entirely (never re-init, never re-send the
+ *    student's answer to a document that replaced our sandbox);
+ *  - only a `ready` carrying the exact mount token may trigger `init`, and only
+ *    once per mount (a second `ready` is the post-init ack);
+ *  - every other message must carry the mount token and arrive after init.
+ */
+export function decideIqChildMessage(data: unknown, gate: IqHostGate): IqGateResult {
+  if (!gate.token || gate.navigated) {
+    return { kind: 'ignore' };
+  }
+  if (!isIqChildMessage(data)) {
+    return { kind: 'ignore' };
+  }
+
+  const msg = data;
+
+  if (msg.type === 'ready') {
+    if (msg.token !== gate.token) {
+      return { kind: 'ignore' };
+    }
+
+    return gate.initialized ? { kind: 'ready' } : { kind: 'send-init' };
+  }
+
+  if (msg.token !== gate.token || !gate.initialized) {
+    return { kind: 'ignore' };
+  }
+
+  switch (msg.type) {
+    case 'answer':
+      return { kind: 'answer', value: msg.payload?.value };
+    case 'resize':
+      return { kind: 'resize', height: msg.payload?.height };
+    case 'error':
+      return { kind: 'error', message: String(msg.payload?.message ?? 'error') };
+    default:
+      return { kind: 'ignore' };
+  }
+}
+
+/**
  * Clamp a sandbox-reported height to the allowed band.
  */
 export function clampHeight(height: unknown): number {
@@ -111,7 +202,6 @@ export function clampHeight(height: unknown): number {
 
   return Math.min(IQ_LIMITS.heightMax, Math.max(IQ_LIMITS.heightMin, Math.round(n)));
 }
-
 /**
  * Drop non-JSON-serializable and oversized values. Returns `{ ok: false }` when
  * the value cannot be represented safely, so the host can ignore it instead of
@@ -208,4 +298,77 @@ export function parseGradingKey(text: string): unknown {
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
 
   return text;
+}
+
+export interface SplitDocumentResult {
+  html: string;
+  css: string;
+  js: string;
+  /** True when the input looked like a full HTML document and was parsed. */
+  detected: boolean;
+  extractedCss: boolean;
+  extractedJs: boolean;
+}
+
+/**
+ * Split a pasted full HTML document into the three editor tabs.
+ *
+ * Parsing uses `DOMParser`, whose documents are inert: `<script>` never runs
+ * and no subresource is fetched. Inline `<style>` / `<script>` bodies are moved
+ * into the css/js fields (so they land in the correct tab and are only ever
+ * executed through the sandbox's own controlled `js` field, never via
+ * `innerHTML`). External `<script src>`/`<link>` tags are deliberately left out
+ * of the code tabs — the sandbox forbids network access anyway.
+ *
+ * Falls back to `detected: false` (leave the text untouched in the HTML tab) so
+ * teachers who paste partial fragments keep the current manual workflow.
+ */
+export function splitFullDocument(input: string): SplitDocumentResult {
+  const raw = String(input ?? '');
+  const passthrough: SplitDocumentResult = {
+    html: raw, css: '', js: '', detected: false, extractedCss: false, extractedJs: false,
+  };
+
+  if (typeof DOMParser === 'undefined') {
+    return passthrough;
+  }
+
+  // Only treat it as a full document when it actually carries document-level
+  // markup or embedded code; a plain fragment such as `<div>…</div>` is left
+  // exactly where the teacher put it.
+  if (!/<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]|<style[\s>]|<script[\s>]/i.test(raw)) {
+    return passthrough;
+  }
+
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(raw, 'text/html');
+  } catch {
+    return passthrough;
+  }
+
+  let css = '';
+  doc.querySelectorAll('style').forEach((el) => {
+    css += (css ? '\n' : '') + (el.textContent || '');
+    el.remove();
+  });
+
+  let js = '';
+  doc.querySelectorAll('script').forEach((el) => {
+    if (!el.getAttribute('src')) {
+      js += (js ? '\n' : '') + (el.textContent || '');
+    }
+    el.remove();
+  });
+
+  const html = (doc.body ? doc.body.innerHTML : raw).trim();
+
+  return {
+    html: html || raw,
+    css,
+    js,
+    detected: true,
+    extractedCss: css.trim().length > 0,
+    extractedJs: js.trim().length > 0,
+  };
 }

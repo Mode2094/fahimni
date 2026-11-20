@@ -10,14 +10,40 @@ use Illuminate\Validation\Validator;
 
 class UpdateQuestionRequest extends FormRequest
 {
+    /** Resolved once per request; see effectiveType(). */
+    private bool $typeResolved = false;
+
+    private ?string $resolvedType = null;
+
     public function authorize(): bool
     {
         return true;
     }
 
+    /**
+     * The type the question will have after this update. A partial update may
+     * omit `question_type`, so we fall back to the persisted type — otherwise
+     * the interactive_html rules would silently not apply.
+     */
+    private function effectiveType(): ?string
+    {
+        if ($this->typeResolved) {
+            return $this->resolvedType;
+        }
+
+        $this->typeResolved = true;
+
+        $type = $this->input('question_type');
+        if (! is_string($type) || $type === '') {
+            $type = Question::query()->whereKey($this->route('question'))->value('question_type');
+        }
+
+        return $this->resolvedType = is_string($type) ? $type : null;
+    }
+
     public function rules(): array
     {
-        $questionType = $this->input('question_type');
+        $questionType = $this->effectiveType();
 
         $rules = [
             'course_id' => ['nullable', 'string', new TenantScopedExists('courses')],
@@ -30,6 +56,19 @@ class UpdateQuestionRequest extends FormRequest
             'explanation' => 'nullable|string',
             'is_active' => 'nullable|boolean',
             'metadata' => 'nullable|array',
+            // Every metadata key the app uses needs a rule, because the
+            // controller persists the *validated* metadata (so an oversized or
+            // unknown key can never be smuggled through the raw payload).
+            'metadata.image_url' => 'nullable|string|max:2048',
+            'metadata.pairs' => 'nullable|array|max:200',
+            'metadata.pairs.*.left' => 'nullable|string|max:1000',
+            'metadata.pairs.*.right' => 'nullable|string|max:1000',
+            'metadata.items' => 'nullable|array|max:200',
+            'metadata.items.*' => 'nullable|string|max:2000',
+            'metadata.answers' => 'nullable|array|max:200',
+            'metadata.answers.*' => 'nullable|string|max:2000',
+            'metadata.keywords' => 'nullable|array|max:100',
+            'metadata.keywords.*' => 'nullable|string|max:100',
         ];
 
         // Type-specific completeness, mirroring StoreQuestionRequest so an
@@ -56,8 +95,18 @@ class UpdateQuestionRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
-            if ($this->input('question_type') !== 'interactive_html') {
+            if ($this->effectiveType() !== 'interactive_html' || ! $this->exists('metadata')) {
                 return;
+            }
+
+            // Metadata is a full replacement on update, so an interactive
+            // payload must be present — it may not be dropped to bypass the
+            // size/shape checks or to strip the hidden grading rule.
+            if (! is_array($this->input('metadata.interactive'))) {
+                $validator->errors()->add(
+                    'metadata.interactive',
+                    'An interactive question update must include its HTML payload.'
+                );
             }
 
             if ($this->input('metadata.grading.mode') === InteractiveHtmlGrader::MODE_AUTO

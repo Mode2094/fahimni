@@ -2,14 +2,19 @@ import { describe, it, expect } from 'vitest';
 import {
   IQ_CHANNEL,
   IQ_LIMITS,
+  IQ_MOUNT_PARAM,
   answerToSubmitValue,
   buildInitMessage,
+  buildSandboxUrl,
   clampHeight,
   createMountToken,
+  decideIqChildMessage,
   gradingKeyToText,
   isIqChildMessage,
   parseGradingKey,
+  parseMountTokenFromSearch,
   sanitizeAnswer,
+  splitFullDocument,
 } from '@/lib/interactive-question';
 
 describe('isIqChildMessage — the host trusts nothing from the sandbox', () => {
@@ -146,5 +151,110 @@ describe('grading key text <-> value helpers', () => {
     expect(parseGradingKey('{"x":2,"y":5}')).toEqual({ x: 2, y: 5 });
     expect(parseGradingKey('["light","co2","reactions","sugar"]')).toEqual(['light', 'co2', 'reactions', 'sugar']);
     expect(parseGradingKey('')).toBe('');
+  });
+});
+
+describe('mount token in the sandbox URL', () => {
+  it('builds a URL the harness can read back', () => {
+    const url = buildSandboxUrl('/embed/question', 'tok 1/2');
+    expect(url.startsWith('/embed/question?')).toBe(true);
+    expect(parseMountTokenFromSearch(url.slice(url.indexOf('?')))).toBe('tok 1/2');
+  });
+
+  it('preserves an existing query string', () => {
+    const url = buildSandboxUrl('/embed/question?v=1', 'abc');
+    expect(url).toContain('?v=1&');
+    expect(parseMountTokenFromSearch(url.slice(url.indexOf('?')))).toBe('abc');
+  });
+
+  it('returns an empty token when none is present or it is oversized', () => {
+    expect(parseMountTokenFromSearch('')).toBe('');
+    expect(parseMountTokenFromSearch('?x=1')).toBe('');
+    expect(parseMountTokenFromSearch(`?${IQ_MOUNT_PARAM}=${'a'.repeat(500)}`).length).toBe(200);
+  });
+});
+
+describe('decideIqChildMessage — the host trust boundary', () => {
+  const gate = (over: Partial<{ token: string; initialized: boolean; navigated: boolean }> = {}) => ({
+    token: 'tok',
+    initialized: false,
+    navigated: false,
+    ...over,
+  });
+  const ready = (token: string) => ({ channel: IQ_CHANNEL, type: 'ready', token });
+
+  it('ignores everything when it has no mount token', () => {
+    expect(decideIqChildMessage(ready('tok'), gate({ token: '' })).kind).toBe('ignore');
+  });
+
+  it('ignores everything once the frame has navigated away', () => {
+    const g = gate({ initialized: true, navigated: true });
+    expect(decideIqChildMessage(ready('tok'), g).kind).toBe('ignore');
+    expect(decideIqChildMessage({ channel: IQ_CHANNEL, type: 'answer', token: 'tok', payload: { value: 1 } }, g).kind).toBe('ignore');
+  });
+
+  it('only accepts a handshake that carries the exact mount token', () => {
+    expect(decideIqChildMessage(ready('wrong'), gate()).kind).toBe('ignore');
+    expect(decideIqChildMessage(ready(''), gate()).kind).toBe('ignore');
+    expect(decideIqChildMessage(ready('tok'), gate()).kind).toBe('send-init');
+  });
+
+  it('sends init at most once per mount, then only acks', () => {
+    expect(decideIqChildMessage(ready('tok'), gate({ initialized: true })).kind).toBe('ready');
+    // Never a second init from a repeated ready.
+    expect(decideIqChildMessage(ready('tok'), gate({ initialized: true })).kind).not.toBe('send-init');
+  });
+
+  it('drops non-handshake messages until init has been sent', () => {
+    const answer = { channel: IQ_CHANNEL, type: 'answer', token: 'tok', payload: { value: 'x' } };
+    expect(decideIqChildMessage(answer, gate({ initialized: false })).kind).toBe('ignore');
+    expect(decideIqChildMessage(answer, gate({ initialized: true })).kind).toBe('answer');
+  });
+
+  it('drops a forged answer whose token does not match', () => {
+    const forged = { channel: IQ_CHANNEL, type: 'answer', token: 'forged', payload: { value: 'FORGED' } };
+    expect(decideIqChildMessage(forged, gate({ initialized: true })).kind).toBe('ignore');
+  });
+
+  it('routes resize and error only for the mounted frame', () => {
+    expect(decideIqChildMessage({ channel: IQ_CHANNEL, type: 'resize', token: 'tok', payload: { height: 400 } }, gate({ initialized: true }))).toEqual({ kind: 'resize', height: 400 });
+    expect(decideIqChildMessage({ channel: IQ_CHANNEL, type: 'error', token: 'tok', payload: { message: 'boom' } }, gate({ initialized: true }))).toEqual({ kind: 'error', message: 'boom' });
+  });
+});
+
+describe('splitFullDocument — safe extraction of a pasted document', () => {
+  it('leaves a plain fragment untouched in the HTML tab', () => {
+    const out = splitFullDocument('<div class="x">hi</div>');
+    expect(out.detected).toBe(false);
+    expect(out.html).toBe('<div class="x">hi</div>');
+    expect(out.css).toBe('');
+    expect(out.js).toBe('');
+  });
+
+  it('pulls inline <style> and <script> into the css/js fields', () => {
+    const doc = [
+      '<!DOCTYPE html>',
+      '<html><head><style>.a{color:red}</style></head>',
+      '<body><div id="root">hello</div>',
+      '<scr' + 'ipt>FahimniQuestion.setAnswer(1);</scr' + 'ipt></body></html>',
+    ].join('\n');
+
+    const out = splitFullDocument(doc);
+    expect(out.detected).toBe(true);
+    expect(out.css).toContain('.a{color:red}');
+    expect(out.js).toContain('FahimniQuestion.setAnswer(1)');
+    expect(out.html).toContain('id="root"');
+    // The extracted script must not remain in the HTML the sandbox injects.
+    expect(out.html).not.toContain('setAnswer');
+    expect(out.extractedCss).toBe(true);
+    expect(out.extractedJs).toBe(true);
+  });
+
+  it('never executes scripts (no live DOM side effects) and keeps external refs out', () => {
+    const doc = '<html><head><script src="https://evil.example/x.js"></scr' + 'ipt></head><body><p>ok</p></body></html>';
+    const out = splitFullDocument(doc);
+    expect(out.detected).toBe(true);
+    expect(out.js).toBe('');
+    expect(out.html).toContain('ok');
   });
 });
