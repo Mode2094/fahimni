@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/store';
 import { PanelShell } from './panel-shell';
 import { PublicShell } from './public-shell';
+import { AuthUnavailable } from '@/components/auth/auth-unavailable';
 import { isAdminRoute, isStudentRoute, isTeacherRoute, isPublicShellRoute } from './nav-config';
 
 /**
@@ -23,7 +24,7 @@ import { isAdminRoute, isStudentRoute, isTeacherRoute, isPublicShellRoute } from
 export function RouteShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { user, initialized } = useAuth();
+  const { user, initialized, status } = useAuth();
   const [mounted, setMounted] = useState(false);
 
   const t = (ar: string, en: string) => (user?.locale === 'ar' ? ar : en);
@@ -32,11 +33,15 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
 
   const needsAuth = isStudentRoute(path);
   useEffect(() => {
-    if (mounted && initialized && needsAuth && !user) {
+    // Never redirect while the session check is still running, and never
+    // redirect on a network/5xx failure — that would turn an outage into a
+    // logout. Only an explicit 401 (status unauthenticated) sends the user
+    // to the login page.
+    if (mounted && initialized && needsAuth && status === 'unauthenticated' && !user) {
       const from = path ? `?from=${encodeURIComponent(path)}` : '';
       router.replace(`/student/login${from}`);
     }
-  }, [mounted, initialized, needsAuth, user, path, router]);
+  }, [mounted, initialized, needsAuth, status, user, path, router]);
 
   // Admin & teacher namespaces have their own layouts (sidebar stays mounted).
   if (isAdminRoute(path) || path.startsWith('/teacher')) {
@@ -50,9 +55,21 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
   // Shared panel routes outside the /teacher namespace (courses, students,
   // analytics, blog, community…) must keep the role-aware sidebar visible.
   if (isTeacherRoute(path) || needsAuth) {
-    if (!mounted || !initialized || !user) {
+    if (!mounted || !initialized) {
       return <div suppressHydrationWarning className="min-h-screen bg-background" aria-hidden="true" />;
     }
+
+    // The server could not be reached and no profile is cached: show a
+    // recoverable message instead of an endless blank screen or a fake
+    // logout. The banner above offers a retry.
+    if (!user && status === 'unavailable') {
+      return <AuthUnavailable />;
+    }
+
+    if (!user) {
+      return <div suppressHydrationWarning className="min-h-screen bg-background" aria-hidden="true" />;
+    }
+
     const variant = user?.is_super_admin
       ? 'admin'
       : user?.roles?.includes('Teacher')

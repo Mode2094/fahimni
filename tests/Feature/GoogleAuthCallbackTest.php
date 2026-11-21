@@ -51,14 +51,25 @@ class GoogleAuthCallbackTest extends TenantTestCase
         config(['sanctum.stateful' => ['fahimni.me', 'www.fahimni.me']]);
     }
 
-    /** The browser's session cookie as a raw `Cookie` header value. */
+    /** The browser's session id (plaintext), replayed via withCookie(). */
     private function sessionCookie($response): string
     {
         $name = (string) config('session.cookie');
         $cookie = $response->getCookie($name);
         $this->assertNotNull($cookie, 'Expected the session cookie '.$name.' to be set.');
 
-        return $name.'='.$cookie->getValue();
+        return (string) $this->app['session']->getId();
+    }
+
+    /** Issue a request as a fresh browser carrying the session cookie. */
+    private function asCookie(string $cookie, array $extraHeaders = [])
+    {
+        $this->flushSession();
+        $this->app['auth']->forgetGuards();
+
+        return $this->withCredentials()
+            ->withCookie((string) config('session.cookie'), $cookie)
+            ->withHeaders(array_merge(['Origin' => self::STATE_ORIGIN, 'Accept' => 'application/json'], $extraHeaders));
     }
 
     private function fakeGoogle(string $email, string $name = 'New Teacher'): void
@@ -310,14 +321,7 @@ class GoogleAuthCallbackTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($response);
 
-        // A fresh request: reset the guard the callback authenticated.
-        $this->app['auth']->forgetGuards();
-
-        $me = $this->withHeaders([
-            'Cookie' => $cookie,
-            'Origin' => self::STATE_ORIGIN,
-            'Accept' => 'application/json',
-        ])->getJson('/api/v1/auth/me');
+        $me = $this->asCookie($cookie)->getJson('/api/v1/auth/me');
 
         $me->assertOk()->assertJsonPath('user.email', $email);
         $this->assertContains('Teacher', (array) $me->json('user.roles'));
@@ -345,18 +349,10 @@ class GoogleAuthCallbackTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($this->callbackWith($this->signedState(['role' => 'teacher'])));
 
-        // A fresh request in its own process: reset the shared session store and
-        // the guard the callback authenticated.
-        $this->flushSession();
-        $this->app['auth']->forgetGuards();
-
         // `http://localhost:3000` is exactly what Next.js forwarded behind the
         // proxy (its own listen address), and it is not a stateful domain.
-        $response = $this->withHeaders([
-            'Cookie' => $cookie,
-            'Origin' => 'http://localhost:3000',
-            'Accept' => 'application/json',
-        ])->getJson('/api/v1/auth/me');
+        $response = $this->asCookie($cookie, ['Origin' => 'http://localhost:3000'])
+            ->getJson('/api/v1/auth/me');
 
         $response->assertStatus(401);
 
@@ -395,15 +391,14 @@ class GoogleAuthCallbackTest extends TenantTestCase
         $this->assertStringNotContainsString('token=', (string) $response->headers->get('Location'));
 
         $cookie = $this->sessionCookie($response);
-        $this->app['auth']->forgetGuards();
 
         // Still not signed in: the pending challenge lives server-side.
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->getJson('/api/v1/auth/me')
             ->assertStatus(401);
 
         // Completing the factor signs the user in over the same session.
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->postJson('/api/v1/auth/2fa/confirm', ['code' => TOTP::code('JBSWY3DPEHPK3PXP')])
             ->assertOk()
             ->assertJsonPath('user.email', $email)

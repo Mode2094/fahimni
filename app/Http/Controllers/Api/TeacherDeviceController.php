@@ -271,6 +271,10 @@ class TeacherDeviceController extends Controller
             ->where('user_id', $student->id)
             ->delete();
 
+        // A device reset is a security action: end every existing web session
+        // so the student signs in again on the newly approved device.
+        $student->increment('auth_version');
+
         return response()->json([
             'message' => "Devices reset for {$student->name}. They can now log in from a new device.",
             'deleted' => $deleted,
