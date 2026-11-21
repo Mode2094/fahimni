@@ -35,11 +35,12 @@ let csrfInFlight: Promise<void> | null = null;
 /**
  * Make sure the browser holds a session + XSRF cookie pair. Only performs a
  * network call when the XSRF cookie is missing, and deduplicates concurrent
- * calls (parallel mutations on first load).
+ * calls (parallel mutations on first load). `force` re-fetches after a 419
+ * (the server rotated the session/CSRF pair).
  */
-export function ensureCsrfCookie(): Promise<void> {
+export function ensureCsrfCookie(force = false): Promise<void> {
   if (typeof window === 'undefined') return Promise.resolve();
-  if (readCookie('XSRF-TOKEN')) return Promise.resolve();
+  if (!force && readCookie('XSRF-TOKEN')) return Promise.resolve();
   if (csrfInFlight) return csrfInFlight;
 
   csrfInFlight = fetch('/api/session/csrf', { credentials: 'same-origin', cache: 'no-store' })
@@ -98,25 +99,54 @@ export function enrichApiInit(input: RequestInfo | URL, init: RequestInit = {}):
 
 /**
  * fetch() wrapper for authenticated app calls: same-origin credentials, CSRF
- * header on mutations, device id, and session cleanup on 401.
+ * header on mutations, device id, a single retry after a rotated CSRF token,
+ * and a global "session expired" signal on a real 401.
+ *
+ * It deliberately does NOT clear local state itself: a 401 from a login
+ * attempt is not an expired session, and a transient 5xx must never look
+ * like a logout. The auth store owns that decision.
  */
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const method = requestMethod(input, init);
+  const sameOrigin = isSameOriginApi(input);
+  const unsafe = sameOrigin && UNSAFE_METHODS.has(method);
 
-  if (isSameOriginApi(input) && UNSAFE_METHODS.has(method)) {
+  if (unsafe) {
     await ensureCsrfCookie();
   }
 
-  const response = await fetch(input, {
+  const run = () => fetch(input, {
     ...enrichApiInit(input, init),
     credentials: 'same-origin',
   });
 
-  if (response.status === 401 && isSameOriginApi(input)) {
-    clearStoredUser();
+  let response = await run();
+
+  // The session/CSRF pair can rotate while a tab is open (another tab logged
+  // in or out). Laravel rejects the stale token before the controller runs,
+  // so one retry with a fresh pair is safe and invisible to the user.
+  if (response.status === 419 && unsafe) {
+    await ensureCsrfCookie(true);
+    response = await run();
+  }
+
+  if (response.status === 401 && sameOrigin && !isSessionEndpoint(input)) {
+    window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { at: Date.now() } }));
   }
 
   return response;
+}
+
+function isSessionEndpoint(input: RequestInfo | URL): boolean {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    return new URL(url, window.location.origin).pathname.startsWith('/api/session/');
+  } catch {
+    return false;
+  }
 }
 
 /** Non-sensitive UI hint that a session cookie may exist. Never a credential. */

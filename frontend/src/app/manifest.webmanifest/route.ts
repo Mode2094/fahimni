@@ -31,7 +31,7 @@ const PLATFORM_MANIFEST = {
   name: SITE_NAME,
   short_name: BRAND_NAME_SHORT,
   description: 'منصة تعليمية متكاملة للمعلمين: دورات، طلاب، امتحانات وبث مباشر.',
-  start_url: '/',
+  start_url: '/app',
   scope: '/',
   id: '/',
   display: 'standalone',

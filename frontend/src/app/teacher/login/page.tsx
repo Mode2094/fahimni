@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
+import { dashboardPathFor } from '@/lib/auth-routes';
 import { resolveLogoUrl } from '@/lib/logo';
 import { t } from '@/lib/i18n';
 import { Eye, EyeOff, ArrowLeft, Users, BookOpen, Sparkles, Shield, Loader2, KeyRound } from 'lucide-react';
@@ -30,8 +31,17 @@ export default function TeacherLoginPage() {
   const [captchaId, setCaptchaId] = useState('');
   const router = useRouter();
   const login = useAuth((s) => s.login);
+  const initialized = useAuth((s) => s.initialized);
+  const currentUser = useAuth((s) => s.user);
   const { locale } = useLocale();
   const { settings } = useSettings();
+
+  useEffect(() => {
+    // Already signed in: never show a login form over a live session.
+    if (initialized && currentUser) {
+      router.replace(dashboardPathFor(currentUser));
+    }
+  }, [initialized, currentUser, router]);
 
   useEffect(() => {
     // Credentials are never persisted client-side — purge any legacy copy.

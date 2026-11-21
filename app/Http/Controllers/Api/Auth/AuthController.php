@@ -21,6 +21,7 @@ use App\Support\DevicePolicy;
 use App\Support\MailDelivery;
 use App\Support\MathCaptcha;
 use App\Support\TOTP;
+use App\Support\WebSessionAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -210,8 +211,7 @@ class AuthController extends Controller
         // Web (cookie session) registration: sign the user in server-side and
         // never hand a bearer token to the browser.
         if ($request->hasSession()) {
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
             AuditLogger::log($request, 'auth.register', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
@@ -304,8 +304,7 @@ class AuthController extends Controller
         $tenantId = $this->applyLoginSideEffects($request, $user);
 
         if ($sessionMode) {
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
             AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
@@ -422,8 +421,7 @@ class AuthController extends Controller
 
         if (is_array($sessionPending)) {
             $request->session()->forget('auth.2fa_pending');
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
             AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id, ['mode' => 'session']);
 
@@ -638,7 +636,10 @@ class AuthController extends Controller
                 ])->save();
 
                 // A reset means the credential may have been compromised:
-                // revoke every bearer token so stolen sessions die instantly.
+                // revoke every bearer token and every web session so stolen
+                // credentials die instantly (EnsureAccountActive compares the
+                // session marker against the bumped version).
+                $user->increment('auth_version');
                 $user->tokens()->delete();
 
                 $loginPath = $user->loginPath();

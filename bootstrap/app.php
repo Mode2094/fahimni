@@ -3,6 +3,7 @@
 use App\Http\Middleware\AdminMiddleware;
 use App\Http\Middleware\CheckFeature;
 use App\Http\Middleware\DeviceSessionMiddleware;
+use App\Http\Middleware\EnsureAccountActive;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\MaintenanceMiddleware;
 use App\Http\Middleware\MetricsMiddleware;
@@ -44,6 +45,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToGroup('api', MaintenanceMiddleware::class);
         $middleware->appendToGroup('api', 'throttle:api');
         $middleware->appendToGroup('api', MetricsMiddleware::class);
+        // Revoke web sessions after password changes / deactivation. Must run
+        // after StartSession (statefulApi) and before route auth middleware.
+        $middleware->appendToGroup('api', EnsureAccountActive::class);
 
         // API-only app: unauthenticated requests must return 401 JSON,
         // never redirect to a non-existent web "login" route.

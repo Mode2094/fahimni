@@ -17,7 +17,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 export default function ExamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { check } = useAuth();
+  const { initialized, user, status } = useAuth();
   const { locale } = useLocale();
   const router = useRouter();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -84,9 +84,15 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   };
 
   useEffect(() => {
-    if (!check()) { router.replace('/student/login'); return; }
+    // Wait for the session check: a missing localStorage hint is not proof of
+    // being signed out, and an outage must not bounce the student to login.
+    if (!initialized) return;
+    if (!user) {
+      if (status === 'unauthenticated') router.replace('/student/login');
+      return;
+    }
     loadMeta();
-  }, [id]);
+  }, [id, initialized, user, status, router]);
 
   // Timer
   useEffect(() => {

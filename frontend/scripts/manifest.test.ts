@@ -56,5 +56,7 @@ test('each teacher app keeps its own identity and start_url', () => {
 
   assert.match(route, /start_url:\s*teacherPath/, 'tenant manifest start_url must be the tenant path');
   assert.match(route, /id:\s*teacherPath/, 'tenant manifest id must be the tenant path (no OS-app collision)');
-  assert.match(route, /start_url:\s*'\/'/, 'platform manifest must keep the root start_url');
+  // The platform app launches the session-aware /app entry, which restores the
+  // signed-in user's role dashboard instead of the public landing page.
+  assert.match(route, /start_url:\s*'\/app'/, 'platform manifest must launch the session-aware /app entry');
 });

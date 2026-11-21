@@ -8,6 +8,7 @@ use App\Models\PlatformSetting;
 use App\Support\AuditLogger;
 use App\Support\MathCaptcha;
 use App\Support\TOTP;
+use App\Support\WebSessionAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -96,6 +97,11 @@ class SecurityController extends Controller
             'two_factor_confirmed_at' => now(),
         ])->save();
 
+        // Enabling 2FA is a security upgrade: sign out every other device but
+        // keep the session that just proved possession of the second factor.
+        $user->increment('auth_version');
+        WebSessionAuth::adoptCurrentVersion($request, $user);
+
         AuditLogger::log($request, '2fa.enabled', 'user', $user->id);
 
         return response()->json(['message' => '2FA enabled successfully.']);
@@ -134,6 +140,11 @@ class SecurityController extends Controller
             'two_factor_secret' => null,
             'two_factor_confirmed_at' => null,
         ])->save();
+
+        // Disabling 2FA is a security downgrade: every other session must
+        // re-authenticate, while this password-verified session stays alive.
+        $user->increment('auth_version');
+        WebSessionAuth::adoptCurrentVersion($request, $user);
 
         AuditLogger::log($request, '2fa.disabled', 'user', $user->id);
 

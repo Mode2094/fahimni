@@ -28,7 +28,17 @@ export default function AdminLoginPage() {
   const router = useRouter();
   const login = useAuth((s) => s.login);
   const login2fa = useAuth((s) => s.login2fa);
+  const initialized = useAuth((s) => s.initialized);
+  const currentUser = useAuth((s) => s.user);
   const { locale } = useLocale();
+
+  useEffect(() => {
+    // An admin session must resume without showing the form again. Non-admins
+    // keep the explicit "not an admin" handling in finishAdminLogin().
+    if (initialized && currentUser?.is_super_admin) {
+      router.replace('/admin/dashboard');
+    }
+  }, [initialized, currentUser, router]);
 
   useEffect(() => {
     // Admin uses its OWN remembered key — and never stores the password.

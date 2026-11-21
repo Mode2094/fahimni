@@ -437,8 +437,10 @@ class AdminController extends Controller
         $tenantIds = TenantUser::where('user_id', $user->id)->where('status', 'active')->pluck('tenant_id');
         Tenant::whereIn('id', $tenantIds)->update(['status' => $request->boolean('is_active') ? 'active' : 'suspended']);
 
-        // Deactivation must kill every live session immediately.
+        // Deactivation must kill every live session immediately — bearer
+        // tokens here and all web sessions through the version bump.
         if (! $request->boolean('is_active')) {
+            $user->increment('auth_version');
             $user->tokens()->delete();
         }
 
@@ -458,6 +460,7 @@ class AdminController extends Controller
         // Soft-delete the teacher and their tenants (data preserved for audits).
         $tenantIds = TenantUser::where('user_id', $user->id)->pluck('tenant_id');
         Tenant::whereIn('id', $tenantIds)->delete();
+        $user->increment('auth_version');
         $user->tokens()->delete();
         $user->delete();
 
@@ -638,6 +641,7 @@ class AdminController extends Controller
         $student = User::whereHas('tenantPivots', fn ($q) => $q->withoutGlobalScope('tenant')->where('role', 'student'))
             ->findOrFail($id);
 
+        $student->increment('auth_version');
         $student->tokens()->delete();
         $student->delete();
 
@@ -682,8 +686,10 @@ class AdminController extends Controller
 
         $student->update(['is_active' => $request->boolean('is_active')]);
 
-        // Deactivated students lose their sessions immediately.
+        // Deactivated students lose their sessions immediately (tokens and
+        // every web session via the version bump).
         if (! $request->boolean('is_active')) {
+            $student->increment('auth_version');
             $student->tokens()->delete();
         }
 

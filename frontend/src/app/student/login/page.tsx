@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
+import { postLoginPath } from '@/lib/auth-routes';
 import { resolveLogoUrl } from '@/lib/logo';
 import { t } from '@/lib/i18n';
 import { Eye, EyeOff, ArrowLeft, BookOpen, Trophy, Award, Sparkles, Loader2 } from 'lucide-react';
@@ -34,7 +35,17 @@ function StudentLoginPageInner() {
   const from = search.get('from') || '';
   const login = useAuth((s) => s.login);
   const login2fa = useAuth((s) => s.login2fa);
+  const initialized = useAuth((s) => s.initialized);
+  const currentUser = useAuth((s) => s.user);
   const { locale } = useLocale();
+
+  useEffect(() => {
+    // Already signed in: skip the form entirely. This is what makes a PWA
+    // launch (or a bookmarked login URL) resume the existing session.
+    if (initialized && currentUser) {
+      router.replace(postLoginPath(currentUser, from));
+    }
+  }, [initialized, currentUser, from, router]);
 
   useEffect(() => {
     // Credentials are never persisted client-side — purge any legacy copy.
@@ -65,8 +76,7 @@ function StudentLoginPageInner() {
     const roles: string[] = user?.roles || [];
     if (user?.is_super_admin) router.push('/admin/dashboard');
     else if (roles.includes('Teacher')) router.push('/teacher/dashboard');
-    else if (from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/\\')) router.push(from);
-    else router.push('/my-learning');
+    else router.push(postLoginPath(user, from));
   };
 
   const submit = async (e: React.FormEvent) => {

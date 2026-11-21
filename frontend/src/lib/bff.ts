@@ -80,9 +80,20 @@ export function jsonWithCookies(
  * Start a stateful Laravel session and obtain the XSRF pair. A 401 from
  * /auth/me is expected — what matters is the Set-Cookie response.
  */
-export async function csrfHandshake(origin: string): Promise<{ jar: CookieJar; cookies: string[] }> {
+export async function csrfHandshake(
+  origin: string,
+  cookieHeader?: string | null,
+): Promise<{ jar: CookieJar; cookies: string[] }> {
   const response = await fetch(`${LARAVEL_API_BASE}/auth/me`, {
-    headers: { Accept: 'application/json', Origin: origin, Referer: `${origin}/` },
+    headers: {
+      Accept: 'application/json',
+      Origin: origin,
+      Referer: `${origin}/`,
+      // Reuse the browser's existing session when it has one. A handshake
+      // that ignored the cookie would create a brand-new anonymous session
+      // and overwrite an authenticated one.
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
     cache: 'no-store',
     redirect: 'manual',
   });
@@ -169,11 +180,55 @@ export async function statefulPost(
   let result = await run(baseJar, baseCookieStrings);
 
   if (result.status === 419) {
-    const retry = await csrfHandshake(origin);
+    const retry = await csrfHandshake(origin, opts.cookieHeader);
     result = await run(retry.jar, retry.cookies);
   }
 
-  return { status: result.status, data: result.data, cookies: result.cookies };
+  // A failed credential check must never hand the browser a fresh session
+  // cookie: that would replace a still-valid session with an anonymous one
+  // (the "wrong password logged me out" bug). The existing cookie stays.
+  const credentials = path === '/auth/login' || path === '/auth/register' || path === '/auth/2fa/confirm';
+  const cookies = credentials && result.status >= 400 ? [] : result.cookies;
+
+  return { status: result.status, data: result.data, cookies };
+}
+
+/**
+ * Expire the browser's auth cookies. Used by logout when the upstream session
+ * is already gone (or unreachable), so a failed logout request can never
+ * leave an HttpOnly cookie behind that restores the session later.
+ */
+export function expiredAuthCookies(cookieHeader: string | null, origin: string): string[] {
+  const jar = parseCookieHeader(cookieHeader);
+  const names = new Set<string>();
+
+  for (const name of jar.keys()) {
+    if (name === 'XSRF-TOKEN' || name.endsWith('-session') || name === 'laravel_session') {
+      names.add(name);
+    }
+  }
+
+  const secure = origin.startsWith('https://') ? '; Secure' : '';
+
+  return [...names].map(
+    (name) => `${name}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/${secure}; SameSite=Lax`,
+  );
+}
+
+/** Append expirations only for cookie names the upstream did not already set. */
+export function withExpiredCookies(
+  cookies: string[],
+  cookieHeader: string | null,
+  origin: string,
+): string[] {
+  const set = new Set(cookies.map((cookie) => cookie.split('=', 1)[0]?.trim()));
+
+  return [
+    ...cookies,
+    ...expiredAuthCookies(cookieHeader, origin).filter(
+      (cookie) => !set.has(cookie.split('=', 1)[0]?.trim()),
+    ),
+  ];
 }
 
 /** Forward an authenticated GET to Laravel using the browser's cookies. */
