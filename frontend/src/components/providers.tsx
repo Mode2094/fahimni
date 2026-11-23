@@ -13,6 +13,7 @@ import { Toaster } from 'sonner';
 import { RouteShell } from '@/components/layout/route-shell';
 import { SessionStatusBanner } from '@/components/auth/session-status-banner';
 import { Analytics, MetaVerification } from '@/components/analytics/analytics';
+import PwaManager from '@/components/pwa/pwa-manager';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -116,6 +117,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <MetaVerification />
       <SessionStatusBanner />
       <RouteShell>{children}</RouteShell>
+      <PwaManager />
       <Toaster richColors position={locale === 'ar' ? 'bottom-left' : 'bottom-right'} />
     </>
   );
