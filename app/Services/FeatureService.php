@@ -55,6 +55,22 @@ class FeatureService
         return $tenantId ? $this->engine->activeSubscription($tenantId) : null;
     }
 
+    /**
+     * Is the current tenant's workspace active right now, from ANY source?
+     *
+     * This is the union view (paid Freemius entitlement, legacy local
+     * subscription, or an administrative grant). It is deliberately NOT the
+     * same as `activeSubscription()`, which only returns a LOCAL row and is
+     * therefore null for an entitlement-backed tenant — using that for the
+     * access gate would send a genuinely paid teacher to /pricing.
+     */
+    public function active(): bool
+    {
+        $tenantId = $this->tenantId();
+
+        return $tenantId !== null && $this->engine->snapshot($tenantId)['active'];
+    }
+
     public function hasFeature(string $key): bool
     {
         $tenantId = $this->tenantId();

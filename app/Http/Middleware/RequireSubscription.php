@@ -81,7 +81,7 @@ class RequireSubscription
             }
         }
 
-        if (app(FeatureService::class)->activeSubscription()) {
+        if (app(FeatureService::class)->active()) {
             return $next($request);
         }
 
