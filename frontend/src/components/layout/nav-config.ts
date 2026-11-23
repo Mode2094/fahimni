@@ -231,12 +231,29 @@ export function navLabelFor(path: string, locale: Locale, groups: NavGroup[]): s
   for (const o of OVERRIDES) {
     if (o.test.test(path)) return locale === 'ar' ? o.ar : o.en;
   }
-  for (const g of groups) {
-    for (const item of g.items) {
-      const match = item.href === path || (item.match ?? []).some((m) => m !== '/' && path.startsWith(m + '/'));
-      if (match) return locale === 'ar' ? item.ar : item.en;
+
+  const norm = path.replace(/\/+$/, '') || '/';
+  const items = groups.flatMap((g) => g.items);
+
+  // 1) Exact match wins first, so a leaf route (`/admin/invoices`) shows its own
+  //    label instead of the parent section's, and a tab of a section is titled
+  //    like the section rather than falling back to its raw path slug.
+  const exact = items.find((i) => i.href === norm || (i.match ?? []).includes(norm));
+  if (exact) return locale === 'ar' ? exact.ar : exact.en;
+
+  // 2) Otherwise the most specific prefix (longest match) wins.
+  let best: NavItem | null = null;
+  let bestLen = -1;
+  for (const item of items) {
+    for (const m of [item.href, ...(item.match ?? [])]) {
+      if (m && m !== '/' && norm.startsWith(m + '/') && m.length > bestLen) {
+        best = item;
+        bestLen = m.length;
+      }
     }
   }
-  const tail = path.split('/').filter(Boolean).pop() || '';
+  if (best) return locale === 'ar' ? best.ar : best.en;
+
+  const tail = norm.split('/').filter(Boolean).pop() || '';
   return decodeURIComponent(tail).replace(/-/g, ' ');
 }

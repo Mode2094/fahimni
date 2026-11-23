@@ -85,7 +85,8 @@ return [
             'critical' => 85,
         ],
         'load' => [
-            // load1 vs CPU cores ratio for sustained overload detection.
+            // Ratios PER CORE: the dispatcher divides load1 by the host's CPU
+            // core count before comparing, so a 2-core host warns at ~2.0.
             'warning' => 1.0,
             'critical' => 1.5,
         ],

@@ -5,6 +5,7 @@ namespace App\Monitoring;
 use App\Models\MonitoringAlert;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 /**
  * AlertDispatcher — evaluates thresholds against the latest snapshot and
@@ -39,6 +40,17 @@ class AlertDispatcher
         foreach ($this->pending as $alert) {
             $dispatched[] = $this->dispatch($alert['level'], $alert['source'], $alert['message'], $alert['context'] ?? []);
         }
+
+        // Self-healing: an open alert whose condition is no longer reported in
+        // this evaluation is resolved. Without this the dashboard accumulated
+        // dozens of stale open alerts (disk %, load…) that never cleared once
+        // the metric returned to normal.
+        $activeSources = array_values(array_unique(array_column($this->pending, 'source')));
+        MonitoringAlert::query()
+            ->where('status', MonitoringAlert::STATUS_OPEN)
+            ->whereNotIn('source', $activeSources)
+            ->get()
+            ->each->resolve();
 
         return $dispatched;
     }
@@ -121,7 +133,7 @@ class AlertDispatcher
     {
         $from = config('mail.from.address', 'monitoring@localhost');
 
-        \Illuminate\Support\Facades\Mail::raw(
+        Mail::raw(
             sprintf(
                 "[%s] %s — %s\n\nContext: %s",
                 strtoupper($payload['level']),
@@ -163,33 +175,37 @@ class AlertDispatcher
         $load1 = (float) ($host['loadavg_1'] ?? 0);
 
         if ($cpu >= (float) config('monitoring.host.cpu.critical', 90)) {
-            $this->pending[] = ['level' => 'critical', 'source' => 'host.cpu', 'message' => "CPU at {$cpu}% (critical threshold " . config('monitoring.host.cpu.critical', 90) . '%)', 'context' => ['cpu_percent' => $cpu]];
+            $this->pending[] = ['level' => 'critical', 'source' => 'host.cpu', 'message' => "CPU at {$cpu}% (critical threshold ".config('monitoring.host.cpu.critical', 90).'%)', 'context' => ['cpu_percent' => $cpu]];
         } elseif ($cpu >= (float) config('monitoring.host.cpu.warning', 70)) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'host.cpu', 'message' => "CPU at {$cpu}% (warning threshold " . config('monitoring.host.cpu.warning', 70) . '%)', 'context' => ['cpu_percent' => $cpu]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'host.cpu', 'message' => "CPU at {$cpu}% (warning threshold ".config('monitoring.host.cpu.warning', 70).'%)', 'context' => ['cpu_percent' => $cpu]];
         }
 
         if ($ram >= (float) config('monitoring.host.ram.critical', 90)) {
-            $this->pending[] = ['level' => 'critical', 'source' => 'host.ram', 'message' => "RAM at {$ram}% (critical threshold " . config('monitoring.host.ram.critical', 90) . '%)', 'context' => ['mem_percent' => $ram]];
+            $this->pending[] = ['level' => 'critical', 'source' => 'host.ram', 'message' => "RAM at {$ram}% (critical threshold ".config('monitoring.host.ram.critical', 90).'%)', 'context' => ['mem_percent' => $ram]];
         } elseif ($ram >= (float) config('monitoring.host.ram.warning', 75)) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'host.ram', 'message' => "RAM at {$ram}% (warning threshold " . config('monitoring.host.ram.warning', 75) . '%)', 'context' => ['mem_percent' => $ram]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'host.ram', 'message' => "RAM at {$ram}% (warning threshold ".config('monitoring.host.ram.warning', 75).'%)', 'context' => ['mem_percent' => $ram]];
         }
 
         if ($disk >= (float) config('monitoring.host.disk.critical', 85)) {
-            $this->pending[] = ['level' => 'critical', 'source' => 'host.disk', 'message' => "Root disk at {$disk}% (critical threshold " . config('monitoring.host.disk.critical', 85) . '%)', 'context' => ['disk_percent' => $disk]];
+            $this->pending[] = ['level' => 'critical', 'source' => 'host.disk', 'message' => "Root disk at {$disk}% (critical threshold ".config('monitoring.host.disk.critical', 85).'%)', 'context' => ['disk_percent' => $disk]];
         } elseif ($disk >= (float) config('monitoring.host.disk.warning', 70)) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'host.disk', 'message' => "Root disk at {$disk}% (warning threshold " . config('monitoring.host.disk.warning', 70) . '%)', 'context' => ['disk_percent' => $disk]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'host.disk', 'message' => "Root disk at {$disk}% (warning threshold ".config('monitoring.host.disk.warning', 70).'%)', 'context' => ['disk_percent' => $disk]];
         }
 
         if ($swap > (int) config('monitoring.host.swap.warning_mb', 512)) {
             $this->pending[] = ['level' => 'warning', 'source' => 'host.swap', 'message' => "Swap usage at {$swap}MB", 'context' => ['swap_used_mb' => $swap]];
         }
 
+        // العتبات «لكل نواة»: نقسم على عدد الأنوية قبل المقارنة، وإلا أطلق مضيف
+        // متعدد الأنوية تنبيهات كاذبة (2 أنوية وحمل 1.5 = 75% لكل نواة، لا 150%).
+        $cores = max(1, (int) ($host['cpu_cores'] ?? 1));
+        $loadPerCore = $load1 / $cores;
         $loadWarn = (float) config('monitoring.host.load.warning', 1.0);
         $loadCrit = (float) config('monitoring.host.load.critical', 1.5);
-        if ($load1 >= $loadCrit) {
-            $this->pending[] = ['level' => 'critical', 'source' => 'host.load', 'message' => "Load average {$load1} (critical threshold {$loadCrit})", 'context' => ['load1' => $load1]];
-        } elseif ($load1 >= $loadWarn) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'host.load', 'message' => "Load average {$load1} (warning threshold {$loadWarn})", 'context' => ['load1' => $load1]];
+        if ($loadPerCore >= $loadCrit) {
+            $this->pending[] = ['level' => 'critical', 'source' => 'host.load', 'message' => sprintf('Load average %.2f (%.2f/core over %d cores, critical threshold %.2f/core)', $load1, $loadPerCore, $cores, $loadCrit), 'context' => ['load1' => $load1, 'load_per_core' => round($loadPerCore, 2), 'cpu_cores' => $cores]];
+        } elseif ($loadPerCore >= $loadWarn) {
+            $this->pending[] = ['level' => 'warning', 'source' => 'host.load', 'message' => sprintf('Load average %.2f (%.2f/core over %d cores, warning threshold %.2f/core)', $load1, $loadPerCore, $cores, $loadWarn), 'context' => ['load1' => $load1, 'load_per_core' => round($loadPerCore, 2), 'cpu_cores' => $cores]];
         }
     }
 
@@ -212,11 +228,11 @@ class AlertDispatcher
         }
 
         if ((int) ($db['slow_queries_running'] ?? 0) > 0) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'database.slow_queries', 'message' => "Slow PostgreSQL queries running: " . (int) $db['slow_queries_running'], 'context' => ['count' => $db['slow_queries_running']]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'database.slow_queries', 'message' => 'Slow PostgreSQL queries running: '.(int) $db['slow_queries_running'], 'context' => ['count' => $db['slow_queries_running']]];
         }
 
         if ((int) ($db['deadlocks'] ?? 0) > 0) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'database.deadlocks', 'message' => "PostgreSQL deadlocks detected: " . (int) $db['deadlocks'], 'context' => ['count' => $db['deadlocks']]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'database.deadlocks', 'message' => 'PostgreSQL deadlocks detected: '.(int) $db['deadlocks'], 'context' => ['count' => $db['deadlocks']]];
         }
     }
 
@@ -237,7 +253,7 @@ class AlertDispatcher
         }
 
         if ((int) ($redis['evicted_keys'] ?? 0) > (int) config('monitoring.redis.evictions_per_minute_warning', 10)) {
-            $this->pending[] = ['level' => 'warning', 'source' => 'redis.evictions', 'message' => "Redis evicted " . (int) $redis['evicted_keys'] . ' keys — cache pressure; sessions may be dropped (allkeys-lru)', 'context' => ['evicted_keys' => $redis['evicted_keys']]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'redis.evictions', 'message' => 'Redis evicted '.(int) $redis['evicted_keys'].' keys — cache pressure; sessions may be dropped (allkeys-lru)', 'context' => ['evicted_keys' => $redis['evicted_keys']]];
         }
 
         if (($redis['rdb_last_bgsave_status'] ?? 'ok') !== 'ok') {
@@ -306,7 +322,7 @@ class AlertDispatcher
         }
 
         if (($backup['latest_status'] ?? '') !== 'completed' && ($backup['latest_status'] ?? '') !== 'ready') {
-            $this->pending[] = ['level' => 'warning', 'source' => 'backup.status', 'message' => "Newest backup has non-successful status: " . ($backup['latest_status'] ?? 'unknown'), 'context' => ['status' => $backup['latest_status']]];
+            $this->pending[] = ['level' => 'warning', 'source' => 'backup.status', 'message' => 'Newest backup has non-successful status: '.($backup['latest_status'] ?? 'unknown'), 'context' => ['status' => $backup['latest_status']]];
         }
 
         if (app()->environment('production') && config('monitoring.backup.warn_missing_offsite', true) && ($backup['offsite_configured'] ?? false) !== true) {
