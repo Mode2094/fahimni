@@ -65,8 +65,8 @@ use App\Http\Controllers\Api\StudentAttemptController;
 use App\Http\Controllers\Api\StudentCertificateController;
 use App\Http\Controllers\Api\StudentProfileController;
 use App\Http\Controllers\Api\SubscriptionPlanController;
-use App\Http\Controllers\Api\TeacherAnalyticsController;
 use App\Http\Controllers\Api\TeacherAdminNotificationController;
+use App\Http\Controllers\Api\TeacherAnalyticsController;
 use App\Http\Controllers\Api\TeacherAvailabilityController;
 use App\Http\Controllers\Api\TeacherBlogController;
 use App\Http\Controllers\Api\TeacherBookingController;
@@ -78,6 +78,7 @@ use App\Http\Controllers\Api\TeacherServiceController;
 use App\Http\Controllers\Api\TeacherSiteController;
 use App\Http\Controllers\Api\TeacherStaffController;
 use App\Http\Controllers\Api\TeacherStudentAppController;
+use App\Http\Controllers\Api\TeacherStudentFollowUpController;
 use App\Http\Controllers\Api\TeacherVideoSecurityController;
 use App\Http\Controllers\Api\TenantController;
 use App\Http\Controllers\Api\TenantSettingController;
@@ -744,6 +745,8 @@ Route::prefix('v1')->group(function () {
 
             // ─── Teacher: Device Control ────────────────
             Route::middleware('role:teacher,owner,admin,permission:students.manage')->prefix('teacher')->group(function () {
+                // متابعة الطلاب: من يحتاج انتباهاً (نشاط/تقدم/استحقاقات).
+                Route::get('follow-up', [TeacherStudentFollowUpController::class, 'index']);
                 Route::get('device-policy', [TeacherDeviceController::class, 'policy']);
                 Route::put('device-policy', [TeacherDeviceController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);
