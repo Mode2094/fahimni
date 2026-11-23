@@ -1,4 +1,5 @@
 import api from './api';
+import type { LessonNote } from '@/lib/lesson-notes';
 import type { LoginResponse, User, Tenant, Course, Section, Lesson, Exam, Question, SubscriptionPlan, Payment, Invoice, Enrollment, RecommenderQuestion, PlanRecommendationResponse } from '@/types/api';
 
 export const auth = {
@@ -158,6 +159,21 @@ export const dashboardApi = {
 export const favoritesApi = {
   list: () => api.get<{ favorites: any[] }>('/student/favorites').then(r => r.data.favorites),
   toggle: (courseId: string) => api.post<{ favorited: boolean }>(`/student/favorites/${courseId}`).then(r => r.data),
+};
+
+/**
+ * ملاحظات الطالب وعلاماتهم المرجعية — خاصة بالطالب نفسه؛ لا مشاركة.
+ * الخادم يتحقّق من ملكية الدرس وصلاحية الوصول في كل عملية.
+ */
+export const notesApi = {
+  list: (params: { course_id?: string; lesson_id?: string; type?: 'note' | 'bookmark'; q?: string; page?: number; per_page?: number } = {}) =>
+    api.get<{ data: LessonNote[]; meta: any }>('/student/notes', { params }).then(r => r.data),
+  summary: () => api.get<{ courses: any[] }>('/student/notes/summary').then(r => r.data.courses),
+  create: (payload: { lesson_id: string; type?: 'note' | 'bookmark'; body?: string | null; position_seconds?: number | null; duration_seconds?: number | null; video_id?: string | null }) =>
+    api.post<{ note: LessonNote }>('/student/notes', payload).then(r => r.data.note),
+  update: (id: string, payload: { body?: string | null; position_seconds?: number | null }) =>
+    api.put<{ note: LessonNote }>(`/student/notes/${id}`, payload).then(r => r.data.note),
+  remove: (id: string) => api.delete<{ ok: boolean }>(`/student/notes/${id}`).then(r => r.data),
 };
 
 export const planRecommender = {

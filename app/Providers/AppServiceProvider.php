@@ -139,6 +139,11 @@ class AppServiceProvider extends ServiceProvider
         // مستخدم — يكفي الحفظ الدوري وعند الإيقاف/الخروج دون إثقال القاعدة.
         RateLimiter::for('position', fn (Request $request) => Limit::perMinute(40)->by($request->user()?->id ?: $request->ip()));
 
+        // ملاحظات الطالب: قراءة سخيّة تكفي التصفح، وكتابة محدودة تكفي
+        // الاستخدام الطبيعي وتمنع الإغراق.
+        RateLimiter::for('notes-read', fn (Request $request) => Limit::perMinute(120)->by($request->user()?->id ?: $request->ip()));
+        RateLimiter::for('notes-write', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
+
         RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by(hash('sha256', (string) $request->input('email')).'|'.$request->ip()));
 
         RateLimiter::for('register', fn (Request $request) => Limit::perMinute(3)->by($request->ip()));
