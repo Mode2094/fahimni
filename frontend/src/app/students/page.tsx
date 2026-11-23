@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -20,7 +21,7 @@ import { toast } from 'sonner';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-export default function StudentsPage() {
+function StudentsPageInner() {
   const { check } = useAuth();
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -64,6 +65,18 @@ export default function StudentsPage() {
     } catch { toast.error('Failed'); }
     setProfileLoading(false);
   };
+
+  // انتقال مباشر من «متابعة الطلاب»: /students?student=<id> يفتح ملف الطالب.
+  const searchParams = useSearchParams();
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    const target = searchParams.get('student');
+    if (!target || deepLinked.current || students.length === 0) return;
+    deepLinked.current = true;
+    const found = students.find((x) => x.id === target);
+    if (found) void openProfile(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, searchParams]);
 
   const saveLimit = async () => {
     if (!limitTarget) return;
@@ -357,5 +370,15 @@ export default function StudentsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function StudentsPage() {
+  // `useSearchParams` requires a Suspense boundary in this Next version; the
+  // fallback keeps the shell from flashing while the params resolve.
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl p-6"><TableSkeleton rows={6} cols={4} /></div>}>
+      <StudentsPageInner />
+    </Suspense>
   );
 }
