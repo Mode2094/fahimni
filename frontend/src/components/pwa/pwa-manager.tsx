@@ -22,7 +22,10 @@ export default function PwaManager() {
   const [updateReady, setUpdateReady] = useState(false);
 
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
-  const reloadingRef = useRef(false);
+  // Set only when the student taps "تحديث", so the controllerchange that
+  // follows a skipWaiting reloads exactly once. The controllerchange caused by
+  // the FIRST install (clients.claim) must NOT reload the page.
+  const updateAppliedRef = useRef(false);
 
   /* ── Service worker registration + update flow ─────────────────────── */
   useEffect(() => {
@@ -31,8 +34,8 @@ export default function PwaManager() {
     let cancelled = false;
 
     const onControllerChange = () => {
-      if (reloadingRef.current) return;
-      reloadingRef.current = true;
+      if (!updateAppliedRef.current) return;
+      updateAppliedRef.current = false;
       window.location.reload();
     };
 
@@ -100,7 +103,7 @@ export default function PwaManager() {
   const applyUpdate = useCallback(() => {
     const waiting = registrationRef.current?.waiting;
     if (waiting) {
-      reloadingRef.current = true; // controllerchange will reload once
+      updateAppliedRef.current = true; // the next controllerchange reloads once
       waiting.postMessage({ type: 'fahimni:skip-waiting' });
     } else {
       window.location.reload();
