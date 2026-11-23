@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Loader2, Heart, Eye, Pin, Lock, CheckCircle2, HelpCircle, Tag,
   Pencil, Trash2, MessageSquare, Reply, MessagesSquare, LockOpen, Send,
@@ -77,7 +78,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
   };
 
   const removeThread = async () => {
-    if (!confirm(t('حذف هذا الموضوع نهائياً؟', 'Delete this thread permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الموضوع نهائياً؟', 'Delete this thread permanently?') }))) return;
     try {
       await communityApi.deleteThread(id);
       toast.success(t('تم الحذف', 'Deleted'));
@@ -147,7 +148,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
   };
 
   const removeComment = async (c: CommunityComment) => {
-    if (!confirm(t('حذف هذا التعليق؟', 'Delete this comment?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا التعليق؟', 'Delete this comment?') }))) return;
     try {
       await communityApi.deleteComment(id, c.id);
       toast.success(t('تم الحذف', 'Deleted'));
@@ -167,7 +168,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
   };
 
   const removeReply = async (parentId: string, replyId: string) => {
-    if (!confirm(t('حذف هذا الرد؟', 'Delete this reply?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الرد؟', 'Delete this reply?') }))) return;
     try {
       await communityApi.deleteComment(id, replyId);
       toast.success(t('تم الحذف', 'Deleted'));

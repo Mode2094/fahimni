@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import {
   CreditCard, Plus, Copy, Check, Loader2, Trash2, Upload, FileDown, Printer,
@@ -178,7 +179,7 @@ export default function TeacherCardsPage() {
   };
 
   const cancelCard = async (id: string) => {
-    if (!window.confirm(t('إلغاء هذه البطاقة؟', 'Cancel this card?'))) return;
+    if (!(await confirmDialog({ description: t('إلغاء هذه البطاقة؟', 'Cancel this card?') }))) return;
     setCancellingId(id);
     try {
       const res = await fetch(`${API}/cards/${id}/cancel`, { method: 'POST', headers: headers() });

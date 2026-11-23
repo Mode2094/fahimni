@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
@@ -81,7 +82,7 @@ export default function AdminTeachersPanel() {
       toast.success(t('تم إنشاء المعلم', 'Teacher created'));
       setShowForm(false); setForm({ name: '', email: '', phone: '', password: '', plan_id: '' });
       load();
-    } catch { toast.error('Failed'); } finally { setBusy(false); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } finally { setBusy(false); }
   };
 
   const toggleStatus = async (teach: any) => {
@@ -94,18 +95,18 @@ export default function AdminTeachersPanel() {
       if (!res.ok) throw new Error();
       toast.success(t('تم تحديث الحالة', 'Status updated'));
       load();
-    } catch { toast.error('Failed'); } finally { setBusyId(null); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } finally { setBusyId(null); }
   };
 
   const remove = async (teach: any) => {
-    if (!window.confirm(t(`حذف المعلم «${teach.name}»؟ سيتم إيقاف منصته وحسابه.`, `Delete "${teach.name}"? Their platform & account will be suspended.`))) return;
+    if (!(await confirmDialog({ description: t(`حذف المعلم «${teach.name}»؟ سيتم إيقاف منصته وحسابه.`, `Delete "${teach.name}"? Their platform & account will be suspended.`) }))) return;
     setBusyId(teach.id);
     try {
       const res = await fetch(`${API}/admin/teachers/${teach.id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(t('تم الحذف', 'Deleted'));
       load();
-    } catch { toast.error('Failed'); } finally { setBusyId(null); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } finally { setBusyId(null); }
   };
 
   const openDetail = async (teach: any) => {
@@ -113,7 +114,7 @@ export default function AdminTeachersPanel() {
       setDetailTab('overview');
       const d = await fetch(`${API}/admin/teachers/${teach.id}`, { headers: headers() }).then(r => r.json());
       setDetail(d);
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
   };
 
   const subBadge = (s: any) => {

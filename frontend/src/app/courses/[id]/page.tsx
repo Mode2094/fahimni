@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Video, FileText, Lock, Unlock, ChevronDown, ChevronUp, Loader2,
   Pencil, Layers, BookOpen, ClipboardList, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
@@ -29,6 +30,7 @@ import { DuplicateDialog, type DuplicateKind } from '@/components/content/duplic
 import { uploadVideoDirect } from '@/lib/tus-upload';
 import { stableIdempotencyKey } from '@/lib/video-upload-queue';
 import { buildLearnUrl } from '@/lib/course-preview';
+import { useUnsavedChangesWarning } from '@/lib/use-unsaved-changes';
 import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -95,6 +97,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [commentVals, setCommentVals] = useState<Record<string, string>>({});
   const [commentingId, setCommentingId] = useState<string | null>(null);
 
+  // Any open editor dialog/panel means in-progress work that a reload would
+  // drop — warn before the tab closes while the teacher is mid-edit.
+  const editingInProgress = secOpen || lesOpen || assignOpen || contentType !== '' || videoQueueOpen;
+  useUnsavedChangesWarning(editingInProgress);
+
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
     const tid = localStorage.getItem('tenant_id');
@@ -158,7 +165,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ القسم', 'Could not save the section'))); }
   };
   const removeSection = async (sid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا القسم؟ سيتم حذف جميع دروسه ومحتواها.', 'Delete this section? All its lessons and content will be removed.'))) return;
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا القسم؟ سيتم حذف جميع دروسه ومحتواها.', 'Delete this section? All its lessons and content will be removed.') }))) return;
     try { const res = await fetch(`${API}/sections/${sid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف القسم', 'Could not delete the section'))); }
   };
   const moveSection = async (s: any, dir: number) => {
@@ -204,7 +211,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الدرس', 'Could not save the lesson'))); }
   };
   const removeLesson = async (lid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الدرس؟', 'Delete this lesson?'))) return;
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا الدرس؟', 'Delete this lesson?') }))) return;
     try { const res = await fetch(`${API}/lessons/${lid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الدرس', 'Could not delete the lesson'))); }
   };
   const moveLesson = async (l: any, dir: number) => {
@@ -297,7 +304,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ المحتوى', 'Could not save the content'))); } finally { setContentSaving(false); }
   };
   const removeContent = async (cid: string) => {
-    if (!window.confirm(t('هل تريد حذف هذا المحتوى؟', 'Delete this content?'))) return;
+    if (!(await confirmDialog({ description: t('هل تريد حذف هذا المحتوى؟', 'Delete this content?') }))) return;
     try {
       const res = await fetch(`${API}/lesson-contents/${cid}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
@@ -499,7 +506,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إنشاء الاختبار', 'Could not create the exam'))); }
   };
   const removeExam = async (eid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الاختبار؟', 'Delete this exam?'))) return;
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا الاختبار؟', 'Delete this exam?') }))) return;
     try { const res = await fetch(`${API}/exams/${eid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الاختبار', 'Could not delete the exam'))); }
   };
 
@@ -544,7 +551,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الواجب', 'Could not save the assignment'))); }
   };
   const removeAssign = async (aid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الواجب وجميع تسليماته؟', 'Delete this assignment and all its submissions?'))) return;
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا الواجب وجميع تسليماته؟', 'Delete this assignment and all its submissions?') }))) return;
     try { const res = await fetch(`${API}/assignments/${aid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); if (viewSubm === aid) setViewSubm(null); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الواجب', 'Could not delete the assignment'))); }
   };
   const toggleAssignPublish = async (a: any) => {
@@ -812,7 +819,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <p className="text-[11px] text-gray-400">{a.points} {t('نقطة', 'pts')}{a.due_at ? ` · ${t('ينتهي', 'due')} ${new Date(a.due_at).toLocaleDateString()}` : ''}</p>
                         </div>
                         <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => openAssignEdit(a)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
-                        <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => { if (window.confirm(t('حذف الواجب؟', 'Delete assignment?'))) { fetch(`${API}/assignments/${a.id}`, { method: 'DELETE', headers: headers() }).then(() => load()); } }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={async () => { if (await confirmDialog({ description: t('حذف الواجب؟', 'Delete assignment?') })) { fetch(`${API}/assignments/${a.id}`, { method: 'DELETE', headers: headers() }).then(() => load()); } }}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     ))}
 

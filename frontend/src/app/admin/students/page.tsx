@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   GraduationCap, Loader2, Search, UserX, UserCheck, RefreshCcw, Mail, BookOpen,
   Plus, Trash2, Eye, KeyRound, Smartphone, Coins,
@@ -88,7 +89,7 @@ export default function AdminStudentsPage() {
       toast.success(t('تم إنشاء الطالب', 'Student created'));
       setShowForm(false); setForm({ name: '', email: '', password: '', tenant_id: '', course_id: '' });
       load();
-    } catch { toast.error('Failed'); } finally { setBusy(false); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } finally { setBusy(false); }
   };
 
   const toggleActive = async (s: any) => {
@@ -102,14 +103,14 @@ export default function AdminStudentsPage() {
   };
 
   const remove = async (s: any) => {
-    if (!window.confirm(t(`حذف الطالب «${s.name}»؟`, `Delete student "${s.name}"?`))) return;
+    if (!(await confirmDialog({ description: t(`حذف الطالب «${s.name}»؟`, `Delete student "${s.name}"?`) }))) return;
     setBusyId(s.id);
     try {
       const res = await fetch(`${API}/admin/students/${s.id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted'));
       load();
-    } catch { toast.error('Failed'); } finally { setBusyId(null); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } finally { setBusyId(null); }
   };
 
   const openDetail = async (id: string) => {

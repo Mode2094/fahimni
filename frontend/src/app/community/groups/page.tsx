@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select } from '@/components/ui/select';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Users, Plus, Loader2, Lock, Search, UserPlus, Check, Clock, MessagesSquare, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { communityApi } from '@/services/community';
@@ -66,7 +67,7 @@ export default function GroupsPage() {
   };
 
   const remove = async (g: CommunityGroup) => {
-    if (!confirm(t('حذف هذه المجموعة نهائياً؟', 'Delete this group permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه المجموعة نهائياً؟', 'Delete this group permanently?') }))) return;
     setBusy(g.id);
     try { await communityApi.deleteGroup(g.id); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setBusy(null);

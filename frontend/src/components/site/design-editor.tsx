@@ -50,7 +50,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       const d = await res.json();
       setSite({ ...site, logo_url: d.url });
       toast.success(t('تم رفع الشعار', 'Logo uploaded'));
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -71,7 +71,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       });
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(t('تم حفظ التصميم — صفحتك محدثة فوراً', 'Design saved — your page is live now'));
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setSaving(false);
   };
 

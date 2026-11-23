@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Select } from '@/components/ui/select';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -97,7 +98,7 @@ export default function AdminCouponsPage() {
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm(t('حذف هذا الكوبون؟', 'Delete this coupon?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الكوبون؟', 'Delete this coupon?') }))) return;
     setDeleting(id);
     try {
       await fetch(`${API}/admin/coupons/${id}`, { method: 'DELETE', headers: headers() });
