@@ -478,7 +478,11 @@ Route::prefix('v1')->group(function () {
                 Route::get('/', [MediaAssetController::class, 'index']);
                 Route::get('usage', [MediaAssetController::class, 'usage']);
                 Route::post('upload-ticket', [MediaAssetController::class, 'uploadTicket']);
-                Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy']);
+                // رفع جماعي مباشر إلى Bunny (بلا مرور الفيديو عبر السيرفر):
+                // تذكرة TUS لكل ملف + إتمام/ربط بعد نجاح الرفع + تنظيف.
+                Route::post('resumable-ticket', [MediaAssetController::class, 'resumableTicket'])->middleware('throttle:media-ticket');
+                Route::post('resumable-complete', [MediaAssetController::class, 'resumableComplete'])->middleware('throttle:media-ticket');
+                Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy'])->middleware('throttle:media-ticket');
             });
 
             // ─── Teacher: Video security (watermark) ───────

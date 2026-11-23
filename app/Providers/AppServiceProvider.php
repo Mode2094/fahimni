@@ -119,6 +119,12 @@ class AppServiceProvider extends ServiceProvider
         // رفع الفيديو عبر الخادم: مدة أطول للرفعات الكبيرة.
         RateLimiter::for('video-upload', fn (Request $request) => Limit::perMinute(6)->by($request->ip()));
 
+        // رفع جماعي مباشر (TUS): تذكرة/إتمام/إلغاء لكل ملف. الحد لكل مستخدم
+        // (لا لكل IP) لأن معلمًا واحدًا يرفع عشرات الملفات دفعةً واحدة —
+        // يبقى محدودًا لكنه لا يعطّل الرفع الجماعي المشروع. الفيديو نفسه لا
+        // يمر عبر السيرفر؛ هذه الطلبات خفيفة (توقيع/ربط فقط).
+        RateLimiter::for('media-ticket', fn (Request $request) => Limit::perMinute(120)->by($request->user()?->id ?: $request->ip()));
+
         // رفع الملفات العامة (صور/مستندات/إجابات): حد لكل مستخدم — يمنع
         // استخدام المنصة كمستضيف ملفات عام أو استنزاف التخزين.
         RateLimiter::for('uploads', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));

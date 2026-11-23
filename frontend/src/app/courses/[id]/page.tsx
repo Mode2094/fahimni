@@ -25,7 +25,8 @@ import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
 import VideoUploadQueue from '@/components/media/video-upload-queue';
 import CourseGroupsManager from '@/components/course/course-groups';
-import { getDeviceId } from '@/lib/device';
+import { uploadVideoDirect } from '@/lib/tus-upload';
+import { stableIdempotencyKey } from '@/lib/video-upload-queue';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -356,18 +357,20 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const onVideoSelected = async (e: any) => {
     const file = e.target.files?.[0];
     if (!file || videoUploading) return;
-    // مفتاح عملية واحد لكل ملف: كل الطلبات (تذكرة + رفع + retry)
-    // تحمل نفس المفتاح → حتى لو تكرر الطلب لن يتكرر الفيديو في Bunny.
-    const uploadKey = crypto.randomUUID();
+    // مفتاح حتمي مشتق من الملف نفسه: نفس الملف = نفس المفتاح → لا تكرار
+    // ولا احتساب مساحة مرتين، وإن أعيد الاختيار يمكن استئناف الرفع.
+    const uploadKey = stableIdempotencyKey(file);
+    const tid = localStorage.getItem('tenant_id') || '';
     setVideoUploading(true);
     setVideoUploadProgress(0);
     setVideoUploadError('');
     setVideoUploadName(file.name);
     try {
-      // 1) تذكرة رفع مباشر من Media Engine (تحقق الخطة + حجز المساحة).
-      const res = await fetch(`${API}/videos/upload-ticket`, {
+      // 1) تذكرة رفع مباشر قابل للاستئناف (TUS) — تحقق الخطة + حجز المساحة
+      //    + توقيع على السيرفر (مفتاح Bunny لا يخرج للمتصفح أبداً).
+      const res = await fetch(`${API}/teacher/media/resumable-ticket`, {
         method: 'POST',
-        headers: { ...headers(), 'Content-Type': 'application/json' },
+        headers: headers(),
         body: JSON.stringify({ lesson_id: lesTarget.id, file_size: file.size, title: file.name.replace(/\.[^.]+$/, ''), original_filename: file.name, mime_type: file.type || 'video/mp4', idempotency_key: uploadKey }),
       });
       const d = await res.json().catch(() => null);
@@ -377,33 +380,38 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         return;
       }
 
-      // 2) رفع الملف عبر خادمنا (مفتاح Bunny لا يخرج للمتصفح أبداً) —
-      //    شريط التقدم كامل عبر XHR.
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('lesson_id', lesTarget.id);
-      fd.append('title', file.name.replace(/\.[^.]+$/, ''));
-      fd.append('asset_id', d?.upload?.asset_id || '');
-      fd.append('idempotency_key', uploadKey);
+      const upload = d?.upload || {};
+
+      // 2) رفع الملف مباشرة إلى Bunny من المتصفح — الفيديو لا يمر عبر خادمنا.
       await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API}/videos/upload`);
-        const hdrs: Record<string, string> = { ...headers(), 'X-Device-Id': getDeviceId() };
-        Object.entries(hdrs).forEach(([k, v]) => { if (k.toLowerCase() !== 'content-type') xhr.setRequestHeader(k, v); });
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setVideoUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else {
-            let msg = `HTTP ${xhr.status}`;
-            try { const j = JSON.parse(xhr.responseText); if (j?.message) msg = j.message; } catch { /* */ }
-            reject(new Error(`HTTP ${xhr.status}${msg ? `: ${msg}` : ''}`));
-          }
-        };
-        xhr.onerror = () => reject(new Error('network'));
-        xhr.send(fd);
+        uploadVideoDirect(
+          file,
+          {
+            endpoint: upload.endpoint,
+            signature: upload.signature,
+            expires: upload.expires,
+            library_id: upload.library_id,
+            video_guid: upload.video_guid,
+          },
+          {
+            onProgress: (p) => setVideoUploadProgress(p),
+            onSuccess: () => resolve(),
+            onError: (m) => reject(new Error(m || 'upload failed')),
+          },
+          { resume: Boolean(upload.reused) },
+        ).catch(reject);
       });
+
+      // 3) ربط الأصل بالدرس. الفيديو يبقى «قيد المعالجة» حتى يؤكد المزوّد.
+      const cr = await fetch(`${API}/teacher/media/resumable-complete`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ asset_id: upload.asset_id, lesson_id: lesTarget.id }),
+      });
+      if (!cr.ok) {
+        const cd = await cr.json().catch(() => null);
+        throw new Error(cd?.message || t('فشل إتمام الرفع', 'Failed to complete upload'));
+      }
 
       setVideoUploadProgress(100);
       toast.success(t('تم رفع الفيديو بنجاح — قيد المعالجة الآن', 'Video uploaded — processing now'));
