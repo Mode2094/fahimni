@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CardSkeleton } from '@/components/ui/skeleton';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useLocale } from '@/store/locale';
 import {
   Package, Plus, Pencil, Trash2, Loader2, BookOpen, UserPlus, EyeOff, Eye,
@@ -149,7 +150,12 @@ export default function TeacherBundlesPage() {
   };
 
   const remove = async (b: Bundle) => {
-    if (typeof window !== 'undefined' && !window.confirm(t('حذف الحزمة؟ لن تُحذف الكورسات.', 'Delete bundle? Its courses stay.'))) return;
+    const ok = await confirmDialog({
+      danger: true,
+      description: t('حذف الحزمة؟ لن تُحذف الكورسات.', 'Delete bundle? Its courses stay.'),
+      confirmLabel: t('حذف', 'Delete'),
+    });
+    if (!ok) return;
     setBusyId(b.id);
     try {
       const res = await fetch(`${API}/bundles/${b.id}`, { method: 'DELETE', headers: headers() });
