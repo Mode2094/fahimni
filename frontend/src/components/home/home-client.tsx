@@ -53,6 +53,7 @@ const MAIN_FEATURES = [
   { icon: BarChart3, title: ['تحليلات وإيرادات', 'Analytics & Revenue'], desc: ['تقارير أداء طلابك وإيراداتك لحظياً في لوحة واحدة', 'Real-time student performance & revenue reports in one dashboard'], color: '#ca8a04' },
   { icon: Globe, title: ['موقع خاص بعلامتك', 'Your Own Branded Site'], desc: ['موقع عام بألوانك وشعارك، يبني علامتك التجارية تلقائياً', 'Public site with your colors & logo, building your brand automatically'], color: '#14b8a6' },
   { icon: Video, title: ['بث مباشر', 'Live Streaming'], desc: ['جلسات مباشرة مع طلابك، حجز وحضور وإشعارات تلقائية', 'Live sessions with your students, booking, attendance & auto notifications'], color: '#dc2626' },
+  { icon: ShieldCheck, title: ['حماية متقدمة للفيديوهات التعليمية', 'Advanced Video Protection'], desc: ['روابط مشاهدة مؤقتة، صلاحيات وصول، سياسة الأجهزة وعلامة مائية — لحماية محتواك وتقليل مشاركة الحسابات والروابط غير المصرح بها', 'Short-lived playback links, access rules, device policy and watermarking — protect your content and reduce unauthorized account & link sharing'], color: '#7c3aed' },
 ];
 
 const FAQS: [string, string][] = [

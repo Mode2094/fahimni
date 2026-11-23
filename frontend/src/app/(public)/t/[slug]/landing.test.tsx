@@ -110,9 +110,9 @@ describe('Teacher landing — student-facing storefront', () => {
   it('shows the per-course enrollment path for a guest', async () => {
     renderLanding();
     await screen.findByText('أساسيات البرمجة');
-    expect(screen.getByRole('link', { name: /التفاصيل والتسجيل/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /عرض التفاصيل والتسجيل/ })).toHaveAttribute(
       'href',
-      '/t/trial-teacher/register?course=c-1',
+      '/t/trial-teacher/courses/c-1',
     );
   });
 });

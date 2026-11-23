@@ -808,6 +808,7 @@ Route::prefix('v1')->group(function () {
         Route::get('courses/{course}/lessons/{lesson}', [PublicSiteController::class, 'lesson']);
         Route::get('{slug}', [PublicSiteController::class, 'show']);
         Route::get('{slug}/courses', [PublicSiteController::class, 'courses']);
+        Route::get('{slug}/courses/{course}', [PublicSiteController::class, 'course']);
         Route::get('{slug}/posts', [TeacherBlogController::class, 'publicPosts']);
         Route::get('{slug}/posts/{post}', [TeacherBlogController::class, 'publicPost']);
     });

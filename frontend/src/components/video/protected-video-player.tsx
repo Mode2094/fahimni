@@ -63,6 +63,80 @@ const SPEED_CONFIG: Record<string, { interval: number; transition: number }> = {
   fast: { interval: 3500, transition: 2000 },
 };
 
+/**
+ * العلامة المائية المتحركة + حاجز خفيف ضد إزالتها من أدوات المطوّر.
+ *
+ * صراحةً: هذا لا يمنع تسجيل الشاشة ولا يضمن منع نسخ المحتوى — يرفع فقط كلفة
+ * إزالة العلامة عبر التلاعب بالواجهة (إخفاء/حذف العنصر). تعمل فوق عناصر
+ * <video> و<iframe> على حد سواء.
+ */
+function WatermarkOverlay({
+  text, opacity, size, speed,
+}: {
+  text: string;
+  opacity: number;
+  size: string;
+  speed: string;
+}) {
+  const [pos, setPos] = useState(0);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const lastRestore = useRef(0);
+
+  useEffect(() => {
+    const cfg = SPEED_CONFIG[speed] ?? SPEED_CONFIG.slow;
+    const id = setInterval(() => setPos((p) => (p + 1) % WATERMARK_POSITIONS.length), cfg.interval);
+    return () => clearInterval(id);
+  }, [speed]);
+
+  useEffect(() => {
+    const el = ref.current;
+    const host = el?.parentElement;
+    if (!el || !host) return;
+
+    const enforce = () => {
+      const now = Date.now();
+      // Batch: never fight ourselves more than ~4×/s.
+      if (now - lastRestore.current < 250) return;
+      lastRestore.current = now;
+      if (!host.contains(el)) host.appendChild(el);
+      if (el.style.display === 'none') el.style.display = '';
+      if (el.style.visibility === 'hidden') el.style.visibility = 'visible';
+    };
+
+    const observer = new MutationObserver(enforce);
+    observer.observe(host, { childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+    const selfObserver = new MutationObserver(enforce);
+    selfObserver.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+
+    return () => { observer.disconnect(); selfObserver.disconnect(); };
+  }, []);
+
+  const p = WATERMARK_POSITIONS[pos];
+  const cfg = SPEED_CONFIG[speed] ?? SPEED_CONFIG.slow;
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden
+      data-watermark
+      className="pointer-events-none absolute z-10 select-none whitespace-nowrap"
+      style={{
+        top: p.top,
+        left: p.left,
+        opacity,
+        fontSize: size,
+        color: '#fff',
+        textShadow: '0 1px 3px rgba(0,0,0,0.5)',
+        transition: `top ${cfg.transition}ms cubic-bezier(0.16,1,0.3,1), left ${cfg.transition}ms cubic-bezier(0.16,1,0.3,1), opacity 600ms ease`,
+        fontWeight: 600,
+        letterSpacing: '0.02em',
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
 export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,13 +144,11 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [wmPos, setWmPos] = useState(0);
   const hlsRef = useRef<Hls | null>(null);
   // المصدر المُنتظَر: في التحميل الأول لا يكون عنصر <video> موجودًا بعد (تظهر
   // شاشة التحميل)، فنتذكّر المصدر ونربطه بعد أن يُركَّب العنصر في الـ DOM.
   const pendingSource = useRef<{ url: string; kind: Playback['type']; preserve: boolean } | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wmTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /* ملء الشاشة الحقيقي بالفيديو */
   useEffect(() => {
@@ -92,15 +164,6 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
       containerRef.current?.requestFullscreen().catch(() => {});
     }
   };
-
-  /* حركة العلامة المائية — تنتقل ببطء بين المناطق الست */
-  useEffect(() => {
-    const wm = playback?.watermark;
-    if (!wm?.enabled) return;
-    const cfg = SPEED_CONFIG[wm.speed ?? 'slow'] ?? SPEED_CONFIG.slow;
-    wmTimer.current = setInterval(() => setWmPos((p) => (p + 1) % WATERMARK_POSITIONS.length), cfg.interval);
-    return () => { if (wmTimer.current) clearInterval(wmTimer.current); };
-  }, [playback?.watermark?.enabled, playback?.watermark?.speed]);
 
   /* إخفاء المحتوى عند مغادرة الصفحة (حماية من التصوير بالتقاط الشاشة) */
   useEffect(() => {
@@ -230,7 +293,6 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     loadPlayback(false);
     return () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      if (wmTimer.current) clearInterval(wmTimer.current);
       destroyHls();
     };
   }, [loadPlayback, destroyHls]);
@@ -260,9 +322,9 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
 
   const watermark = playback?.watermark;
   const wmText = watermark?.enabled ? watermark.text : null;
-  const wmCfg = SPEED_CONFIG[watermark?.speed ?? 'slow'] ?? SPEED_CONFIG.slow;
   const wmOpacity = watermark?.opacity ?? 0.35;
   const wmFontSize = watermark?.size ?? '1rem';
+  const wmSpeed = watermark?.speed ?? 'slow';
 
   const prevent = (e: React.SyntheticEvent) => e.preventDefault();
 
@@ -330,67 +392,36 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     );
   }
 
-  if (playback.type === 'external' && playback.provider === 'youtube') {
+  // مشغّل خارجي (YouTube / Vimeo): الـ iframe لا يسمح بالتحكم بالمحتوى، لكن
+  // يمكننا فرض طبقة العلامة المائية فوقه تمامًا كما نفعل مع الفيديو المحلي.
+  if (playback.type === 'external' && (playback.provider === 'youtube' || playback.provider === 'vimeo')) {
+    const src = playback.provider === 'youtube'
+      ? `https://www.youtube.com/embed/${youtubeId(playback.provider_video_id || '')}`
+      : `https://player.vimeo.com/video/${playback.provider_video_id}`;
+
     return (
-      <div className="aspect-video rounded-2xl overflow-hidden bg-black" onContextMenu={prevent}>
+      <div
+        className="relative aspect-video rounded-2xl overflow-hidden bg-black"
+        onContextMenu={prevent}
+        onDragStart={prevent}
+      >
         <iframe
           className="w-full h-full"
-          src={`https://www.youtube.com/embed/${youtubeId(playback.provider_video_id || '')}`}
+          src={src}
           title={playback.title || 'video'}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
           referrerPolicy="strict-origin-when-cross-origin"
         />
+        {wmText && (
+          <WatermarkOverlay text={wmText} opacity={wmOpacity} size={wmFontSize} speed={wmSpeed} />
+        )}
+        <div className="absolute bottom-2 end-2 px-2 py-0.5 rounded bg-black/50 text-[10px] text-white/70 pointer-events-none">
+          محتوى محمي
+        </div>
       </div>
     );
   }
-
-  if (playback.type === 'external' && playback.provider === 'vimeo') {
-    return (
-      <div className="aspect-video rounded-2xl overflow-hidden bg-black" onContextMenu={prevent}>
-        <iframe
-          className="w-full h-full"
-          src={`https://player.vimeo.com/video/${playback.provider_video_id}`}
-          title={playback.title || 'video'}
-          allow="autoplay; fullscreen; picture-in-picture"
-          allowFullScreen
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      </div>
-    );
-  }
-
-  if (playback.type === 'external' && playback.provider === 'youtube') {
-    return (
-      <div className="aspect-video rounded-2xl overflow-hidden bg-black" onContextMenu={prevent}>
-        <iframe
-          className="w-full h-full"
-          src={`https://www.youtube.com/embed/${youtubeId(playback.provider_video_id || '')}`}
-          title={playback.title || 'video'}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope"
-          allowFullScreen
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      </div>
-    );
-  }
-
-  if (playback.type === 'external' && playback.provider === 'vimeo') {
-    return (
-      <div className="aspect-video rounded-2xl overflow-hidden bg-black" onContextMenu={prevent}>
-        <iframe
-          className="w-full h-full"
-          src={`https://player.vimeo.com/video/${playback.provider_video_id}`}
-          title={playback.title || 'video'}
-          allow="autoplay; fullscreen; picture-in-picture"
-          allowFullScreen
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      </div>
-    );
-  }
-
-  const pos = WATERMARK_POSITIONS[wmPos];
 
   return (
     <div
@@ -433,23 +464,7 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
 
       {/* العلامة المائية الديناميكية — اسم الطالب يتحرك ببطء بين المناطق */}
       {wmText && !blurred && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute z-10 select-none whitespace-nowrap"
-          style={{
-            top: pos.top,
-            left: pos.left,
-            opacity: wmOpacity,
-            fontSize: wmFontSize,
-            color: '#fff',
-            textShadow: '0 1px 3px rgba(0,0,0,0.5)',
-            transition: `top ${wmCfg.transition}ms cubic-bezier(0.16,1,0.3,1), left ${wmCfg.transition}ms cubic-bezier(0.16,1,0.3,1), opacity 600ms ease`,
-            fontWeight: 600,
-            letterSpacing: '0.02em',
-          }}
-        >
-          {wmText}
-        </div>
+        <WatermarkOverlay text={wmText} opacity={wmOpacity} size={wmFontSize} speed={wmSpeed} />
       )}
 
       <div className="absolute top-2 end-2 px-2 py-0.5 rounded bg-black/50 text-[10px] text-white/70 pointer-events-none">

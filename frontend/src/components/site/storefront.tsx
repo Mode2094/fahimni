@@ -206,12 +206,12 @@ export function CourseCard({
             </Button>
           </Link>
         ) : (
-          <Link href={`/t/${slug}/register?course=${course.id}`} className="block">
+          <Link href={`/t/${slug}/courses/${course.id}`} className="block">
             <Button
               className="min-h-[44px] w-full gap-1.5 text-white shadow-lg"
               style={{ background: `linear-gradient(135deg, ${primary}, ${accent})`, borderRadius: radius }}
             >
-              {t('التفاصيل والتسجيل', 'Details & enroll')}
+              {t('عرض التفاصيل والتسجيل', 'View details & enroll')}
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>

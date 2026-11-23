@@ -36,6 +36,20 @@ export const fetchTenantCourses = cache(async (slug: string): Promise<any[]> => 
   return Array.isArray(data?.courses) ? data.courses : [];
 });
 
+/**
+ * A single published course that actually belongs to this tenant's slug.
+ * The backend 404s for another tenant's course or an unpublished one, so this
+ * returns null rather than ever leaking a private course.
+ */
+export const fetchTenantCourse = cache(
+  async (slug: string, courseId: string): Promise<Record<string, any> | null> => {
+    const data = await getJson(
+      `/public/${encodeURIComponent(slug)}/courses/${encodeURIComponent(courseId)}`,
+    );
+    return data?.course ?? null;
+  },
+);
+
 /** Published blog posts for a tenant's public site. */
 export const fetchTenantPosts = cache(async (slug: string): Promise<any[]> => {
   const data = await getJson(`/public/${encodeURIComponent(slug)}/posts`);

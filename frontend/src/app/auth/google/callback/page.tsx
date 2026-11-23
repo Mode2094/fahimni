@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/store';
 import { track } from '@/lib/analytics';
+import { consumePendingRedirect } from '@/lib/post-auth-redirect';
 
 type Stage = 'working' | '2fa' | 'error';
 
@@ -52,7 +53,7 @@ function GoogleCallbackInner() {
 
     if (user.is_super_admin) router.replace('/admin/dashboard');
     else if (user.roles?.includes('Teacher')) router.replace('/teacher/dashboard');
-    else router.replace('/my-learning');
+    else router.replace(consumePendingRedirect() || '/my-learning');
 
     return true;
   }, [router]);

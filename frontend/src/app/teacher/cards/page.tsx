@@ -12,7 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import {
   CreditCard, Plus, Copy, Check, Loader2, Trash2, Upload, FileDown, Printer,
-  QrCode, Layers, Users, CalendarDays, Ban, Package,
+  QrCode, Layers, Users, CalendarDays, Ban, Package, MessageCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -143,6 +143,22 @@ export default function TeacherCardsPage() {
   };
 
   const copyCode = (code: string) => { navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(''), 2000); };
+
+  /**
+   * فتح واتساب برسالة جاهزة تحتوي اسم الكورس ورابط التفعيل.
+   * لا نُدرج أي بيانات طالب هنا، وفتح واتساب ليس إثباتاً على الإرسال.
+   */
+  const sendViaWhatsApp = (card: any) => {
+    const courseTitle = card.course?.title || selected?.course?.title || '';
+    const url = `${window.location.origin}/card/${card.code}`;
+    const message = [
+      t('بطاقة تفعيل الكورس', 'Course activation card'),
+      courseTitle ? `${t('الكورس', 'Course')}: ${courseTitle}` : '',
+      url,
+      t('افتح الرابط وسجّل بالكود لتبدأ التعلم.', 'Open the link and use the code to start learning.'),
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener');
+  };
 
   const ensureQr = async (code: string) => {
     if (qrData[code]) return;
@@ -386,6 +402,11 @@ export default function TeacherCardsPage() {
                           <Button variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => toggleQr(c.code)}>
                             <QrCode className={`h-4 w-4 ${showQr === c.code ? 'text-teal-600' : ''}`} /> {showQr === c.code ? t('إخفاء', 'Hide') : 'QR'}
                           </Button>
+                          {c.status !== 'redeemed' && (
+                            <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-green-700" onClick={() => sendViaWhatsApp(c)} title={t('إرسال عبر واتساب', 'Send via WhatsApp')} aria-label={t('إرسال عبر واتساب', 'Send via WhatsApp')}>
+                              <MessageCircle className="h-4 w-4" /> {t('واتساب', 'WhatsApp')}
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" onClick={() => copyCode(c.code)} title={t('نسخ الكود', 'Copy code')} aria-label={t('نسخ الكود', 'Copy code')}>
                             {copied === c.code ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                           </Button>

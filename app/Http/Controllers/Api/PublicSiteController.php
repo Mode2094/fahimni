@@ -174,6 +174,43 @@ class PublicSiteController extends Controller
             }
         }
 
+        return response()->json($this->sectionsPayload($request, $course));
+    }
+
+    /**
+     * Public course detail for a teacher's own site (/t/{slug}/courses/{course}).
+     * Only a PUBLISHED course that belongs to the active tenant slug is ever
+     * returned, so a course id from another academy can never be rendered under
+     * this teacher's brand, and an unpublished course simply 404s — a deleted
+     * or hidden course never leaves a page exposing private content.
+     */
+    public function course(Request $request, string $slug, string $courseId): JsonResponse
+    {
+        $tenant = Tenant::where('slug', $slug)->where('status', 'active')->first();
+
+        if (! $tenant) {
+            return response()->json(['message' => 'Site not found.'], 404);
+        }
+
+        $course = Course::where('tenant_id', $tenant->id)
+            ->where('is_published', true)
+            ->with(['sections.lessons.contents.file'])
+            ->find($courseId);
+
+        if (! $course) {
+            return response()->json(['message' => 'Course not found.'], 404);
+        }
+
+        return response()->json($this->sectionsPayload($request, $course));
+    }
+
+    /**
+     * Shared course + curriculum payload used by both the sections endpoint and
+     * the public course page. Locking, course-group visibility and drip rules
+     * live here only, so the two paths can never drift apart.
+     */
+    private function sectionsPayload(Request $request, Course $course): array
+    {
         $settings = TenantSetting::where('tenant_id', $course->tenant_id)->first();
         $downloadsEnabled = (bool) ($settings?->file_downloads_enabled ?? true);
 
@@ -278,7 +315,7 @@ class PublicSiteController extends Controller
             ];
         });
 
-        return response()->json([
+        return [
             'course' => $this->coursePayload($course),
             'sections' => $sections,
             // Whether the caller is enrolled (owner/staff count as enrolled):
@@ -289,7 +326,7 @@ class PublicSiteController extends Controller
                 'interval_days' => $dripEnabled ? $intervalDays : null,
             ],
             'file_downloads_enabled' => $downloadsEnabled,
-        ]);
+        ];
     }
 
     private function isPreviewable($file): bool
@@ -405,11 +442,20 @@ class PublicSiteController extends Controller
                     ? $protection->providerPlaybackPayload($content->video, $user)
                     : $protection->playbackPayload($content->video, $user);
             } elseif ($content->video) {
+                // Guest (or non-enrolled) view. The access check above already
+                // rejected everything except free-preview lessons, so this only
+                // ever runs for content the visitor is allowed to preview.
+                // Externally hosted clips (YouTube/Vimeo) are public anyway, so
+                // their id can be embedded directly; uploaded/Bunny videos need
+                // a signed, user-bound URL and therefore stay behind sign-in.
+                $external = in_array($content->video->provider, ['youtube', 'vimeo'], true);
                 $payload['video'] = [
                     'type' => 'external',
                     'provider' => $content->video->provider,
+                    'provider_video_id' => $external ? $content->video->provider_video_id : null,
                     'title' => $content->video->title,
                     'duration' => (int) $content->video->duration,
+                    'requires_login' => ! $external,
                 ];
             }
 

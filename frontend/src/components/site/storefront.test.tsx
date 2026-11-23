@@ -67,8 +67,8 @@ describe('CourseCard — real data only', () => {
   it('offers enrollment when not enrolled', () => {
     render(<CourseCard course={COURSE} slug="trial-teacher" enrolled={false} {...base} />);
     const link = screen.getByRole('link');
-    expect(link).toHaveAttribute('href', '/t/trial-teacher/register?course=c-1');
-    expect(screen.getByText('التفاصيل والتسجيل')).toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '/t/trial-teacher/courses/c-1');
+    expect(screen.getByText('عرض التفاصيل والتسجيل')).toBeInTheDocument();
   });
 
   it('offers "continue learning" based on real enrollment', () => {

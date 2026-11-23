@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Link from 'next/link';
 import PlatformLogo from '@/components/brand/platform-logo';
+import { setPendingRedirect, consumePendingRedirect } from '@/lib/post-auth-redirect';
 
 function StudentLoginPageInner() {
   const [email, setEmail] = useState('');
@@ -41,7 +42,10 @@ function StudentLoginPageInner() {
     localStorage.removeItem('lms_remembered_password');
     const savedEmail = localStorage.getItem('lms_remembered_email');
     if (savedEmail) { setEmail(savedEmail); setRemember(true); }
-  }, []);
+    // Preserve where the student came from (e.g. a course page) across the
+    // password AND Google flows.
+    if (from) setPendingRedirect(from);
+  }, [from]);
 
   const persistRemember = () => {
     if (remember) {
@@ -65,8 +69,12 @@ function StudentLoginPageInner() {
     const roles: string[] = user?.roles || [];
     if (user?.is_super_admin) router.push('/admin/dashboard');
     else if (roles.includes('Teacher')) router.push('/teacher/dashboard');
-    else if (from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/\\')) router.push(from);
-    else router.push('/my-learning');
+    else {
+      // Prefer the course the student came from, then an explicit `from`.
+      const pending = consumePendingRedirect();
+      const explicit = from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/\\') ? from : null;
+      router.push(pending || explicit || '/my-learning');
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
