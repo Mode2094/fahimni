@@ -7,6 +7,7 @@ use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -62,11 +63,36 @@ class Exam extends Model
     public function questions()
     {
         return $this->belongsToMany(Question::class, 'exam_questions')
-            ->withPivot('sort_order', 'points_override');
+            ->withPivot('sort_order', 'points_override')
+            // The teacher-defined order lives on the pivot; keep it stable both
+            // for the builder and for a student's attempt payload.
+            ->orderBy('exam_questions.sort_order');
     }
 
     public function attempts(): HasMany
     {
         return $this->hasMany(ExamAttempt::class);
+    }
+
+    /**
+     * Groups this exam is restricted to. Empty = visible to everyone enrolled
+     * in the course.
+     */
+    public function groups(): BelongsToMany
+    {
+        return $this->belongsToMany(CourseGroup::class, 'course_group_exam', 'exam_id', 'course_group_id')
+            ->withTimestamps();
+    }
+
+    /**
+     * Visible to a student: either unrestricted (no group rows) or the student
+     * is a member of at least one of the restricting groups.
+     */
+    public function scopeVisibleToStudent($query, string $userId)
+    {
+        return $query->where(function ($q) use ($userId) {
+            $q->whereDoesntHave('groups')
+                ->orWhereHas('groups.members', fn ($m) => $m->where('users.id', $userId));
+        });
     }
 }

@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Mail\PlatformNotification;
 use App\Models\User;
 use App\Support\TOTP;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
@@ -27,7 +29,23 @@ class WebSessionAuthTest extends TenantTestCase
         $cookie = $response->getCookie($name);
         $this->assertNotNull($cookie, 'Expected the session cookie '.$name.' to be set.');
 
-        return $name.'='.$cookie->getValue();
+        // The plaintext session id the server stored (the Set-Cookie value may
+        // be encrypted by the api group's EncryptCookies middleware); replay it
+        // through withCookie() so the test client encrypts it correctly.
+        return (string) $this->app['session']->getId();
+    }
+
+    /**
+     * Issue a request as a fresh browser would, carrying the session cookie.
+     */
+    private function asCookie(string $cookie, array $extraHeaders = [])
+    {
+        $this->flushSession();
+        $this->app['auth']->forgetGuards();
+
+        return $this->withCredentials()
+            ->withCookie((string) config('session.cookie'), $cookie)
+            ->withHeaders(array_merge(['Origin' => self::STATE_ORIGIN, 'Accept' => 'application/json'], $extraHeaders));
     }
 
     private function makeWebUser(string $password = 'password-123'): User
@@ -65,10 +83,30 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $user->email);
+    }
+
+    public function test_web_login_exposes_the_users_tenants_for_client_scoping(): void
+    {
+        $tenant = $this->makeTenant();
+        $user = $this->makeWebUser();
+        $this->attachToTenant($user, $tenant, 'teacher');
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password-123',
+        ], $this->statefulHeaders());
+
+        $response->assertOk();
+
+        // Regression: login must expose the workspace list (like /auth/me and
+        // /auth/register). Without it the SPA cannot resolve X-Tenant-Id after a
+        // client-side login, so every tenant-scoped call — including
+        // /teacher/plan that drives the "choose a plan" gate — 400s.
+        $response->assertJsonPath('user.tenants.0.id', $tenant->id);
     }
 
     public function test_session_authenticates_tenant_scoped_endpoints(): void
@@ -85,11 +123,8 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders([
-            'Cookie' => $cookie,
-            'Origin' => self::STATE_ORIGIN,
-            'X-Tenant-Id' => $tenant->id,
-        ])->getJson('/api/v1/dashboard')->assertOk();
+        $this->asCookie($cookie, ['X-Tenant-Id' => $tenant->id])
+            ->getJson('/api/v1/dashboard')->assertOk();
     }
 
     public function test_logout_destroys_the_session(): void
@@ -103,17 +138,12 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->postJson('/api/v1/auth/logout')
             ->assertOk();
 
-        // Simulate a new browser request: reset the cached session + guards.
-        $this->flushSession();
-        $this->app['auth']->forgetGuards();
-
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
-            ->getJson('/api/v1/auth/me')
-            ->assertStatus(401);
+        // Simulate a new browser request with the now-dead cookie.
+        $this->asCookie($cookie)->getJson('/api/v1/auth/me')->assertStatus(401);
     }
 
     public function test_bearer_login_still_works_for_api_clients(): void
@@ -157,7 +187,7 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->postJson('/api/v1/auth/2fa/confirm', ['code' => TOTP::code('JBSWY3DPEHPK3PXP')])
             ->assertOk()
             ->assertJsonPath('user.email', $user->email)
@@ -181,10 +211,27 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($response);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $email);
+    }
+
+    public function test_registration_queues_a_welcome_email(): void
+    {
+        Mail::fake();
+
+        $email = 'welcome-'.strtolower(Str::random(8)).'@test.local';
+
+        $this->postJson('/api/v1/auth/register', [
+            'name' => 'New Welcome User',
+            'email' => $email,
+            'password' => 'password-123',
+            'password_confirmation' => 'password-123',
+        ], $this->statefulHeaders())->assertStatus(201);
+
+        // A welcome email must be queued (separate from the verification email).
+        Mail::assertQueued(PlatformNotification::class, fn ($mail) => $mail->hasTo($email));
     }
 
     public function test_google_callback_route_uses_the_web_session_stack(): void

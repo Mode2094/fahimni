@@ -73,8 +73,18 @@ return [
     | FREEMIUS_API_URL             Official API base URL (override for testing)
     | FREEMIUS_CHECKOUT_URL        Hosted checkout base URL
     |
+    | Developer-scope credentials (Dashboard → My Profile → Keys). These are
+    | required ONLY to PUBLISH plan prices to Freemius. The product Bearer token
+    | is read-only for plans/pricing and can never change a price. Secrets live
+    | in the environment only — never in the database and never in source control.
+    |
+    | FREEMIUS_DEVELOPER_ID            Developer id (Dashboard → My Profile → Keys)
+    | FREEMIUS_DEVELOPER_PUBLIC_KEY    Developer public key
+    | FREEMIUS_DEVELOPER_SECRET_KEY    Developer secret key (used to sign requests)
+    |
     | Per-plan mapping (env default; admin may override per plan in metadata):
     |   FREEMIUS_PLAN_{SLUG}_MONTHLY_ID / FREEMIUS_PLAN_{SLUG}_YEARLY_ID
+    |   FREEMIUS_PLAN_{SLUG}_MONTHLY_PRICING_ID / ..._YEARLY_PRICING_ID
     |   e.g. FREEMIUS_PLAN_STARTER_MONTHLY_ID=12345
     */
 
@@ -87,5 +97,9 @@ return [
         'api_url' => env('FREEMIUS_API_URL', 'https://api.freemius.com'),
         'checkout_url' => env('FREEMIUS_CHECKOUT_URL', 'https://checkout.freemius.com'),
         'sandbox' => (bool) env('FREEMIUS_SANDBOX', false),
+        // Developer scope — needed to publish prices (writes). Env only.
+        'developer_id' => (string) env('FREEMIUS_DEVELOPER_ID', ''),
+        'developer_public_key' => (string) env('FREEMIUS_DEVELOPER_PUBLIC_KEY', ''),
+        'developer_secret_key' => (string) env('FREEMIUS_DEVELOPER_SECRET_KEY', ''),
     ],
 ];

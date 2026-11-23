@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/input';
 import { MessageSquare, Send, Loader2, Users, BellRing } from 'lucide-react';
 import { toast } from 'sonner';
 import { chatApi } from '@/services/endpoints';
+import { CardSkeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 
 export default function MessagesPage() {
   const { locale } = useLocale();
@@ -112,10 +114,10 @@ export default function MessagesPage() {
     <div className="space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-500/10"><MessageSquare className="h-5 w-5 text-violet-500" /></div>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10"><MessageSquare className="h-6 w-6 text-teal-600" /></div>
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold">{t('الرسائل', 'Messages')}</h1>
-            <p className="text-gray-500 text-sm">
+            <h1 className="text-2xl sm:text-3xl font-bold">{t('الرسائل', 'Messages')}</h1>
+            <p className="text-muted-foreground text-sm mt-1">
               {isTeacher ? t('تواصل مباشر مع طلابك', 'Chat directly with your students')
                 : isStudent ? t('تواصل مباشر مع معلمك', 'Chat directly with your teacher')
                 : t('تواصل مباشر', 'Direct messaging')}
@@ -124,7 +126,7 @@ export default function MessagesPage() {
         </div>
         <Dialog open={contactsOpen} onOpenChange={setContactsOpen}>
           <DialogTrigger asChild>
-            <Button className="rounded-full text-white shadow-lg" style={{ background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)' }}><Users className="h-4 w-4 ms-1" />{t('محادثة جديدة', 'New chat')}</Button>
+            <Button className="rounded-full text-white shadow-lg" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}><Users className="h-4 w-4 ms-1" />{t('محادثة جديدة', 'New chat')}</Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
@@ -133,8 +135,8 @@ export default function MessagesPage() {
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {contacts.length === 0 && <p className="text-sm text-gray-400 py-6 text-center">{t('لا توجد جهات اتصال متاحة', 'No available contacts')}</p>}
               {contacts.map((c) => (
-                <button key={c.id} onClick={() => startConversation(c.id)} disabled={starting} className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-violet-300 hover:bg-violet-50/50 transition-colors text-start">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-700 font-bold">{c.name?.[0] || '?'}</div>
+                <button key={c.id} onClick={() => startConversation(c.id)} disabled={starting} className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-teal-300 hover:bg-teal-50/50 transition-colors text-start">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-100 text-teal-700 font-bold">{c.name?.[0] || '?'}</div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">{c.name}</p>
                     <p className="text-xs text-gray-400">{c.role === 'student' ? t('طالب', 'Student') : c.role === 'teacher' ? t('معلم', 'Teacher') : t('إدارة', 'Admin')}</p>
@@ -147,24 +149,23 @@ export default function MessagesPage() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col md:flex-row" style={{ minHeight: '560px' }}>
+        <div className="flex flex-col md:flex-row min-h-[60vh]">
           <div className={`md:w-72 shrink-0 border-b md:border-b-0 md:border-l border-gray-100 bg-gray-50/50 ${active ? 'hidden md:block' : ''}`}>
             <div className="p-3 border-b border-gray-100 flex items-center justify-between">
               <span className="text-sm font-semibold text-gray-600">{t('المحادثات', 'Conversations')}</span>
-              {unreadTotal > 0 && <Badge className="bg-violet-500">{unreadTotal}</Badge>}
+              {unreadTotal > 0 && <Badge className="bg-teal-500">{unreadTotal}</Badge>}
             </div>
-            <div className="overflow-y-auto" style={{ maxHeight: '500px' }}>
+            <div className="overflow-y-auto max-h-[60vh]">
               {loading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-gray-300" /></div>
+                <div className="p-3"><CardSkeleton count={3} /></div>
               ) : conversations.length === 0 ? (
-                <div className="text-center py-10 text-gray-400 text-sm">
-                  <BellRing className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                  <p>
-                    {isTeacher ? t('ابدأ محادثة مع طلابك', 'Start a chat with your students')
-                      : isStudent ? t('ابدأ محادثة مع معلمك', 'Start a chat with your teacher')
-                      : t('ابدأ محادثة', 'Start a conversation')}
-                  </p>
-                </div>
+                <EmptyState
+                  className="m-3 border-0 bg-transparent px-3 py-8"
+                  icon={BellRing}
+                  title={isTeacher ? t('ابدأ محادثة مع طلابك', 'Start a chat with your students')
+                    : isStudent ? t('ابدأ محادثة مع معلمك', 'Start a chat with your teacher')
+                    : t('ابدأ محادثة', 'Start a conversation')}
+                />
               ) : (
                 conversations.map((c) => (
                   <button key={c.id} onClick={() => openConversation(c)} className={`w-full text-start p-3 border-b border-gray-50 transition-all flex items-start gap-3 relative ${active?.id === c.id ? 'bg-white shadow-sm border-s-2 border-s-teal-500' : 'hover:bg-white'}`}>
@@ -176,19 +177,16 @@ export default function MessagesPage() {
                       </div>
                       <p className="text-xs text-gray-500 truncate mt-0.5">{c.last_message?.body || ''}</p>
                     </div>
-                    {c.unread_count > 0 && <Badge className="bg-violet-500 shrink-0 rounded-full">{c.unread_count}</Badge>}
+                    {c.unread_count > 0 && <Badge className="bg-teal-500 shrink-0 rounded-full">{c.unread_count}</Badge>}
                   </button>
                 ))
               )}
             </div>
           </div>
 
-          <div className={`flex-1 flex flex-col ${active ? '' : 'hidden md:flex'}`} style={{ minHeight: '560px' }}>
+          <div className={`flex-1 flex flex-col min-h-[60vh] ${active ? '' : 'hidden md:flex'}`}>
             {!active ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-gray-300 gap-2">
-                <MessageSquare className="h-12 w-12" />
-                <p className="text-sm">{t('اختر محادثة للبدء', 'Select a conversation to start')}</p>
-              </div>
+              <EmptyState className="flex-1 m-4 border-0 bg-transparent" icon={MessageSquare} title={t('اختر محادثة للبدء', 'Select a conversation to start')} />
             ) : (
               <>
                 <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center gap-3">
@@ -198,7 +196,7 @@ export default function MessagesPage() {
                     <p className="text-xs text-gray-400">{t('محادثة مباشرة', 'Direct conversation')}</p>
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: '460px' }}>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[60vh]">
                   {messages.map((m) => (
                     <div key={m.id} className={`flex ${isMine(m) ? 'justify-start' : 'justify-end'}`}>
                       <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${isMine(m) ? 'bg-gradient-to-br from-teal-600 to-teal-500 text-white rounded-br-md' : 'bg-gray-100 text-gray-800 rounded-bl-md'}`}>
@@ -215,9 +213,10 @@ export default function MessagesPage() {
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
                     placeholder={t('اكتب رسالتك...', 'Type a message...')}
+                    aria-label={t('اكتب رسالتك', 'Type a message')}
                     className="rounded-xl h-11 flex-1 min-w-0"
                   />
-                  <Button onClick={sendMessage} disabled={!draft.trim() || sending} className="rounded-xl text-white shrink-0 shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                  <Button onClick={sendMessage} disabled={!draft.trim() || sending} aria-label={t('إرسال', 'Send')} className="rounded-xl text-white shrink-0 shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                     {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 rtl:-scale-x-100" />}
                   </Button>
                 </div>

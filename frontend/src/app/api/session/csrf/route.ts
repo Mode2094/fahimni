@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const origin = requestOrigin(request);
 
   try {
-    const { cookies } = await csrfHandshake(origin);
+    const { cookies } = await csrfHandshake(origin, request.headers.get('cookie'));
 
     const response = new NextResponse(null, { status: 204 });
     response.headers.set('Cache-Control', 'no-store');

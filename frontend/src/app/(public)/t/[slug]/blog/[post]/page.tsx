@@ -5,6 +5,7 @@ import { use } from 'react';
 import { useLocale } from '@/store/locale';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
 import {
   Loader2, ArrowLeft, Calendar, Clock, Tag, Link2, Check, MessageCircle, Send,
   Twitter, ChevronLeft, GraduationCap, Newspaper, BookOpen, Sparkles, Menu, X, Quote,
@@ -68,10 +69,16 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
 
   if (!postData) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gray-50 border border-gray-100"><Newspaper className="h-8 w-8 text-gray-300" /></div>
-        <h1 className="text-2xl font-bold">{t('المقال غير موجود', 'Post not found')}</h1>
-        <Link href={`/t/${slug}/blog`}><Button variant="outline" className="gap-1.5 rounded-full" style={{ color: primary, borderColor: `${primary}55` }}><ArrowLeft className="h-4 w-4" />{t('المدونة', 'Blog')}</Button></Link>
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <EmptyState
+          icon={Newspaper}
+          title={t('المقال غير موجود', 'Post not found')}
+          action={
+            <Link href={`/t/${slug}/blog`}>
+              <Button variant="outline" className="gap-1.5 rounded-full" style={{ color: primary, borderColor: `${primary}55` }}><ArrowLeft className="h-4 w-4" />{t('المدونة', 'Blog')}</Button>
+            </Link>
+          }
+        />
       </div>
     );
   }
@@ -137,7 +144,7 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
       <main className="max-w-4xl mx-auto px-4 py-10">
         {postData.cover_image && (
           <div className="relative overflow-hidden rounded-3xl shadow-xl mb-10 -mt-6 z-10 border-4 border-white">
-            <img src={postData.cover_image} className="w-full object-cover" style={{ maxHeight: 420 }} alt="" />
+            <img src={postData.cover_image} className="w-full object-cover" style={{ maxHeight: 420 }} alt={postData.title} />
           </div>
         )}
 

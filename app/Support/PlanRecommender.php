@@ -186,7 +186,18 @@ class PlanRecommender
         $number = (float) $value;
 
         if ($featureKey === 'storage_limit_mb') {
-            $gb = $number / 1024;
+            $mb = $number;
+
+            if ($mb >= 1048576) {
+                $tb = $mb / 1048576;
+                $whole = $tb == (int) $tb
+                    ? (string) (int) $tb
+                    : rtrim(rtrim(number_format($tb, 1, '.', ''), '0'), '.');
+
+                return $whole.' '.($locale === 'ar' ? 'تيرا' : 'TB');
+            }
+
+            $gb = $mb / 1024;
             $whole = $gb == (int) $gb
                 ? (string) (int) $gb
                 : rtrim(rtrim(number_format($gb, 1, '.', ''), '0'), '.');
@@ -197,7 +208,7 @@ class PlanRecommender
         if ($featureKey === 'monthly_price') {
             $whole = (string) (int) round($number);
 
-            return $whole.' '.($locale === 'ar' ? 'دينار' : 'JOD');
+            return $whole.' '.($locale === 'ar' ? 'دولار' : 'USD');
         }
 
         $rounded = round($number);
@@ -259,7 +270,7 @@ class PlanRecommender
             'description' => $plan->description,
             'monthly_price' => (float) $plan->monthly_price,
             'yearly_price' => $plan->annual_price !== null ? (float) $plan->annual_price : null,
-            'currency' => $plan->currency ?? 'JOD',
+            'currency' => $plan->currency ?? 'USD',
             'trial_days' => (int) $plan->trial_days,
             'score' => round($score, 2),
             'max_score' => round($maxScore, 2),

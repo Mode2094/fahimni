@@ -12,7 +12,9 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { BookOpen, Plus, Loader2, Trash2, Pencil, Eye, EyeOff, Layers, FileQuestion, ClipboardList, Users, Award } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { track } from '@/lib/analytics';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -64,16 +66,18 @@ export default function CoursesPage() {
       };
       const res = await fetch(`${API}/courses${editing ? `/${editing.id}` : ''}`, { method: editing ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
+      // First course ever for this teacher → fire the activation conversion.
+      if (!editing && courses.length === 0) track('first_course_created', { content_name: 'teacher_first_course' });
       toast.success(editing ? t('تم تحديث الكورس', 'Course updated') : t('تم إنشاء الكورس', 'Course created'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الكورس', 'Could not save the course'))); }
   };
 
   const remove = async (id: string) => {
     try {
       await fetch(`${API}/courses/${id}`, { method: 'DELETE', headers: headers() });
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الكورس', 'Could not delete the course'))); }
   };
 
   const togglePublish = async (c: any) => {
@@ -82,7 +86,7 @@ export default function CoursesPage() {
       if (!res.ok) throw new Error();
       toast.success(c.is_published ? t('تم إخفاء الكورس', 'Course unpublished') : t('تم نشر الكورس — يظهر في موقعك العام', 'Course published — live on your public site'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تغيير حالة نشر الكورس', 'Could not change the course publish state'))); }
   };
 
   return (

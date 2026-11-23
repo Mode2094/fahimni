@@ -7,8 +7,10 @@ use App\Media\MediaQuotaService;
 use App\Media\MediaSecurityService;
 use App\Media\MediaService;
 use App\Media\MediaUsageService;
+use App\Models\Lesson;
 use App\Models\MediaAsset;
 use App\Models\UsageWarningRule;
+use App\Models\VideoContent;
 use App\Plans\Exceptions\FeatureUnavailableException;
 use App\Plans\Exceptions\QuotaExceededException;
 use App\Services\SaasCostService;
@@ -91,6 +93,118 @@ class MediaAssetController extends Controller
         } catch (\Throwable $e) {
             return response()->json(['message' => 'تعذر إنشاء تذكرة الرفع. يرجى المحاولة لاحقاً.'], 502);
         }
+    }
+
+    /**
+     * تذكرة رفع مباشر قابل للاستئناف (TUS) لرفع جماعي.
+     *
+     * تُنشئ الأصل + تحجز المساحة عبر MediaService (بلا ربط بالدرس بعد)، ثم
+     * تُعيد بيانات اعتماد TUS ليرفع المتصفح الملف مباشرة إلى Bunny — بلا
+     * مرور الفيديو عبر السيرفر. الربط بالدرس يتم في resumableComplete بعد
+     * نجاح الرفع. Idempotency: نفس المفتاح = نفس الأصل ونفس الفيديو.
+     */
+    public function resumableTicket(Request $request): JsonResponse
+    {
+        $tenantId = $request->header('X-Tenant-Id');
+
+        if (! $tenantId) {
+            return response()->json(['message' => 'Tenant ID is required.'], 400);
+        }
+
+        $validated = $request->validate([
+            'title' => 'nullable|string|max:190',
+            'lesson_id' => 'nullable|string',
+            'file_size' => 'required|integer|min:1|max:5368709120',
+            'original_filename' => 'nullable|string|max:255',
+            'mime_type' => 'nullable|string|max:100',
+            'idempotency_key' => 'nullable|string|max:100',
+        ]);
+
+        if (! empty($validated['lesson_id'])) {
+            Lesson::where('tenant_id', $tenantId)->findOrFail($validated['lesson_id']);
+        }
+
+        try {
+            $ticket = $this->media->createResumableUploadTicket($tenantId, $request->user()?->id, [
+                'title' => $validated['title'] ?? $validated['original_filename'] ?? 'Untitled video',
+                'file_size' => $validated['file_size'],
+                'original_filename' => $validated['original_filename'] ?? null,
+                'mime_type' => $validated['mime_type'] ?? null,
+                'idempotency_key' => $validated['idempotency_key'] ?? null,
+            ]);
+
+            return response()->json([
+                'upload' => [
+                    'asset_id' => $ticket['asset_id'],
+                    // بيانات اعتماد TUS (المتصفح يرفع مباشرة إلى هذا العنوان).
+                    'endpoint' => $ticket['resumable']['endpoint'],
+                    'signature' => $ticket['resumable']['signature'],
+                    'expires' => $ticket['resumable']['expires'],
+                    'library_id' => $ticket['resumable']['library_id'],
+                    'video_guid' => $ticket['resumable']['video_id'],
+                    'reservation_id' => $ticket['reservation_id'],
+                    'expires_in' => $ticket['expires_in'],
+                    'reused' => (bool) ($ticket['reused'] ?? false),
+                ],
+            ], 201);
+        } catch (QuotaExceededException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (FeatureUnavailableException $e) {
+            return response()->json(['message' => $e->getMessage()], 403);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('media.resumable_ticket_failed', ['error' => $e->getMessage()]);
+
+            return response()->json(['message' => 'تعذر إنشاء تذكرة الرفع. يرجى المحاولة لاحقاً.'], 502);
+        }
+    }
+
+    /**
+     * إتمام رفع مباشر: ربط الأصل بالدرس بعد نجاح رفع المتصفح إلى المزود.
+     *
+     * لا نعتبر الفيديو جاهزاً هنا — الحالة تبقى `processing` حتى يؤكد المزود
+     * اكتمال الرفع والمعالجة (Webhook أو المصالحة الدورية). idempotent:
+     * إعادة النداء تُعيد نفس المحتوى بلا تكرار.
+     */
+    public function resumableComplete(Request $request): JsonResponse
+    {
+        $tenantId = $request->header('X-Tenant-Id');
+
+        if (! $tenantId) {
+            return response()->json(['message' => 'Tenant ID is required.'], 400);
+        }
+
+        $validated = $request->validate([
+            'asset_id' => 'required|string|max:64',
+            'lesson_id' => 'required|string',
+        ]);
+
+        $asset = MediaAsset::withoutTenant()->find($validated['asset_id']);
+
+        if (! $asset || (string) $asset->tenant_id !== (string) $tenantId) {
+            return response()->json(['message' => 'Media asset not found.'], 404);
+        }
+
+        $lesson = Lesson::where('tenant_id', $tenantId)->find($validated['lesson_id']);
+
+        if (! $lesson) {
+            return response()->json(['message' => 'Lesson not found.'], 404);
+        }
+
+        $asset = $this->media->attachToLesson($asset->id, $lesson->id);
+
+        $video = VideoContent::withoutTenant()
+            ->where('lesson_content_id', $asset->lesson_content_id)
+            ->first();
+
+        return response()->json([
+            'video' => [
+                'id' => $video?->id,
+                'lesson_id' => $video?->lesson_id,
+                'asset_id' => $asset->id,
+                'status' => $video?->status ?? MediaAsset::STATUS_PROCESSING,
+            ],
+            'message' => 'Upload complete — processing now.',
+        ], 201);
     }
 
     /**

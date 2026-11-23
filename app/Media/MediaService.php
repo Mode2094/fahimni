@@ -126,6 +126,36 @@ class MediaService
     }
 
     /**
+     * تذكرة رفع مباشر قابل للاستئناف (TUS).
+     *
+     * نفس مسار createVideoUploadTicket بالكامل — الحصص، الحجز الذري، الأصل
+     * المرجعي، والـIdempotency — مع بيانات اعتماد TUS ليَرْفع المتصفح الملف
+     * مباشرة إلى المزود (لا يمر الفيديو عبر السيرفر)، ويستأنف بعد انقطاع
+     * الاتصال بنفس الفيديو دون تكرار.
+     *
+     * @param  array<string, mixed>  $params
+     * @return array{asset_id: string, upload_url: ?string, reservation_id: string, expires_in: int, reused?: bool, resumable: array{endpoint: string, signature: string, expires: int, library_id: string, video_id: string}}
+     */
+    public function createResumableUploadTicket(string $tenantId, ?string $userId, array $params): array
+    {
+        $ticket = $this->createVideoUploadTicket($tenantId, $userId, $params);
+
+        $asset = MediaAsset::withoutTenant()->findOrFail($ticket['asset_id']);
+        $driver = $this->manager->provider($asset->provider);
+
+        if (! $driver->supportsResumableUpload()) {
+            throw new RuntimeException('The active media provider does not support resumable uploads.');
+        }
+
+        $ticket['resumable'] = $driver->createResumableUploadTicket(
+            (string) $asset->provider_asset_id,
+            (int) ($params['resumable_ttl'] ?? 86400),
+        );
+
+        return $ticket;
+    }
+
+    /**
      * ربط أصل بدرس (إنشاء LessonContent + VideoContent) — بعد الرفع أو مسبقاً.
      */
     public function attachToLesson(string $assetId, string $lessonId): MediaAsset
@@ -299,6 +329,22 @@ class MediaService
     {
         $asset = MediaAsset::withoutTenant()->findOrFail($assetId);
 
+        // A duplicated lesson/course reuses the SAME provider video (no
+        // re-upload, no extra Bunny copy), so destroying it here would silently
+        // break every other lesson that still plays it. When another video
+        // content references the asset, detach it from this lesson and keep the
+        // provider video alive.
+        if ($this->hasOtherVideoReferences($asset)) {
+            $asset->update(['lesson_content_id' => null]);
+
+            Log::info('media.asset.kept_for_references', [
+                'asset' => $asset->id,
+                'provider_asset' => $asset->provider_asset_id,
+            ]);
+
+            return;
+        }
+
         $driver = $this->manager->provider($asset->provider);
 
         try {
@@ -311,10 +357,43 @@ class MediaService
         $this->deleteAssetRecord($asset, 'teacher_deleted');
     }
 
+    /**
+     * True when some OTHER video content still points at the same provider
+     * video. Mirrors created by duplication are the usual reason — but any
+     * legitimate second use must be honoured, never deleted underneath.
+     */
+    private function hasOtherVideoReferences(MediaAsset $asset): bool
+    {
+        if (! $asset->provider_asset_id) {
+            return false;
+        }
+
+        return VideoContent::withoutTenant()
+            ->where('provider', $asset->provider)
+            ->where('provider_video_id', $asset->provider_asset_id)
+            ->when(
+                $asset->lesson_content_id !== null,
+                // Exclude the row this deletion belongs to; anything else counts.
+                fn ($q) => $q->where('lesson_content_id', '!=', $asset->lesson_content_id),
+            )
+            ->exists();
+    }
+
     private function deleteAssetRecord(MediaAsset $asset, string $reason): void
     {
         DB::transaction(function () use ($asset, $reason) {
             $wasCommitted = $asset->status === MediaAsset::STATUS_READY && $asset->storage_bytes > 0;
+
+            // أصل ما زال قيد الرفع/المعالجة (مثلاً أُلغيت رفعة جماعية): مساحة
+            // الحجز لم تُحتسب بعد، فنحرّر الحجز المعلّق فوراً حتى لا تبقى
+            // مساحة محجوزة بلا داعٍ (cleanup للأصول غير المكتملة).
+            if ($asset->status === MediaAsset::STATUS_PROCESSING) {
+                $reservationId = (string) ($asset->metadata['reservation_id'] ?? '');
+
+                if ($reservationId !== '') {
+                    $this->quota->releaseStorage($asset->tenant_id, $reservationId, (int) $asset->size_bytes);
+                }
+            }
 
             $asset->update([
                 'status' => MediaAsset::STATUS_DELETED,

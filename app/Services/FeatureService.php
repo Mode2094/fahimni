@@ -16,13 +16,25 @@ use Illuminate\Http\Request;
 class FeatureService
 {
     public function __construct(
-        private readonly Request $request,
         private readonly PlanEngine $engine,
     ) {}
 
+    /**
+     * The current request is read from the container on every call instead of
+     * being captured in the constructor: this service is bound as a singleton,
+     * and holding a constructor-injected Request would freeze the tenant of the
+     * first request it ever served (wrong tenant under Octane / queue workers,
+     * and a stale tenant in tests). The container rebinds `request` per request,
+     * so resolving it lazily always yields the tenant currently being served.
+     */
+    private function request(): Request
+    {
+        return app('request');
+    }
+
     public function tenant(): ?Tenant
     {
-        return $this->request->input('current_tenant');
+        return $this->request()->input('current_tenant');
     }
 
     public function tenantId(): ?string
@@ -33,7 +45,7 @@ class FeatureService
             return method_exists($tenant, 'getKey') ? (string) $tenant->getKey() : (string) $tenant;
         }
 
-        return $this->request->header('X-Tenant-Id') ?: null;
+        return $this->request()->header('X-Tenant-Id') ?: null;
     }
 
     public function activeSubscription(): ?TenantSubscription

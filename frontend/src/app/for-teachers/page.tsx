@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
@@ -87,7 +87,7 @@ export default function ForTeachersPage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="جرّبها بنفسك — منصتك جاهزة خلال دقائق"
           text="سجّل مجاناً، أضف أول كورس لك، وشارك رابط موقعك مع طالب واحد. ستفهم فوراً لماذا يختار المعلمون بناء منصاتهم الخاصة."
           primaryLabel="ابدأ الآن مجاناً"
@@ -117,7 +117,7 @@ export default function ForTeachersPage() {
 
         <Faq title="أسئلة شائعة عن منصة المعلمين" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="ابدأ اليوم — منصتك تنتظرك"
           text="لا تدع عمولات الوسطاء تلتهم أرباحك بعد الآن. أنشئ منصتك التعليمية الخاصة وادير طلابك وكورساتك بنفسك."
           primaryLabel="أنشئ حسابك مجاناً"

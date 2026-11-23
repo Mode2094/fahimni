@@ -13,26 +13,99 @@ use App\Models\QuestionOption;
 use App\Plans\QuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
 class QuestionController extends Controller
 {
+    /**
+     * The teacher's shared question bank.
+     *
+     * Filterable by course / section / type / difficulty / category / text and
+     * by active state. The full list is returned by default (the exam editor
+     * needs every question of a course); passing `per_page` (or `page`) turns
+     * on server-side pagination for the standalone bank page so it never has to
+     * load an unbounded number of rows.
+     */
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Question::class);
 
-        $questions = Question::with(['options', 'exams'])
-            ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->course_id))
-            ->when($request->filled('section_id'), fn ($q) => $q->where('section_id', $request->section_id))
-            ->when($request->filled('question_type'), fn ($q) => $q->where('question_type', $request->question_type))
-            ->when($request->filled('difficulty'), fn ($q) => $q->where('difficulty', $request->difficulty))
-            ->when($request->filled('category'), fn ($q) => $q->where('category', $request->category))
+        $base = Question::query();
+        $this->applyBankFilters($base, $request);
+
+        // The category chips must span the whole bank (minus the category filter
+        // itself, so the teacher can switch categories), not just one page.
+        $categoryQuery = Question::query();
+        $this->applyBankFilters($categoryQuery, $request, includeCategory: false);
+
+        $categories = $categoryQuery
+            ->whereNotNull('category')
+            ->where('category', '!=', '')
+            ->distinct()
+            ->orderBy('category')
+            ->pluck('category')
+            ->values();
+
+        $wantsPagination = $request->filled('per_page') || $request->filled('page');
+
+        if ($wantsPagination) {
+            $paginated = (clone $base)->with(['options', 'exams'])
+                ->orderBy('created_at', 'desc')
+                ->paginate($this->perPage($request));
+
+            return response()->json([
+                'questions' => QuestionResource::collection($paginated->items()),
+                'pagination' => [
+                    'current_page' => $paginated->currentPage(),
+                    'last_page' => $paginated->lastPage(),
+                    'per_page' => $paginated->perPage(),
+                    'total' => $paginated->total(),
+                ],
+                'categories' => $categories,
+            ]);
+        }
+
+        $questions = $base->with(['options', 'exams'])
             ->orderBy('created_at', 'desc')
             ->get();
 
         return response()->json([
             'questions' => QuestionResource::collection($questions),
+            'categories' => $categories,
         ]);
+    }
+
+    /** Apply the bank's course/section/type/difficulty/category/text filters. */
+    private function applyBankFilters(\Illuminate\Database\Eloquent\Builder $query, Request $request, bool $includeCategory = true): void
+    {
+        $query
+            ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->course_id))
+            ->when($request->filled('section_id'), fn ($q) => $q->where('section_id', $request->section_id))
+            ->when($request->filled('question_type'), fn ($q) => $q->where('question_type', $request->question_type))
+            ->when($request->filled('difficulty'), fn ($q) => $q->where('difficulty', $request->difficulty))
+            ->when($includeCategory && $request->filled('category'), fn ($q) => $q->where('category', $request->category))
+            ->when($request->filled('is_active'), fn ($q) => $q->where('is_active', $request->boolean('is_active')))
+            ->when($request->filled('q'), function ($q) use ($request) {
+                $needle = '%'.$this->escapeLike(trim((string) $request->input('q'))).'%';
+
+                $q->where(fn ($w) => $w
+                    ->where('question_text', 'like', $needle)
+                    ->orWhere('category', 'like', $needle)
+                    ->orWhere('explanation', 'like', $needle));
+            });
+    }
+
+    /** Clamp a client-supplied page size to a sane range. */
+    private function perPage(Request $request): int
+    {
+        return min(max((int) $request->input('per_page', 12), 1), 100);
+    }
+
+    /** Neutralise LIKE wildcards so a search for "%" is literal. */
+    private function escapeLike(string $term): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term);
     }
 
     public function show(string $id): JsonResponse
@@ -66,20 +139,27 @@ class QuestionController extends Controller
             'metadata' => $request->input('metadata', []),
         ]);
 
-        if ($request->question_type === 'multiple_choice' && $request->has('options')) {
-            foreach ($request->options as $opt) {
+        // Options are honored for true/false too (the teacher chooses which of
+        // True/False is correct) instead of always marking "True" correct.
+        if (in_array($request->question_type, ['multiple_choice', 'true_false'], true)) {
+            $options = $request->input('options');
+            if (! is_array($options) || $options === []) {
+                $options = [
+                    ['option_text' => 'True', 'is_correct' => true, 'sort_order' => 0],
+                    ['option_text' => 'False', 'is_correct' => false, 'sort_order' => 1],
+                ];
+            }
+
+            foreach (array_values($options) as $i => $opt) {
                 QuestionOption::create([
                     'id' => UuidV7::generate(),
                     'question_id' => $question->id,
                     'tenant_id' => $question->tenant_id,
                     'option_text' => $opt['option_text'],
                     'is_correct' => $opt['is_correct'] ?? false,
-                    'sort_order' => $opt['sort_order'] ?? 0,
+                    'sort_order' => $opt['sort_order'] ?? $i,
                 ]);
             }
-        } elseif ($request->question_type === 'true_false') {
-            QuestionOption::create(['id' => UuidV7::generate(), 'question_id' => $question->id, 'tenant_id' => $question->tenant_id, 'option_text' => 'True', 'is_correct' => true, 'sort_order' => 0]);
-            QuestionOption::create(['id' => UuidV7::generate(), 'question_id' => $question->id, 'tenant_id' => $question->tenant_id, 'option_text' => 'False', 'is_correct' => false, 'sort_order' => 1]);
         }
 
         if ($request->filled('exam_id')) {
@@ -87,9 +167,11 @@ class QuestionController extends Controller
             Exam::where('tenant_id', $request->current_tenant->id)
                 ->findOrFail($request->exam_id);
 
+            $nextSort = (int) (ExamQuestion::where('exam_id', $request->exam_id)->max('sort_order') ?? -1) + 1;
+
             ExamQuestion::firstOrCreate(
                 ['exam_id' => $request->exam_id, 'question_id' => $question->id],
-                ['tenant_id' => $question->tenant_id, 'id' => UuidV7::generate(), 'sort_order' => 0]
+                ['tenant_id' => $question->tenant_id, 'id' => UuidV7::generate(), 'sort_order' => $nextSort]
             );
         }
 
@@ -104,7 +186,35 @@ class QuestionController extends Controller
 
         $this->authorize('update', $question);
 
-        $question->update($request->validated());
+        // Persist only the validated payload: nested keys now have their own
+        // rules (including size limits and the grading schema), so the raw
+        // metadata array can no longer be used to bypass them or to drop the
+        // required interactive payload.
+        $data = $request->validated();
+        $options = $data['options'] ?? null;
+        unset($data['options']);
+
+        DB::transaction(function () use ($question, $data, $options) {
+            $question->update($data);
+
+            // Options are replaced wholesale (never merged) so a removed option
+            // actually disappears. Historical answers store their own JSON, so
+            // regenerating option ids is safe.
+            if (is_array($options) && in_array($question->question_type, ['multiple_choice', 'true_false'], true)) {
+                $question->options()->delete();
+
+                foreach (array_values($options) as $i => $opt) {
+                    QuestionOption::create([
+                        'id' => UuidV7::generate(),
+                        'question_id' => $question->id,
+                        'tenant_id' => $question->tenant_id,
+                        'option_text' => $opt['option_text'],
+                        'is_correct' => $opt['is_correct'] ?? false,
+                        'sort_order' => $opt['sort_order'] ?? $i,
+                    ]);
+                }
+            }
+        });
 
         return response()->json([
             'question' => new QuestionResource($question->fresh()->load('options')),

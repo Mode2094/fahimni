@@ -14,6 +14,17 @@ class StudentProfileController extends Controller
         private readonly StudentGamificationService $gamification,
     ) {}
 
+    /**
+     * Requested page size, clamped to a sane range so a crafted `limit`
+     * can't force an unbounded result set.
+     */
+    private function clampLimit(Request $request, int $default = 50, int $max = 100): int
+    {
+        $limit = (int) $request->input('limit', $default);
+
+        return max(1, min($limit, $max));
+    }
+
     private function tenantId(Request $request): ?string
     {
         $tenantId = $request->header('X-Tenant-Id');

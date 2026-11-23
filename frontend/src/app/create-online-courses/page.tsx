@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
@@ -92,7 +92,7 @@ export default function CreateOnlineCoursesPage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="ابدأ بدرس واحد اليوم"
           text="سجّل حسابك، ارفع درساً واحداً، وشارك رابطه مع طالب. ستلمس بنفسك كيف تعمل حلقة إنشاء وبيع الكورسات كاملة."
           primaryLabel="أنشئ حسابك مجاناً"
@@ -122,7 +122,7 @@ export default function CreateOnlineCoursesPage() {
 
         <Faq title="أسئلة شائعة عن إنشاء الكورسات" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="كورسك القادم يبدأ الآن"
           text="كل درس مسجل ترفعه اليوم يعمل لصالحك غداً. أنشئ منصتك وابدأ أول كورس دون أي تكلفة مسبقة."
           primaryLabel="ابدأ مجاناً"

@@ -32,6 +32,7 @@ class RequireSubscription
         'teacher/domain',
         'teacher/site-design',
         'notifications',
+        'admin-notifications',
         'preferences',
         'push-tokens',
         'conversations',

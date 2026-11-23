@@ -114,7 +114,7 @@ export default function AdminMonitoringPage() {
           <CardTitle className="flex items-center gap-2"><Cpu className="h-4 w-4" /> {t('المضيف', 'Host')}</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          {stat(t('CPU', 'CPU'), pct(host.cpu_percent), 'load ' + (host.loadavg_1 ?? '—'))}
+          {stat(t('CPU', 'CPU'), pct(host.cpu_percent), 'load ' + (host.loadavg_1 ?? '—') + (host.cpu_cores ? ` (${(Number(host.loadavg_1 ?? 0) / host.cpu_cores).toFixed(2)}/core · ${host.cpu_cores} cores)` : ''))}
           {stat(t('الذاكرة', 'Memory'), pct(host.mem_percent), mb(host.mem_used_mb) + ' / ' + mb(host.mem_total_mb))}
           {stat(t('القرص', 'Disk'), pct(host.disk_root_percent), mb(host.disk_root_used_mb) + ' / ' + mb(host.disk_root_total_mb))}
           {stat(t('Swap', 'Swap'), mb(host.swap_used_mb), `uptime ${Math.floor((host.uptime_seconds ?? 0) / 3600)}h`)}

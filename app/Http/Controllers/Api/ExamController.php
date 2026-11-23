@@ -8,13 +8,16 @@ use App\Http\Requests\Exam\UpdateExamRequest;
 use App\Http\Resources\ExamResource;
 use App\Http\Resources\QuestionResource;
 use App\Models\Exam;
+use App\Models\ExamAnswer;
 use App\Models\ExamQuestion;
 use App\Models\ExamSection;
+use App\Models\Question;
 use App\Plans\QuotaService;
 use App\Rules\TenantScopedExists;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
 class ExamController extends Controller
@@ -35,9 +38,12 @@ class ExamController extends Controller
                 ! $this->isTenantStaff($request),
                 fn ($q) => $q
                     ->where('is_published', true)
+                    // Exams shared to specific course groups are hidden from
+                    // students who are not members of those groups.
+                    ->visibleToStudent($request->user()->id)
                     ->whereHas('course.enrollments', function ($q) use ($request) {
                         $q->where('user_id', $request->user()->id)
-                            ->whereIn('status', ['active', 'completed'])
+                            ->effective()
                             ->where(fn ($e) => $e->whereNull('expires_at')->orWhere('expires_at', '>', now()));
                     })
             )
@@ -124,6 +130,28 @@ class ExamController extends Controller
         return response()->json(['message' => 'Exam deleted successfully.']);
     }
 
+    /**
+     * إنشاء نسخة (مسودة) من اختبار — الإعدادات والأقسام والأسئلة (من بنك
+     * الأسئلة) فقط، بلا محاولات أو درجات أو أي بيانات طلاب.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $exam = Exam::findOrFail($id);
+
+        $this->authorize('view', $exam);
+        $this->authorize('create', Exam::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateExam($exam, $validated['title'] ?? null);
+
+        return response()->json([
+            'exam' => new ExamResource($result['model']->load(['sections', 'questions.options'])),
+            'report' => $result['report'],
+        ], 201);
+    }
+
     public function publish(string $id): JsonResponse
     {
         $exam = Exam::findOrFail($id);
@@ -150,6 +178,8 @@ class ExamController extends Controller
             'questions.*.sort_order' => 'nullable|integer|min:0',
             'questions.*.points_override' => 'nullable|numeric|min:0',
         ]);
+
+        $nextSort = (int) (ExamQuestion::where('exam_id', $exam->id)->max('sort_order') ?? -1) + 1;
 
         $attached = [];
         foreach ($validated['questions'] as $q) {
@@ -180,7 +210,7 @@ class ExamController extends Controller
                 'exam_id' => $exam->id,
                 'exam_section_id' => $q['exam_section_id'] ?? null,
                 'question_id' => $q['question_id'],
-                'sort_order' => $q['sort_order'] ?? 0,
+                'sort_order' => $q['sort_order'] ?? $nextSort++,
                 'points_override' => $q['points_override'] ?? null,
             ]);
 
@@ -189,6 +219,76 @@ class ExamController extends Controller
 
         return response()->json([
             'message' => count($attached).' question(s) added to exam.',
+            'exam' => new ExamResource($exam->fresh(['questions.options'])),
+        ]);
+    }
+
+    /**
+     * اسحب عدداً محدداً من أسئلة البنك عشوائيًّا وأضفها إلى الاختبار.
+     *
+     * المصدر هو بنك أسئلة المعلم نفسه (يمكن تصفيته بالمادة/القسم/التصنيف/
+     * الصعوبة/النوع)، والسحب يستثني أي سؤال مضاف إلى هذا الاختبار بالفعل فلا
+     * تتكرر الأسئلة عند إعادة السحب. الأسئلة تُربط بالاختبار عبر exam_questions
+     * فقط؛ لا تُنسخ ولا تُحتسب من حدود الخطة (كما في addQuestions)، ونتائج
+     * المحاولات القائمة لا تُمس.
+     */
+    public function drawQuestions(Request $request, string $id): JsonResponse
+    {
+        $exam = Exam::findOrFail($id);
+
+        $this->authorize('update', $exam);
+
+        $validated = $request->validate([
+            'count' => 'required|integer|min:1|max:200',
+            'course_id' => ['nullable', 'string', new TenantScopedExists('courses')],
+            'section_id' => ['nullable', 'string', new TenantScopedExists('sections')],
+            'category' => 'nullable|string|max:100',
+            'difficulty' => 'nullable|string|in:easy,medium,hard',
+            'question_type' => 'nullable|string|in:'.implode(',', Question::TYPES),
+        ]);
+
+        // Never hand out a question the exam already contains.
+        $alreadyAttached = ExamQuestion::where('exam_id', $exam->id)->pluck('question_id')->all();
+
+        $candidates = Question::query()
+            ->where('is_active', true)
+            ->when(! empty($validated['course_id']), fn ($q) => $q->where('course_id', $validated['course_id']))
+            ->when(! empty($validated['section_id']), fn ($q) => $q->where('section_id', $validated['section_id']))
+            ->when(! empty($validated['category']), fn ($q) => $q->where('category', $validated['category']))
+            ->when(! empty($validated['difficulty']), fn ($q) => $q->where('difficulty', $validated['difficulty']))
+            ->when(! empty($validated['question_type']), fn ($q) => $q->where('question_type', $validated['question_type']))
+            ->whereNotIn('id', $alreadyAttached)
+            ->inRandomOrder()
+            ->limit($validated['count'])
+            ->pluck('id');
+
+        if ($candidates->isEmpty()) {
+            return response()->json([
+                'message' => 'No matching questions are available in the bank.',
+                'added_count' => 0,
+                'requested_count' => (int) $validated['count'],
+                'exam' => new ExamResource($exam->fresh(['questions.options'])),
+            ]);
+        }
+
+        $nextSort = (int) (ExamQuestion::where('exam_id', $exam->id)->max('sort_order') ?? -1) + 1;
+
+        DB::transaction(function () use ($exam, $candidates, &$nextSort) {
+            foreach ($candidates as $questionId) {
+                ExamQuestion::create([
+                    'id' => UuidV7::generate(),
+                    'tenant_id' => $exam->tenant_id,
+                    'exam_id' => $exam->id,
+                    'question_id' => $questionId,
+                    'sort_order' => $nextSort++,
+                ]);
+            }
+        });
+
+        return response()->json([
+            'message' => $candidates->count().' question(s) drawn from the bank.',
+            'added_count' => $candidates->count(),
+            'requested_count' => (int) $validated['count'],
             'exam' => new ExamResource($exam->fresh(['questions.options'])),
         ]);
     }
@@ -203,8 +303,53 @@ class ExamController extends Controller
             ->where('question_id', $questionId)
             ->firstOrFail();
 
+        // Historical answers hang off the exam_questions row with a cascade
+        // delete. Removing the question from the exam would silently destroy a
+        // student's past answers, so refuse while any exist.
+        $hasAnswers = ExamAnswer::where('exam_question_id', $examQuestion->id)->exists();
+
+        if ($hasAnswers) {
+            return response()->json([
+                'message' => 'This question already has graded answers in this exam; it cannot be removed without losing results.',
+            ], 409);
+        }
+
         $examQuestion->delete();
 
         return response()->json(['message' => 'Question removed from exam.']);
+    }
+
+    /**
+     * Persist the teacher's ordering of the questions attached to an exam.
+     * Accepts the full ordered list of question ids; ids that do not belong to
+     * this exam are ignored.
+     */
+    public function reorderQuestions(Request $request, string $id): JsonResponse
+    {
+        $exam = Exam::findOrFail($id);
+
+        $this->authorize('update', $exam);
+
+        $validated = $request->validate([
+            'question_ids' => 'required|array|min:1',
+            'question_ids.*' => 'required|string',
+        ]);
+
+        $owned = ExamQuestion::where('exam_id', $exam->id)
+            ->whereIn('question_id', $validated['question_ids'])
+            ->pluck('question_id')
+            ->all();
+
+        $ordered = array_values(array_intersect($validated['question_ids'], $owned));
+
+        DB::transaction(function () use ($exam, $ordered) {
+            foreach ($ordered as $index => $questionId) {
+                ExamQuestion::where('exam_id', $exam->id)
+                    ->where('question_id', $questionId)
+                    ->update(['sort_order' => $index]);
+            }
+        });
+
+        return response()->json(['message' => 'Questions reordered.']);
     }
 }

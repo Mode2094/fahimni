@@ -18,6 +18,7 @@ import {
   Calendar, Plus, Trash2, Loader2, Pencil, XCircle, CheckCircle2, Repeat, Clock, Link2, ExternalLink, Video,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -80,10 +81,10 @@ export default function TeacherSchedulePage() {
         provider: form.provider, meeting_url: form.meeting_url || null,
       };
       const res = await fetch(`${API}/teacher/scheduled-lessons${editing ? `/${editing.id}` : ''}`, { method: editing ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ الدرس المجدول', 'Could not save the scheduled lesson')); return; }
       toast.success(editing ? t('تم تحديث الدرس المجدول', 'Scheduled lesson updated') : t('تم إنشاء الدرس — سيظهر لطلابك', 'Lesson created — it will appear to your students'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الدرس المجدول', 'Could not save the scheduled lesson'))); }
     setBusyId('');
   };
 
@@ -91,10 +92,10 @@ export default function TeacherSchedulePage() {
     setBusyId(id);
     try {
       const res = await fetch(`${API}/teacher/scheduled-lessons/${id}/${act}`, { method: 'POST', headers: headers() });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر تحديث حالة الدرس', 'Could not update the lesson status')); return; }
       toast.success(act === 'complete' ? t('تم إنهاء الدرس', 'Lesson completed') : t('تم إلغاء الدرس', 'Lesson cancelled'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحديث حالة الدرس', 'Could not update the lesson status'))); }
     setBusyId('');
   };
 
@@ -104,7 +105,7 @@ export default function TeacherSchedulePage() {
       const res = await fetch(`${API}/teacher/scheduled-lessons/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الدرس', 'Could not delete the lesson'))); }
   };
 
   const groups = useMemo(() => {

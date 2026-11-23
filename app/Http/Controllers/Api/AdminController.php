@@ -24,11 +24,17 @@ use App\Models\TenantSubscription;
 use App\Models\TenantUser;
 use App\Models\TicketMessage;
 use App\Models\Transaction;
+use App\Models\TrialGrant;
 use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
+use App\Plans\TeacherTrialProgram;
+use App\Rules\ValidPhoneNumber;
+use App\Services\EnrollmentService;
 use App\Services\PaymentCompletionService;
+use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
+use App\Support\PhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -125,26 +131,51 @@ class AdminController extends Controller
 
     public function teachers(Request $request): JsonResponse
     {
-        $query = User::role('Teacher')
+        $base = User::role('Teacher')
             ->with([
                 'tenantPivots.tenant.settings',
                 'tenantPivots.tenant.subscriptions' => fn ($q) => $q->latest('starts_at')->limit(1),
             ]);
 
-        if ($request->filled('search')) {
-            $query->where(fn ($q) => $q
-                ->where('name', 'ilike', '%'.$request->search.'%')
-                ->orWhere('email', 'ilike', '%'.$request->search.'%')
-                ->orWhereHas('tenantPivots.tenant', fn ($t) => $t->where('name', 'ilike', '%'.$request->search.'%')));
-        }
         if ($request->filled('is_active')) {
-            $query->where('is_active', $request->boolean('is_active'));
+            $base->where('is_active', $request->boolean('is_active'));
         }
         if ($request->filled('plan_id')) {
-            $query->whereHas('tenantPivots.tenant.subscriptions', fn ($s) => $s->where('plan_id', $request->plan_id)->whereIn('status', ['active', 'trialing']));
+            $base->whereHas('tenantPivots.tenant.subscriptions', fn ($s) => $s->where('plan_id', $request->plan_id)->whereIn('status', ['active', 'trialing']));
         }
 
-        $rows = $query->orderByDesc('created_at')->limit(200)->get();
+        $search = $request->filled('search') ? trim((string) $request->input('search')) : null;
+
+        $rows = (clone $base);
+
+        if ($search !== null) {
+            // Postgres supports case-insensitive ILIKE; SQLite's LIKE is already
+            // case-insensitive for ASCII, so pick the portable operator.
+            $like = DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
+
+            $rows->where(fn ($q) => $q
+                ->where('name', $like, '%'.$search.'%')
+                ->orWhere('email', $like, '%'.$search.'%')
+                ->orWhereHas('tenantPivots.tenant', fn ($t) => $t->where('name', $like, '%'.$search.'%')));
+        }
+
+        $rows = $rows->orderByDesc('created_at')->limit(200)->get();
+
+        // Phone lives encrypted at rest, so it cannot be matched with SQL LIKE.
+        // When the term carries digits, scan the (small) teacher set and match
+        // on the decrypted value, then merge — name/email hits stay primary.
+        if ($search !== null && preg_match('/\d/', $search) === 1) {
+            $digits = preg_replace('/\D/', '', $search) ?? '';
+
+            $phoneMatches = (clone $base)
+                ->orderByDesc('created_at')
+                ->limit(500)
+                ->get()
+                ->filter(fn (User $u) => filled($u->phone)
+                    && str_contains(preg_replace('/\D/', '', (string) $u->phone) ?? '', $digits));
+
+            $rows = $rows->concat($phoneMatches)->unique('id')->sortByDesc('created_at')->values();
+        }
 
         $teachers = $rows->map(fn (User $u) => $this->teacherPayload($u));
 
@@ -165,16 +196,26 @@ class AdminController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
+            // Every teacher account — including admin-created ones — needs a phone.
+            'phone' => ['required', 'string', 'max:25', new ValidPhoneNumber],
             'password' => 'nullable|string|min:8',
             'plan_id' => 'nullable|exists:subscription_plans,id',
         ]);
+
+        if (User::onlyTrashed()->where('email', strtolower($validated['email']))->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — استخدم بريداً آخر، أو أطلب من صاحبه استعادة الحساب بتسجيل الدخول.',
+                'code' => 'email_previously_deleted',
+            ], 422);
+        }
 
         $password = $validated['password'] ?? Str::random(14);
         $user = User::create([
             'id' => UuidV7::generate(),
             'name' => $validated['name'],
             'email' => strtolower($validated['email']),
+            'phone' => PhoneNumber::toE164($validated['phone']),
             'password' => Hash::make($password),
             'is_active' => true,
             'email_verified_at' => now(),
@@ -182,14 +223,13 @@ class AdminController extends Controller
         ]);
         $user->assignRole('Teacher');
 
-        $tenant = Tenant::create([
+        $tenant = app(TenantSlugService::class)->createTenant([
             'id' => UuidV7::generate(),
             'name' => $validated['name'].' Academy',
             'type' => 'tutor',
-            'slug' => Str::slug($validated['name']).'-'.Str::random(4),
             'email' => strtolower($validated['email']),
             'owner_id' => $user->id,
-        ]);
+        ], $validated['name']);
 
         TenantSetting::create([
             'id' => UuidV7::generate(),
@@ -206,12 +246,15 @@ class AdminController extends Controller
             'metadata' => [],
         ]);
 
-        // Start the 7-day free trial with the selected (or default cheapest) plan.
+        // ابدأ التجربة المجانية فقط عندما يسمح المفتاح الرئيسي بمنح تجارب
+        // جديدة. تجارب الأدمن لا تستهلك مقعدًا من العرض المحدود (حسابات
+        // الاختبار/التجهيز مستثناة من العداد) لكنها تُسجَّل للتدقيق.
+        $program = app(TeacherTrialProgram::class);
         $plan = $request->filled('plan_id')
             ? SubscriptionPlan::findOrFail($request->plan_id)
             : SubscriptionPlan::where('is_active', true)->orderBy('monthly_price')->first();
 
-        if ($plan) {
+        if ($plan && $program->masterEnabled()) {
             TenantSubscription::create([
                 'id' => UuidV7::generate(),
                 'tenant_id' => $tenant->id,
@@ -221,6 +264,15 @@ class AdminController extends Controller
                 'starts_at' => now(),
                 'trial_ends_at' => now()->addDays(max(1, (int) $plan->trial_days)),
                 'auto_renew' => true,
+            ]);
+
+            TrialGrant::create([
+                'id' => UuidV7::generate(),
+                'user_id' => $user->id,
+                'tenant_id' => $tenant->id,
+                'source' => 'admin',
+                'counted' => false,
+                'granted_at' => now(),
             ]);
         }
 
@@ -279,7 +331,7 @@ class AdminController extends Controller
         // ── Students (distinct users with enrollments) ──
         $students = Enrollment::withoutTenant()
             ->where('tenant_id', $tenantId)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->with('student:id,name,email,created_at')
             ->get()
             ->groupBy('user_id')
@@ -415,8 +467,10 @@ class AdminController extends Controller
         $tenantIds = TenantUser::where('user_id', $user->id)->where('status', 'active')->pluck('tenant_id');
         Tenant::whereIn('id', $tenantIds)->update(['status' => $request->boolean('is_active') ? 'active' : 'suspended']);
 
-        // Deactivation must kill every live session immediately.
+        // Deactivation must kill every live session immediately — bearer
+        // tokens here and all web sessions through the version bump.
         if (! $request->boolean('is_active')) {
+            $user->increment('auth_version');
             $user->tokens()->delete();
         }
 
@@ -436,6 +490,7 @@ class AdminController extends Controller
         // Soft-delete the teacher and their tenants (data preserved for audits).
         $tenantIds = TenantUser::where('user_id', $user->id)->pluck('tenant_id');
         Tenant::whereIn('id', $tenantIds)->delete();
+        $user->increment('auth_version');
         $user->tokens()->delete();
         $user->delete();
 
@@ -457,6 +512,7 @@ class AdminController extends Controller
             'phone' => $user->phone,
             'is_active' => (bool) $user->is_active,
             'created_at' => $user->created_at?->toIso8601String(),
+            'last_login_at' => $user->last_login_at?->toIso8601String(),
             'tenant' => $tenant ? [
                 'id' => $tenant->id,
                 'name' => $tenant->name,
@@ -545,48 +601,58 @@ class AdminController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
             'password' => 'nullable|string|min:8',
             'tenant_id' => 'nullable|exists:tenants,id',
             'course_id' => 'nullable|exists:courses,id',
         ]);
 
-        $password = $validated['password'] ?? Str::random(12);
-        $user = User::create([
-            'id' => UuidV7::generate(),
-            'name' => $validated['name'],
-            'email' => strtolower($validated['email']),
-            'password' => Hash::make($password),
-            'is_active' => true,
-            'email_verified_at' => now(),
-            'locale' => 'ar',
-        ]);
-        $user->assignRole('Student');
-
-        // Attach to the chosen tenant (or the first active one).
-        $tenantId = $validated['tenant_id'] ?? Tenant::where('status', 'active')->first()?->id;
-
-        if ($tenantId) {
-            TenantUser::firstOrCreate(
-                ['tenant_id' => $tenantId, 'user_id' => $user->id],
-                ['role' => 'student', 'status' => 'active', 'joined_at' => now(), 'metadata' => []]
-            );
-
-            if ($request->filled('course_id')) {
-                $course = Course::where('tenant_id', $tenantId)->findOrFail($request->course_id);
-                Enrollment::firstOrCreate(
-                    ['course_id' => $course->id, 'user_id' => $user->id],
-                    [
-                        'id' => UuidV7::generate(),
-                        'tenant_id' => $tenantId,
-                        'status' => 'active',
-                        'enrolled_at' => now(),
-                        'source' => 'admin',
-                        'metadata' => [],
-                    ]
-                );
-            }
+        if (User::onlyTrashed()->where('email', strtolower($validated['email']))->exists()) {
+            return response()->json([
+                'message' => 'هذا البريد مرتبط بحساب محذوف — استخدم بريداً آخر، أو أطلب من صاحبه استعادة الحساب بتسجيل الدخول.',
+                'code' => 'email_previously_deleted',
+            ], 422);
         }
+
+        $password = $validated['password'] ?? Str::random(12);
+
+        $user = DB::transaction(function () use ($request, $validated, $password) {
+            $tenantId = $validated['tenant_id'] ?? Tenant::where('status', 'active')->first()?->id;
+
+            $course = null;
+            if ($tenantId && $request->filled('course_id')) {
+                $course = Course::where('tenant_id', $tenantId)->findOrFail($request->course_id);
+                // Fail before the account is created if the teacher's seat
+                // limit is full — never leave an orphan student.
+                app(EnrollmentService::class)->assertNewSeatAvailable($tenantId);
+            }
+
+            $user = User::create([
+                'id' => UuidV7::generate(),
+                'name' => $validated['name'],
+                'email' => strtolower($validated['email']),
+                'password' => Hash::make($password),
+                'is_active' => true,
+                'email_verified_at' => now(),
+                'locale' => 'ar',
+            ]);
+            $user->assignRole('Student');
+
+            if ($tenantId) {
+                TenantUser::firstOrCreate(
+                    ['tenant_id' => $tenantId, 'user_id' => $user->id],
+                    ['role' => 'student', 'status' => 'active', 'joined_at' => now(), 'metadata' => []]
+                );
+
+                if ($course) {
+                    // Seat limit, duplicate and per-course cap are enforced
+                    // centrally under the tenant lock.
+                    app(EnrollmentService::class)->enroll($course, $user, ['source' => 'admin']);
+                }
+            }
+
+            return $user;
+        });
 
         AuditLogger::log($request, 'admin.student_created', 'user', $user->id, ['email' => $user->email]);
 
@@ -606,6 +672,7 @@ class AdminController extends Controller
         $student = User::whereHas('tenantPivots', fn ($q) => $q->withoutGlobalScope('tenant')->where('role', 'student'))
             ->findOrFail($id);
 
+        $student->increment('auth_version');
         $student->tokens()->delete();
         $student->delete();
 
@@ -650,8 +717,10 @@ class AdminController extends Controller
 
         $student->update(['is_active' => $request->boolean('is_active')]);
 
-        // Deactivated students lose their sessions immediately.
+        // Deactivated students lose their sessions immediately (tokens and
+        // every web session via the version bump).
         if (! $request->boolean('is_active')) {
+            $student->increment('auth_version');
             $student->tokens()->delete();
         }
 

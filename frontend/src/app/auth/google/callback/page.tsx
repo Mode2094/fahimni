@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/store';
+import { track } from '@/lib/analytics';
+import { dashboardPathFor } from '@/lib/auth-routes';
 
 type Stage = 'working' | '2fa' | 'error';
 
@@ -49,9 +51,10 @@ function GoogleCallbackInner() {
 
     if (!user) return false;
 
-    if (user.is_super_admin) router.replace('/admin/dashboard');
-    else if (user.roles?.includes('Teacher')) router.replace('/teacher/dashboard');
-    else router.replace('/my-learning');
+    // Single source of truth: super admin → admin, teacher → dashboard (or the
+    // «أكمل بيانات حسابك» step when the mandatory phone is still missing),
+    // student → my-learning.
+    router.replace(dashboardPathFor(user));
 
     return true;
   }, [router]);
@@ -95,6 +98,14 @@ function GoogleCallbackInner() {
       return;
     }
 
+    // A teacher who signed up with Google but has no phone yet: the account
+    // exists and is signed in, but the workspace/trial start only after the
+    // profile is completed. hydrateSession routes them to the completion step.
+    if (step === 'profile_required') {
+      void hydrateSession();
+      return;
+    }
+
     if (error || step !== 'done') {
       const messages: Record<string, string> = ERROR_MESSAGES;
       setCanRetrySession(false);
@@ -104,6 +115,9 @@ function GoogleCallbackInner() {
 
     // Success marker: the OAuth callback already set the HttpOnly session
     // cookie — no token ever travels in the URL.
+    if (params.get('trial_started') === '1' && (roleHint || 'teacher') === 'teacher') {
+      track('trial_start', { content_name: 'teacher_trial' });
+    }
     void hydrateSession();
   }, [fail, hydrateSession]);
 

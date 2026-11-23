@@ -9,6 +9,7 @@ use App\Models\Tenant;
 use App\Models\TenantSubscription;
 use App\Services\FreemiusGateway;
 use App\Services\FreemiusPlanMapper;
+use App\Services\FreemiusPriceSyncService;
 use App\Services\FsEntitlementSyncService;
 use App\Support\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -112,12 +113,36 @@ class FreemiusCheckoutController extends Controller
             ], 422);
         }
 
+        // Price integrity: a buyer must never pay an amount different from the
+        // displayed price. Verify the plan's price against Freemius (amount +
+        // USD + the EXACT Pricing ID) and fail closed when it cannot be proven.
+        // No checkout URL is issued otherwise.
+        $guard = app(FreemiusPriceSyncService::class)->guardCheckout($plan, $cycle);
+
+        if (! $guard['ok'] || empty($guard['pricing_id'])) {
+            AuditLogger::log($request, 'subscription.freemius_price_guard_blocked', 'plan', $plan->id, [
+                'cycle' => $cycle,
+                'status' => $guard['status'],
+            ]);
+
+            return response()->json([
+                'message' => $guard['message'],
+                'reason' => $guard['status'],
+            ], 409);
+        }
+
+        // The verified pricing id + official Freemius billing cycle
+        // (monthly|annual) drive BOTH the hosted checkout and the upgrade link,
+        // so the buyer is charged on exactly the pricing we verified.
+        $fsPlanId = $guard['plan_id'] ?? $fsPlanId;
+        $pricingId = (string) $guard['pricing_id'];
+        $fsCycle = (string) $guard['billing_cycle'];
+
         if ($existing) {
             $upgrade = FreemiusGateway::upgradeCheckoutLink($existing->fs_license_id, [
                 'plan_id' => $fsPlanId,
-                'billing_cycle' => $cycle,
+                'billing_cycle' => $fsCycle,
                 'quota' => 1,
-                'currency' => 'usd',
             ]);
 
             if ($upgrade && ! empty($upgrade['url'])) {
@@ -131,15 +156,19 @@ class FreemiusCheckoutController extends Controller
             }
         }
 
-        // Fresh hosted checkout. The URL carries product + plan; we only add
-        // the prefilled/read-only email. No price is ever passed (Freemius uses
-        // the plan's configured price). The post-purchase redirect URL (with a
-        // Freemius-signed `signature`) is configured in the Freemius Dashboard
-        // (Plans → Customization → Redirect Checkout to a custom URL) and points
-        // to our /checkout/success page.
+        // Fresh hosted checkout. The URL carries product + plan AND the exact
+        // verified pricing id + billing cycle (official Freemius checkout URL
+        // parameters), so the charge matches the displayed price. The
+        // post-purchase redirect URL (with a Freemius-signed `signature`) is
+        // configured in the Freemius Dashboard (Plans → Customization →
+        // Redirect Checkout to a custom URL) and points to /checkout/success.
         $reference = $this->recordIntent($tenant, $plan, $cycle, (string) $email, $request->user()?->id);
 
-        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email);
+        $url = FreemiusGateway::hostedCheckoutLink($fsPlanId, (string) $email, [
+            'pricing_id' => $pricingId,
+            'billing_cycle' => $fsCycle,
+            'currency' => 'usd',
+        ]);
 
         AuditLogger::log($request, 'subscription.freemius_checkout', 'plan', $plan->id, ['cycle' => $cycle]);
 
@@ -408,8 +437,12 @@ class FreemiusCheckoutController extends Controller
             return true;
         }
 
+        // A free trial is NOT a paid subscription: one is provisioned for every
+        // new teacher, and the activation flow supersedes it (the entitlement
+        // sync cancels the local trial row when the paid license binds). Only a
+        // genuinely PAID legacy row blocks a new checkout.
         return TenantSubscription::where('tenant_id', $tenant->id)
-            ->whereIn('status', ['active', 'trialing'])
+            ->where('status', 'active')
             ->where(function ($q) {
                 $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
             })

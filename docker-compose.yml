@@ -189,6 +189,9 @@ services:
         # cookie. nginx routes /api/ to PHP on the same origin.
         NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-/api/v1}"
         NEXT_PUBLIC_PLATFORM_DOMAIN: "${NEXT_PUBLIC_PLATFORM_DOMAIN:-fahimni.me}"
+        # FCM Web Push certificate public key (browser-visible). Leave empty to
+        # disable student web-push until the Firebase key is configured.
+        NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY: "${NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY:-}"
     image: fahimni-frontend:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true

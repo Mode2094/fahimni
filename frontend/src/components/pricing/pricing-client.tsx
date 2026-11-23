@@ -50,6 +50,12 @@ export default function PricingClient() {
     return Number.isFinite(v) ? v : 0;
   };
 
+  // أدنى سعر شهري فعلي — مصدره الخطط الحية، لا رقم ثابت.
+  const monthlyNumbers = plans
+    .map((p: any) => Number(p.monthly_price))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
+  const minMonthly = monthlyNumbers.length ? Math.min(...monthlyNumbers) : null;
+
   const handlePick = (plan: any) => {
     if (!loggedIn) { router.push('/register/teacher'); return; }
     router.push(`/checkout?plan=${plan.id}&cycle=${cycle}`);
@@ -108,6 +114,27 @@ export default function PricingClient() {
             </div>
           )}
         </div>
+
+        {/* ─── حماية الفيديوهات — مشمولة في جميع الخطط ─── */}
+        <div className="mx-auto mb-6 flex max-w-3xl flex-col items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-5 py-4 text-center sm:flex-row sm:justify-center sm:gap-3">
+          <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" />
+          <p className="text-sm font-bold text-emerald-900">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
+        </div>
+
+        {/* ─── أبرز ما تمنحه الخطط — بلا ازدحام ─── */}
+        {minMonthly !== null && (
+          <div className="mx-auto mb-10 flex max-w-3xl flex-wrap items-center justify-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-white px-3.5 py-2 text-xs font-bold text-teal-800 shadow-sm">
+              <Check className="h-3.5 w-3.5 text-teal-600" />{t(`${formatPrice(minMonthly)} بدايةً`, `From ${formatPrice(minMonthly)}`)}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-sm">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />{t('فيديوهات محمية', 'Protected videos')}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-white px-3.5 py-2 text-xs font-bold text-violet-800 shadow-sm">
+              <Film className="h-3.5 w-3.5 text-violet-600" />{t('عدد فيديوهات بلا حد عددي ضمن المساحة', 'No numeric video limit within your storage')}
+            </span>
+          </div>
+        )}
 
         {loading ? <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div> : (
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">

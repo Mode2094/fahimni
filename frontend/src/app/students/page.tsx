@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,19 +15,21 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Users, Loader2, MonitorSmartphone, RotateCcw, Settings2, Search, Mail, Calendar,
   BookOpen, Award, TrendingUp, XCircle, CheckCircle2, UserX, Clock, Smartphone, Star,
-  Coins, Trophy, Activity as ActivityIcon, History,
+  Coins, Trophy, Activity as ActivityIcon, History, Ticket,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-export default function StudentsPage() {
+function StudentsPageInner() {
   const { check } = useAuth();
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seats, setSeats] = useState<any>(null);
   const [search, setSearch] = useState('');
   const [profile, setProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -45,7 +48,14 @@ export default function StudentsPage() {
       .then(r => r.json()).then(d => setStudents(d.students || [])).catch(() => {})
       .finally(() => setLoading(false));
   };
+  const loadSeats = () => {
+    // Seats = distinct students with a currently-effective enrollment
+    // (active/completed, not expired, not archived). Server-owned value.
+    fetch(`${API}/teacher/plan`, { headers: headers() })
+      .then(r => r.json()).then(d => setSeats(d.usage?.students || null)).catch(() => {});
+  };
   useEffect(() => { if (check()) load(); }, [check()]);
+  useEffect(() => { if (check()) loadSeats(); }, [check()]);
 
   const openProfile = async (s: any) => {
     setProfileLoading(true);
@@ -53,9 +63,21 @@ export default function StudentsPage() {
       const res = await fetch(`${API}/teacher/students/${s.id}`, { headers: headers() });
       if (!res.ok) throw new Error();
       setProfile((await res.json()).student);
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحميل ملف الطالب', 'Could not load the student profile'))); }
     setProfileLoading(false);
   };
+
+  // انتقال مباشر من «متابعة الطلاب»: /students?student=<id> يفتح ملف الطالب.
+  const searchParams = useSearchParams();
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    const target = searchParams.get('student');
+    if (!target || deepLinked.current || students.length === 0) return;
+    deepLinked.current = true;
+    const found = students.find((x) => x.id === target);
+    if (found) void openProfile(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, searchParams]);
 
   const saveLimit = async () => {
     if (!limitTarget) return;
@@ -65,7 +87,7 @@ export default function StudentsPage() {
       if (!res.ok) throw new Error();
       toast.success(t(`تم منح ${limitTarget.name} الدخول من ${limitVal} أجهزة`, `Granted ${limitTarget.name} ${limitVal} device(s)`));
       setLimitTarget(null); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ حد الأجهزة', 'Could not save the device limit'))); }
     setBusyId('');
   };
 
@@ -77,7 +99,7 @@ export default function StudentsPage() {
       toast.success(t(`تم إعادة تعيين أجهزة ${s.name} — يمكنه الدخول من جهاز جديد الآن`, `Devices reset for ${s.name} — they can log in from a new device now`));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
     setBusyId('');
   };
 
@@ -90,7 +112,7 @@ export default function StudentsPage() {
       toast.success(t('تمت إزالة الصلاحية — عاد للحد الافتراضي', 'Override removed — back to default'));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة الصلاحية', 'Could not remove the override'))); }
     setBusyId('');
   };
 
@@ -119,7 +141,31 @@ export default function StudentsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold">{t('الطلاب', 'Students')}</h1>
           <p className="text-muted-foreground mt-1">{t('إدارة كاملة: الأداء، الأجهزة، الحدود، وإعادة التعيين', 'Full control: performance, devices, limits & resets')}</p>
         </div>
+        {seats && (
+          <div className="flex items-center gap-2 rounded-full bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-700 ms-auto">
+            <Users className="h-4 w-4" />
+            {seats.unlimited
+              ? t(`${seats.used} مقعد مستخدم (غير محدود)`, `${seats.used} seats used (unlimited)`)
+              : t(`${seats.used} / ${seats.limit} مقعد · متاح ${seats.remaining}`, `${seats.used} / ${seats.limit} seats · ${seats.remaining} available`)}
+          </div>
+        )}
+        <a
+          href="/teacher/terms"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-semibold ${seats ? '' : 'ms-auto'}`}
+        >
+          <Calendar className="h-4 w-4" />
+          {t('الفصول وربط الطلاب', 'Terms & link students')}
+        </a>
       </div>
+
+      {seats && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground -mt-1">
+          {t(
+            'المقعد يُحسب لكل طالب عندك مرة واحدة مهما التحق بعدة كورسات. إنهاء الدروس لا يحرّر المقعد؛ يتحرّر فقط عندما لا يبقى له أي تسجيل ساري (كأن تُنهي الفصل أو تؤرشف تسجيلاته).',
+            'A seat is counted once per student in your platform however many courses they join. Finishing lessons does not free the seat; it is freed only when they have no active enrolment left (e.g. you end the term or archive their enrolments).',
+          )}
+        </p>
+      )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((s, i) => (
@@ -141,7 +187,18 @@ export default function StudentsPage() {
 
       {loading ? <TableSkeleton rows={6} cols={4} /> :
         filtered.length === 0 ? (
-          <EmptyState icon={search ? UserX : Users} title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')} />
+          <EmptyState
+            icon={search ? UserX : Users}
+            title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')}
+            description={!search ? t('شارك رابط منصتك، أو أنشئ بطاقة تسجيل برمز QR ليظهر طلابك هنا.', 'Share your platform link, or create a QR registration card to see your students here.') : undefined}
+            action={!search ? (
+              <a href="/teacher/cards">
+                <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                  <Ticket className="h-4 w-4" /> {t('أنشئ بطاقة تسجيل', 'Create a registration card')}
+                </Button>
+              </a>
+            ) : undefined}
+          />
         ) : (
           <div className="grid gap-4">
             {filtered.map((s) => (
@@ -314,5 +371,15 @@ export default function StudentsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function StudentsPage() {
+  // `useSearchParams` requires a Suspense boundary in this Next version; the
+  // fallback keeps the shell from flashing while the params resolve.
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl p-6"><TableSkeleton rows={6} cols={4} /></div>}>
+      <StudentsPageInner />
+    </Suspense>
   );
 }

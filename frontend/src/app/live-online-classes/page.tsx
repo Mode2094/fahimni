@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
@@ -84,7 +84,7 @@ export default function LiveOnlineClassesPage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="أنشئ أول حصة مباشرة خلال دقائق"
           text="سجّل مجاناً، حدد موعد حصة، وأرسل رابطها لطلابك. لاحظ الفرق بين تنظيم الحصص داخل منصتك وتنظيمها عبر رسائل مبعثرة."
           primaryLabel="ابدأ مجاناً"
@@ -114,7 +114,7 @@ export default function LiveOnlineClassesPage() {
 
         <Faq title="أسئلة شائعة عن الحصص المباشرة" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="حصة مباشرة اليوم، منصة دائمة بعدها"
           text="ابدأ بتجربة حصة واحدة عبر Google Meet من منصتك، وسترى كيف تتجمع كل أدوات التدريس لديك في مكان واحد."
           primaryLabel="أنشئ حسابك مجاناً"

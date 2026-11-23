@@ -19,6 +19,7 @@ class LessonResource extends JsonResource
             'is_published' => $this->is_published,
             'is_free_preview' => $this->is_free_preview,
             'lesson_type' => $this->lesson_type,
+            'metadata' => $this->metadata ?? [],
             'contents_count' => $this->whenCounted('contents'),
             'contents' => LessonContentResource::collection($this->whenLoaded('contents')),
             'created_at' => $this->created_at,

@@ -13,6 +13,7 @@
     "test:bff": "node --test scripts/bff-origin.test.ts",
     "test:scripts": "node --test scripts/*.test.ts",
     "test:ui": "vitest run",
+    "test:e2e": "playwright test",
     "test:unit": "npm run test:scripts && vitest run"
   },
   "dependencies": {
@@ -31,9 +32,11 @@
     "server-only": "^0.0.1",
     "sonner": "^2.0.0",
     "tailwind-merge": "^3.6.0",
+    "tus-js-client": "^4.3.1",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/postcss": "^4.0.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",

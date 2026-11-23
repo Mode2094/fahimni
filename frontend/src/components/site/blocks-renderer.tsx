@@ -1,18 +1,22 @@
 'use client';
 
-import { useLocale } from '@/store/locale';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { CheckCircle2, CreditCard, LayoutDashboard, Loader2, Quote, Star, Users, Clock, BookOpen, Sparkles, ChevronDown } from 'lucide-react';
-import { Latex } from '@/components/exam/latex';
 import { useState } from 'react';
+import { useLocale } from '@/store/locale';
+import { Button } from '@/components/ui/button';
+import { Quote, BookOpen, Sparkles, ChevronDown, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
+import { CourseCard, ActivationPanel, SectionHeading } from '@/components/site/storefront';
 
-const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
-
-export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font, headingFont, loggedIn, courses, onRedeem, cardCode, setCardCode, redeeming, redeemedMsg }: {
+/**
+ * Renders a teacher-built page (block builder). Shares the exact same
+ * CourseCard / activation panel / headings as the default landing so the
+ * two paths can never drift apart, and — like the landing — shows only
+ * real data (no invented ratings or stats).
+ */
+export function BlocksRenderer({
+  blocks, site, slug, primary, accent, dark, font, headingFont, loggedIn, courses,
+  enrolledIds, onRedeem, cardCode, setCardCode, redeeming, redeemedMsg, cardError,
+}: {
   blocks: any[];
   site: any;
   slug: string;
@@ -23,18 +27,20 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
   headingFont: string;
   loggedIn: boolean;
   courses: any[];
+  enrolledIds: Set<string>;
   onRedeem: () => void;
   cardCode: string;
   setCardCode: (v: string) => void;
   redeeming: boolean;
   redeemedMsg: string;
+  cardError: string;
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
-  const pad = (b: any) => b?.padding === 'lg' ? 'py-20' : b?.padding === 'sm' ? 'py-8' : 'py-14';
-  const alignCls = (b: any) => b?.align === 'center' ? 'text-center' : b?.align === 'left' ? 'text-left' : 'text-center';
+  const pad = (b: any) => (b?.padding === 'lg' ? 'py-20' : b?.padding === 'sm' ? 'py-8' : 'py-14 sm:py-20');
+  const alignCls = (b: any) => (b?.align === 'left' ? 'text-left' : 'text-center');
   const bgCls = (b: any) => {
     if (b?.bg === 'dark') return { background: dark, color: '#fff' };
     if (b?.bg === 'light') return { background: '#f8fafc', color: '#0f172a' };
@@ -52,12 +58,27 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         if (b.type === 'hero') {
           return (
             <section key={bi} className="relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${d.bg_dark ? d.bg_dark : dark}, ${dark})` }}>
-              {d.image && <img src={d.image} className="absolute inset-0 w-full h-full object-cover opacity-20" alt="" />}
-              <div className={`relative max-w-7xl mx-auto px-4 ${pad(b)} ${alignCls(b)}`}>
-                {d.badge && <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/10 border border-white/10 text-white/80 text-sm mb-6 ${alignCls(b) === 'text-center' ? '' : ''}`}><Sparkles className="h-4 w-4" style={{ color: accent }} />{d.badge}</div>}
-                <h1 className="text-4xl sm:text-6xl font-bold text-white leading-tight mb-5 max-w-3xl mx-auto" style={{ fontFamily: headingFont }}>{d.title || site.name}</h1>
-                {d.subtitle && <p className="text-lg text-white/70 max-w-2xl mx-auto mb-8">{d.subtitle}</p>}
-                <a href={loggedIn ? '#card' : `/t/${slug}/register`}><Button size="lg" className="h-14 px-10 rounded-full text-white text-base shadow-xl" style={{ background: primary }}>{d.button_text || t('ابدأ الآن', 'Start now')}</Button></a>
+              {d.image && <img src={d.image} className="absolute inset-0 h-full w-full object-cover opacity-20" alt="" />}
+              <div className={`relative mx-auto max-w-7xl px-4 ${pad(b)} ${alignCls(b)}`}>
+                {d.badge && (
+                  <div className={`mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-sm text-white/80`}>
+                    <Sparkles className="h-4 w-4" style={{ color: accent }} />{d.badge}
+                  </div>
+                )}
+                <h1 className="mx-auto mb-5 max-w-3xl text-3xl font-bold leading-tight text-white sm:text-5xl lg:text-6xl" style={{ fontFamily: headingFont }}>{d.title || site.name}</h1>
+                {d.subtitle && <p className="mx-auto mb-8 max-w-2xl text-base text-white/70 sm:text-lg">{d.subtitle}</p>}
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <a href="#courses" className="inline-flex">
+                    <Button size="lg" className="h-14 min-h-[48px] rounded-full px-8 text-white shadow-xl" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+                      {t('استكشف الكورسات', 'Browse courses')} <BookOpen className="h-5 w-5" />
+                    </Button>
+                  </a>
+                  <a href={loggedIn ? '#card' : `/t/${slug}/register`} className="inline-flex">
+                    <Button size="lg" variant="outline" className="h-14 min-h-[48px] rounded-full border-2 border-white/30 bg-white/10 px-8 text-white backdrop-blur-sm hover:bg-white/20">
+                      {d.button_text || t('سجل الآن', 'Register now')}
+                    </Button>
+                  </a>
+                </div>
               </div>
             </section>
           );
@@ -66,10 +87,10 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         // ── TEXT ──────────────────────────────
         if (b.type === 'text') {
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className={`max-w-4xl mx-auto px-4 ${alignCls(b)}`}>
-                {d.heading && <h2 className="text-3xl sm:text-4xl font-bold mb-4" style={{ fontFamily: headingFont }}>{d.heading}</h2>}
-                {d.paragraph && <p className="text-lg leading-relaxed opacity-80">{d.paragraph}</p>}
+            <section key={bi} className={pad(b)} style={style}>
+              <div className={`mx-auto max-w-4xl px-4 ${alignCls(b)}`}>
+                {d.heading && <h2 className="mb-4 text-2xl font-bold sm:text-3xl lg:text-4xl" style={{ fontFamily: headingFont }}>{d.heading}</h2>}
+                {d.paragraph && <p className="text-base leading-relaxed opacity-80 sm:text-lg">{d.paragraph}</p>}
               </div>
             </section>
           );
@@ -78,10 +99,10 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         // ── IMAGE ─────────────────────────────
         if (b.type === 'image') {
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className={`max-w-4xl mx-auto px-4 ${alignCls(b)}`}>
-                {d.url ? <img src={d.url} className="w-full rounded-3xl shadow-2xl object-cover" style={{ maxHeight: d.height || 420 }} alt="" /> : <div className="h-40 bg-gray-100 rounded-3xl flex items-center justify-center text-gray-300">🖼️</div>}
-                {d.caption && <p className="text-sm opacity-60 mt-3">{d.caption}</p>}
+            <section key={bi} className={pad(b)} style={style}>
+              <div className={`mx-auto max-w-4xl px-4 ${alignCls(b)}`}>
+                {d.url ? <img src={d.url} className="w-full rounded-3xl object-cover shadow-2xl" style={{ maxHeight: d.height || 420 }} alt="" /> : <div className="flex h-40 items-center justify-center rounded-3xl bg-slate-100 text-slate-300">🖼️</div>}
+                {d.caption && <p className="mt-3 text-sm opacity-60">{d.caption}</p>}
               </div>
             </section>
           );
@@ -94,27 +115,28 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
           const vimeo = vurl.match(/vimeo\.com\/(\d+)/);
           const embed = yt ? `https://www.youtube.com/embed/${yt[1]}` : vimeo ? `https://player.vimeo.com/video/${vimeo[1]}` : vurl;
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className="max-w-4xl mx-auto px-4">
-                {d.title && <h2 className="text-3xl font-bold mb-6 text-center" style={{ fontFamily: headingFont }}>{d.title}</h2>}
-                <div className="aspect-video rounded-3xl overflow-hidden shadow-2xl">
-                  {embed ? <iframe src={embed} className="w-full h-full" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen /> : <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-300">🎬</div>}
+            <section key={bi} className={pad(b)} style={style}>
+              <div className="mx-auto max-w-4xl px-4">
+                {d.title && <h2 className="mb-6 text-center text-2xl font-bold sm:text-3xl" style={{ fontFamily: headingFont }}>{d.title}</h2>}
+                <div className="aspect-video overflow-hidden rounded-3xl shadow-2xl">
+                  {embed ? <iframe src={embed} className="h-full w-full" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen /> : <div className="flex h-full w-full items-center justify-center bg-slate-100 text-slate-300">🎬</div>}
                 </div>
               </div>
             </section>
           );
         }
 
-        // ── STATS ─────────────────────────────
+        // ── STATS (real, teacher-entered numbers only) ──
         if (b.type === 'stats') {
-          const stats = d.stats || [{ value: '+100', label: 'طالب' }, { value: '+20', label: 'كورس' }, { value: '4.9', label: 'تقييم' }, { value: '24/7', label: 'دعم' }];
+          const stats = Array.isArray(d.stats) ? d.stats : [];
+          if (stats.length === 0) return null;
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className="max-w-5xl mx-auto px-4 grid grid-cols-2 sm:grid-cols-4 gap-6">
-                {stats.map((s: any, i: number) => (
-                  <div key={i} className="text-center">
-                    <div className="text-3xl sm:text-4xl font-bold" style={{ color: primary, fontFamily: headingFont }}>{s.value}</div>
-                    <div className="opacity-60 text-sm mt-1">{s.label}</div>
+            <section key={bi} className={pad(b)} style={style}>
+              <div className="mx-auto grid max-w-5xl grid-cols-2 gap-3 px-4 sm:grid-cols-4 sm:gap-5">
+                {stats.slice(0, 4).map((s: any, i: number) => (
+                  <div key={i} className="rounded-2xl border border-slate-100 bg-white p-4 text-center shadow-sm">
+                    <div className="text-2xl font-black tabular-nums sm:text-4xl" style={{ color: primary, fontFamily: headingFont }}>{s.value}</div>
+                    <div className="mt-1.5 text-xs opacity-60 sm:text-sm">{s.label}</div>
                   </div>
                 ))}
               </div>
@@ -125,14 +147,14 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         // ── ABOUT ─────────────────────────────
         if (b.type === 'about') {
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className="max-w-6xl mx-auto px-4 grid md:grid-cols-2 gap-10 items-center">
+            <section key={bi} className={pad(b)} style={style}>
+              <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 md:grid-cols-2">
                 <div>
-                  <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: `${primary}15`, color: primary }}>{t('من نحن', 'About us')}</div>
-                  <h2 className="text-3xl font-bold mb-4" style={{ fontFamily: headingFont }}>{d.title || t('قصتنا', 'Our story')}</h2>
-                  <p className="opacity-70 leading-relaxed">{d.text || ''}</p>
+                  <div className="mb-4 inline-block rounded-full px-4 py-1.5 text-sm font-medium" style={{ backgroundColor: `${primary}15`, color: primary }}>{t('من نحن', 'About us')}</div>
+                  <h2 className="mb-4 text-2xl font-bold sm:text-3xl" style={{ fontFamily: headingFont }}>{d.title || t('قصتنا', 'Our story')}</h2>
+                  <p className="leading-relaxed opacity-70">{d.text || ''}</p>
                 </div>
-                {d.image && <img src={d.image} className="rounded-3xl shadow-2xl w-full object-cover aspect-[4/3]" alt="" />}
+                {d.image && <img src={d.image} className="aspect-[4/3] w-full rounded-3xl object-cover shadow-2xl" alt="" />}
               </div>
             </section>
           );
@@ -141,30 +163,20 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         // ── COURSES ───────────────────────────
         if (b.type === 'courses') {
           return (
-            <section key={bi} id="courses" className={`${pad(b)}`} style={style}>
-              <div className="max-w-7xl mx-auto px-4">
-                <h2 className="text-3xl sm:text-4xl font-bold text-center mb-12" style={{ fontFamily: headingFont }}>{d.title || t('كورساتنا', 'Our courses')}</h2>
+            <section key={bi} id="courses" className={`scroll-mt-20 ${pad(b)}`} style={style}>
+              <div className="mx-auto max-w-7xl px-4">
+                <div className="mb-10 sm:mb-12">
+                  <SectionHeading title={d.title || t('كورساتنا', 'Our courses')} primary={primary} headingFont={headingFont} />
+                </div>
                 {courses.length === 0 ? (
-                  <Card><CardContent className="text-center py-12 opacity-50"><BookOpen className="h-12 w-12 mx-auto mb-4" /><p>{t('لا توجد كورسات بعد', 'No courses yet')}</p></CardContent></Card>
+                  <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50/60 px-6 py-14 text-center">
+                    <BookOpen className="h-12 w-12 text-slate-300" />
+                    <p className="text-lg font-bold">{t('لا توجد كورسات منشورة بعد', 'No published courses yet')}</p>
+                  </div>
                 ) : (
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {courses.map((c) => (
-                      <Card key={c.id} className="border-0 shadow-sm overflow-hidden card-hover bg-white" style={{ color: '#0f172a' }}>
-                        <div className="h-32 relative flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}>
-                          <BookOpen className="h-12 w-12 opacity-40" style={{ color: primary }} />
-                          {Number(c.price) > 0 && <Badge className="absolute top-3 start-3 text-white border-0 shadow-lg" style={{ background: primary }}>{c.price} {c.currency}</Badge>}
-                        </div>
-                        <CardContent className="p-5">
-                          <h3 className="font-semibold">{c.title}</h3>
-                          <p className="text-sm text-gray-500 mt-1 line-clamp-2">{c.short_description || c.description}</p>
-                          <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
-                            <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{c.duration_hours || 0} {t('س', 'h')}</span>
-                            <span className="flex items-center gap-1"><Users className="h-3 w-3" />{c.sections_count ?? 0} {t('أقسام', 'sections')}</span>
-                            <span className="flex items-center gap-1"><Star className="h-3 w-3 text-yellow-400" />4.8</span>
-                          </div>
-                          <Link href={`/t/${slug}/register?course=${c.id}`}><Button className="w-full rounded-full mt-4 text-white" style={{ background: primary }}>{t('سجل الآن', 'Enroll now')}</Button></Link>
-                        </CardContent>
-                      </Card>
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {courses.map((c: any) => (
+                      <CourseCard key={c.id} course={c} slug={slug} primary={primary} accent={accent} radius="1rem" headingFont={headingFont} enrolled={enrolledIds.has(String(c.id))} />
                     ))}
                   </div>
                 )}
@@ -176,47 +188,46 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         // ── CARD (activation) ─────────────────
         if (b.type === 'card') {
           return (
-            <section key={bi} id="card" className={`${pad(b)}`} style={style}>
-              <div className="max-w-3xl mx-auto px-4 text-center">
-                <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 border border-white/10"><CreditCard className="h-7 w-7" style={{ color: accent }} /></div>
-                <h2 className="text-2xl sm:text-3xl font-bold mb-3" style={{ fontFamily: headingFont }}>{d.title || t('عندك بطاقة تسجيل؟', 'Got an activation card?')}</h2>
-                <p className="opacity-70 max-w-md mx-auto mb-8">{d.text || t('أدخل رمز البطاقة وستسجل في كورسك فوراً', 'Enter the card code to enroll instantly')}</p>
-                {!loggedIn ? (
-                  <Link href={`/t/${slug}/register`}><Button size="lg" className="h-12 px-8 rounded-full text-white shadow-xl" style={{ background: primary }}>{t('سجل حساباً أولاً', 'Create an account first')}</Button></Link>
-                ) : (
-                  <div className="max-w-md mx-auto space-y-3">
-                    <div className="flex gap-2">
-                      <Input value={cardCode} onChange={(e) => setCardCode(e.target.value)} placeholder={t('رمز البطاقة', 'Card code')} className="h-12 bg-white/10 border-white/20 text-white placeholder:text-white/40 rounded-xl font-mono uppercase text-center" dir="ltr" />
-                      <Button className="h-12 px-6 rounded-xl text-white" style={{ background: primary }} onClick={onRedeem} disabled={redeeming}>{redeeming ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}{t('تفعيل', 'Activate')}</Button>
-                    </div>
-                    {redeemedMsg && <div className="flex items-center gap-2 p-3 rounded-xl bg-green-500/15 text-green-300 text-sm text-right"><CheckCircle2 className="h-4 w-4 shrink-0" />{redeemedMsg}</div>}
-                    <Link href="/my-learning" className="block"><Button variant="outline" className="w-full rounded-xl border-white/20 text-white hover:bg-white/10 gap-2"><LayoutDashboard className="h-4 w-4" />{t('لوحة التحكم', 'Dashboard')}</Button></Link>
-                  </div>
-                )}
-              </div>
-            </section>
+            <ActivationPanel
+              key={bi}
+              loggedIn={loggedIn}
+              slug={slug}
+              primary={primary}
+              accent={accent}
+              headingFont={headingFont}
+              radius="1rem"
+              value={cardCode}
+              onChange={setCardCode}
+              submitting={redeeming}
+              successMessage={redeemedMsg}
+              error={cardError}
+              onSubmit={onRedeem}
+              title={d.title}
+              text={d.text}
+            />
           );
         }
 
-        // ── TESTIMONIALS ──────────────────────
+        // ── TESTIMONIALS (teacher-entered, never fabricated) ──
         if (b.type === 'testimonials') {
-          const items = d.items || [];
+          const items = Array.isArray(d.items) ? d.items.filter((x: any) => x?.text) : [];
+          if (items.length === 0) return null;
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className="max-w-5xl mx-auto px-4">
-                <h2 className="text-3xl font-bold text-center mb-12" style={{ fontFamily: headingFont }}>{d.title || t('ماذا يقول طلابنا', 'What our students say')}</h2>
-                <div className="grid md:grid-cols-3 gap-6">
+            <section key={bi} className={pad(b)} style={style}>
+              <div className="mx-auto max-w-5xl px-4">
+                <div className="mb-10">
+                  <SectionHeading title={d.title || t('ماذا يقول طلابنا', 'What our students say')} primary={primary} headingFont={headingFont} />
+                </div>
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map((tm: any, i: number) => (
-                    <Card key={i} className="border-0 shadow-sm p-6 bg-white" style={{ color: '#0f172a' }}>
-                      <CardContent className="p-0">
-                        <Quote className="h-6 w-6 mb-3" style={{ color: primary }} />
-                        <p className="text-gray-600 text-sm leading-relaxed mb-5">{tm.text}</p>
-                        <div className="flex items-center gap-2">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-full text-white text-xs font-bold" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>{tm.name?.[0] || '?'}</div>
-                          <span className="font-semibold text-sm">{tm.name}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <figure key={i} className="flex h-full flex-col rounded-3xl border border-slate-100 bg-white p-6 shadow-sm" style={{ color: '#0f172a' }}>
+                      <Quote className="mb-3 h-6 w-6" style={{ color: primary }} />
+                      <blockquote className="mb-5 flex-1 text-sm leading-relaxed text-slate-600">{tm.text}</blockquote>
+                      <figcaption className="flex items-center gap-2">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>{tm.name?.[0] || '?'}</div>
+                        <span className="text-sm font-semibold">{tm.name}</span>
+                      </figcaption>
+                    </figure>
                   ))}
                 </div>
               </div>
@@ -226,19 +237,22 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
 
         // ── FAQ ───────────────────────────────
         if (b.type === 'faq') {
-          const items = d.items || [];
+          const items = Array.isArray(d.items) ? d.items.filter((x: any) => x?.q) : [];
+          if (items.length === 0) return null;
           return (
-            <section key={bi} id="faq" className={`${pad(b)}`} style={style}>
-              <div className="max-w-3xl mx-auto px-4">
-                <h2 className="text-3xl font-bold text-center mb-10" style={{ fontFamily: headingFont }}>{d.title || t('الأسئلة الشائعة', 'FAQ')}</h2>
+            <section key={bi} id="faq" className={`scroll-mt-20 ${pad(b)}`} style={style}>
+              <div className="mx-auto max-w-3xl px-4">
+                <div className="mb-8">
+                  <SectionHeading title={d.title || t('الأسئلة الشائعة', 'FAQ')} primary={primary} headingFont={headingFont} />
+                </div>
                 <div className="space-y-3">
                   {items.map((f: any, i: number) => (
-                    <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden" style={{ color: '#0f172a' }}>
-                      <button onClick={() => setOpenFaq(openFaq === i ? null : i)} className="w-full flex items-center justify-between gap-4 p-5 text-right">
+                    <div key={i} className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm" style={{ color: '#0f172a' }}>
+                      <button onClick={() => setOpenFaq(openFaq === i ? null : i)} aria-expanded={openFaq === i} className="flex min-h-[56px] w-full items-center justify-between gap-4 p-5 text-start">
                         <span className="font-semibold">{f.q}</span>
-                        <ChevronDown className={`h-5 w-5 transition-transform shrink-0 ${openFaq === i ? 'rotate-180' : ''}`} style={{ color: primary }} />
+                        <ChevronDown className={`h-5 w-5 shrink-0 transition-transform ${openFaq === i ? 'rotate-180' : ''}`} style={{ color: primary }} />
                       </button>
-                      {openFaq === i && <div className="px-5 pb-5 text-gray-500 text-sm leading-relaxed">{f.a}</div>}
+                      {openFaq === i && <div className="px-5 pb-5 text-sm leading-relaxed text-slate-500">{f.a}</div>}
                     </div>
                   ))}
                 </div>
@@ -250,11 +264,24 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         // ── CTA ───────────────────────────────
         if (b.type === 'cta') {
           return (
-            <section key={bi} className={`${pad(b)}`} style={style}>
-              <div className="max-w-4xl mx-auto px-4 text-center">
-                <h2 className="text-3xl sm:text-4xl font-bold mb-4" style={{ fontFamily: headingFont }}>{d.title || t('جاهز تبدأ؟', 'Ready to start?')}</h2>
-                {d.text && <p className="opacity-70 mb-8">{d.text}</p>}
-                <a href={loggedIn ? '#card' : `/t/${slug}/register`}><Button size="lg" className="h-14 px-12 rounded-full text-white text-base shadow-xl" style={{ background: primary }}>{d.button_text || t('سجل الآن', 'Register now')}</Button></a>
+            <section key={bi} className={pad(b)} style={style}>
+              <div className="mx-auto max-w-4xl px-4 text-center">
+                <h2 className="mb-4 text-2xl font-bold sm:text-3xl lg:text-4xl" style={{ fontFamily: headingFont }}>{d.title || t('جاهز تبدأ؟', 'Ready to start?')}</h2>
+                {d.text && <p className="mb-8 opacity-70">{d.text}</p>}
+                <div className="flex flex-wrap justify-center gap-3">
+                  <a href={loggedIn ? '#card' : `/t/${slug}/register`} className="inline-flex">
+                    <Button size="lg" className="h-14 min-h-[48px] rounded-full px-10 text-white shadow-xl" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+                      {d.button_text || t('سجل الآن', 'Register now')}
+                    </Button>
+                  </a>
+                  {loggedIn && (
+                    <Link href="/my-learning" className="inline-flex">
+                      <Button size="lg" variant="outline" className="h-14 min-h-[48px] rounded-full px-8">
+                        <LayoutDashboard className="h-5 w-5" /> {t('كورساتي', 'My courses')}
+                      </Button>
+                    </Link>
+                  )}
+                </div>
               </div>
             </section>
           );
@@ -264,7 +291,7 @@ export function BlocksRenderer({ blocks, site, slug, primary, accent, dark, font
         if (b.type === 'divider') {
           return (
             <div key={bi} className="px-4" style={{ background: style.background }}>
-              <div className="max-w-5xl mx-auto" style={{ height: 1, background: d.color || '#e2e8f0', margin: 0 }} />
+              <div className="mx-auto max-w-5xl" style={{ height: 1, background: d.color || '#e2e8f0', margin: 0 }} />
             </div>
           );
         }

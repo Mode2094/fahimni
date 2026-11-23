@@ -1,11 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { ShieldAlert, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { getDeviceId } from '@/lib/device';
+import { canResume, shouldPersist, formatClock } from '@/lib/watch-position';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+/**
+ * واجهة تحكّم مكشوفة للمشغّل المحمي: تتيح للملاحظات قراءة الزمن الحالي
+ * والقفز إلى لحظة محفوظة. القفز يستخدم عنصر `<video>` الموجود نفسه — لا نتجاوز
+ * الحماية ولا نجلب أي نسخة من الفيديو.
+ */
+export type ProtectedVideoHandle = {
+  /** الزمن الحالي بالثواني، أو null إن لم يصبح المشغّل جاهزاً بعد. */
+  getCurrentTime: () => number | null;
+  /** مدة الفيديو بالثواني، أو null إن لم تُعرف بعد. */
+  getDuration: () => number | null;
+  /** يقفز إلى الثواني المطلوبة ويبدأ التشغيل؛ يعيد هل نجح القفز. */
+  seekTo: (seconds: number) => boolean;
+};
+
+export type ProtectedVideoPlayerProps = {
+  videoId: string;
+};
 
 /** Extract the 11-char video id from any YouTube URL (watch, youtu.be, shorts, embed). */
 function youtubeId(input: string): string {
@@ -45,7 +64,12 @@ type Playback = {
     pause_on_hidden?: boolean;
     block_picture_in_picture?: boolean;
   };
+  /** آخر موضع مشاهدة للطالب نفسه (استكمال من حيث توقف) — يُهمَل عند المنتهي. */
+  resume?: { position_seconds: number; duration_seconds: number; updated_at?: string | null } | null;
 };
+
+/* حفظ دوري خفيف لموضع المشاهدة + حفظ عند الإيقاف/الخروج. */
+const POSITION_PING_MS = 10_000;
 
 /* مواقع العلامة المائية — تتنقل بينها ببطء وسلاسة */
 const WATERMARK_POSITIONS = [
@@ -63,7 +87,8 @@ const SPEED_CONFIG: Record<string, { interval: number; transition: number }> = {
   fast: { interval: 3500, transition: 2000 },
 };
 
-export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
+const ProtectedVideoPlayer = forwardRef<ProtectedVideoHandle, ProtectedVideoPlayerProps>(
+function ProtectedVideoPlayer({ videoId }, ref) {
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [blurred, setBlurred] = useState(false);
@@ -72,8 +97,17 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [wmPos, setWmPos] = useState(0);
   const hlsRef = useRef<Hls | null>(null);
+  // المصدر المُنتظَر: في التحميل الأول لا يكون عنصر <video> موجودًا بعد (تظهر
+  // شاشة التحميل)، فنتذكّر المصدر ونربطه بعد أن يُركَّب العنصر في الـ DOM.
+  const pendingSource = useRef<{ url: string; kind: Playback['type']; preserve: boolean; startAt?: number } | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wmTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const posTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // الاستكمال: الموضع الذي استُكمل منه + ما إذا اختار الطالب البدء من البداية.
+  const [resumedFrom, setResumedFrom] = useState<number | null>(null);
+  const [startOver, setStartOver] = useState(false);
+  const startOverRef = useRef(false);
+  const lastSavedRef = useRef<number>(0);
 
   /* ملء الشاشة الحقيقي بالفيديو */
   useEffect(() => {
@@ -125,16 +159,20 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     }
   }, []);
 
-  const attachSource = useCallback((url: string, kind: Playback['type'], preserveTime: boolean) => {
+  const attachSource = useCallback((url: string, kind: Playback['type'], preserveTime: boolean, startAt?: number) => {
     const v = videoRef.current;
     if (!v) return;
 
     const prevTime = preserveTime ? v.currentTime : undefined;
     const wasPlaying = preserveTime ? !v.paused : false;
+    // عند التحميل الأول من نقطة استئناف: نقفز للموضع فور جهوزية البيانات
+    // الوصفية دون تشغيل تلقائي (يواصل الطالب بنفسه).
+    const initialTime = !preserveTime && startAt && startAt > 0 ? startAt : undefined;
     const seek = (time: number | undefined, play: boolean) => {
       if (time !== undefined) v.currentTime = time;
       if (play) v.play().catch(() => {});
     };
+    const restore = () => seek(preserveTime ? prevTime : initialTime, preserveTime ? wasPlaying : false);
 
     destroyHls();
 
@@ -142,9 +180,8 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     // أما HLS (provider=بني/كلاودفلير) فيُشغَّل عبر hls.js أو native على Safari.
     if (kind === 'stream') {
       v.src = url;
-      if (preserveTime) {
-        const onMeta = () => seek(prevTime, wasPlaying);
-        v.addEventListener('loadedmetadata', onMeta, { once: true });
+      if (preserveTime || initialTime !== undefined) {
+        v.addEventListener('loadedmetadata', restore, { once: true });
       }
       return;
     }
@@ -160,20 +197,26 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
           destroyHls();
         }
       });
-      if (preserveTime) {
-        const onManifest = () => seek(prevTime, wasPlaying);
-        hls.on(Hls.Events.MANIFEST_PARSED, onManifest);
+      if (preserveTime || initialTime !== undefined) {
+        hls.on(Hls.Events.MANIFEST_PARSED, restore);
       }
     } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
       v.src = url;
-      if (preserveTime) {
-        const onMeta = () => seek(prevTime, wasPlaying);
-        v.addEventListener('loadedmetadata', onMeta, { once: true });
+      if (preserveTime || initialTime !== undefined) {
+        v.addEventListener('loadedmetadata', restore, { once: true });
       }
     } else {
       setError('error');
     }
   }, [destroyHls]);
+
+  // يُربط المصدر بعد أن يصبح عنصر <video> مركَّبًا فعلاً في الصفحة.
+  const applyPendingSource = useCallback(() => {
+    const pending = pendingSource.current;
+    if (!pending || !videoRef.current) return;
+    pendingSource.current = null;
+    attachSource(pending.url, pending.kind, pending.preserve, pending.startAt);
+  }, [attachSource]);
 
   const loadPlayback = useCallback(async (preserveTime: boolean) => {
     const tid = localStorage.getItem('tenant_id');
@@ -203,7 +246,18 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
       }
 
       if (p.stream_url) {
-        attachSource(p.stream_url, p.type, preserveTime);
+        // الاستكمال: عند التحميل الأول فقط، ومن نقطة استئناف سارية (ولم يُختر
+        // البدء من البداية)، نقفز إلى آخر موضع محفوظ للطالب نفسه.
+        const resumeAt = !preserveTime && !startOverRef.current && canResume(p.resume)
+          ? Math.floor(Number(p.resume?.position_seconds ?? 0))
+          : 0;
+        pendingSource.current = {
+          url: p.stream_url,
+          kind: p.type,
+          preserve: preserveTime,
+          startAt: resumeAt > 0 ? resumeAt : undefined,
+        };
+        if (resumeAt > 0 && !preserveTime) setResumedFrom(resumeAt);
       }
 
       if (p.expires_in && p.expires_in > 0) {
@@ -215,6 +269,66 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     }
   }, [videoId, attachSource]);
 
+  // حفظ موضع المشاهدة (نبضة خفيفة): لا يرمي ولا يعطّل التشغيل عند الفشل.
+  const savePosition = useCallback((useKeepalive = false) => {
+    const v = videoRef.current;
+    if (!v || !isFinite(v.currentTime)) return;
+    const position = Math.floor(v.currentTime);
+    const duration = isFinite(v.duration) ? Math.floor(v.duration) : 0;
+    // لا نبضة بلا تقدّم فعلي (تخفيف الطلبات).
+    if (!shouldPersist(position, lastSavedRef.current)) return;
+    lastSavedRef.current = position;
+
+    const tid = localStorage.getItem('tenant_id');
+    try {
+      fetch(`${API}/videos/${videoId}/position`, {
+        method: 'POST',
+        keepalive: useKeepalive,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(tid ? { 'X-Tenant-Id': tid } : {}),
+        },
+        body: JSON.stringify({ position_seconds: position, duration_seconds: duration }),
+      }).catch(() => {});
+    } catch {
+      /* الفشل لا يجب أن يوقف التشغيل */
+    }
+  }, [videoId]);
+
+  // نبضة دورية أثناء التشغيل + حفظ عند الإيقاف/الانتهاء/مغادرة الصفحة.
+  useEffect(() => {
+    const onPause = () => savePosition(false);
+    const onEnded = () => savePosition(false);
+    const onHide = () => { if (document.hidden) savePosition(true); };
+    const onPageHide = () => savePosition(true);
+
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onPageHide);
+
+    posTimer.current = setInterval(() => {
+      const v = videoRef.current;
+      if (v && !v.paused && !v.ended) savePosition(false);
+    }, POSITION_PING_MS);
+
+    const v = videoRef.current;
+    v?.addEventListener('pause', onPause);
+    v?.addEventListener('ended', onEnded);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onPageHide);
+      v?.removeEventListener('pause', onPause);
+      v?.removeEventListener('ended', onEnded);
+      if (posTimer.current) clearInterval(posTimer.current);
+      savePosition(true);
+    };
+  }, [savePosition, playback]);
+
+  useEffect(() => {
+    startOverRef.current = startOver;
+  }, [startOver]);
+
   useEffect(() => {
     loadPlayback(false);
     return () => {
@@ -223,6 +337,39 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
       destroyHls();
     };
   }, [loadPlayback, destroyHls]);
+
+  // اربط المصدر بعد كل تغيّر في حالة التشغيل، أي بعد تركيب عنصر <video>.
+  useEffect(() => {
+    applyPendingSource();
+  }, [playback, applyPendingSource]);
+
+  // واجهة التحكّم المكشوفة للملاحظات: قراءة الزمن الحالي والقفز للّحظات المحفوظة.
+  useImperativeHandle(ref, () => ({
+    getCurrentTime: () => {
+      const v = videoRef.current;
+      if (!v || v.readyState < 1 || !isFinite(v.currentTime)) return null;
+      return v.currentTime;
+    },
+    getDuration: () => {
+      const v = videoRef.current;
+      if (!v || !isFinite(v.duration) || v.duration <= 0) return null;
+      return v.duration;
+    },
+    seekTo: (seconds: number) => {
+      const v = videoRef.current;
+      if (!v || !Number.isFinite(seconds) || seconds < 0) return false;
+      const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+      // لا نقفز إلى ما بعد نهاية الفيديو نفسه.
+      const target = dur > 0 ? Math.min(seconds, Math.max(0, dur - 0.5)) : seconds;
+      try {
+        v.currentTime = target;
+      } catch {
+        return false;
+      }
+      v.play().catch(() => {});
+      return true;
+    },
+  }), []);
 
   const protection = playback?.protection ?? {};
   const blockPip = protection.block_picture_in_picture ?? true;
@@ -436,9 +583,42 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
         </div>
       )}
 
+      {/* شريط الاستكمال: يعرض من أين تمت المتابعة، مع خيار البدء من البداية */}
+      {resumedFrom !== null && (
+        <div className="absolute top-3 start-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[11px] text-white/90 backdrop-blur">
+          <span>تم الاستكمال من {formatClock(resumedFrom)}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setStartOver(true);
+              setResumedFrom(null);
+              const v = videoRef.current;
+              if (v) {
+                v.currentTime = 0;
+                lastSavedRef.current = 0;
+                v.play().catch(() => {});
+              }
+            }}
+            className="rounded-full bg-white/15 px-2 py-0.5 font-medium transition-colors hover:bg-white/25"
+          >
+            البدء من البداية
+          </button>
+          <button
+            type="button"
+            onClick={() => setResumedFrom(null)}
+            aria-label="إخفاء"
+            className="text-white/60 transition-colors hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <div className="absolute top-2 end-2 px-2 py-0.5 rounded bg-black/50 text-[10px] text-white/70 pointer-events-none">
         محتوى محمي — يحظر التنزيل أو التصوير
       </div>
     </div>
   );
-}
+});
+
+export default ProtectedVideoPlayer;

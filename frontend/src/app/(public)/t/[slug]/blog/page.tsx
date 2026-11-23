@@ -5,6 +5,7 @@ import { use } from 'react';
 import { useLocale } from '@/store/locale';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import {
   Newspaper, Loader2, ArrowLeft, Calendar, Clock, Search, Tag, BookOpen,
   Sparkles, ArrowLeftCircle, ChevronLeft, GraduationCap, Menu, X, Users,
@@ -106,6 +107,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t('ابحث في المقالات...', 'Search articles...')}
+              aria-label={t('بحث', 'Search')}
               className="w-full h-12 rounded-full glass ps-11 pe-5 text-white placeholder:text-white/40 text-sm focus:outline-none focus:ring-2"
               style={{ ['--tw-ring-color' as any]: accent }}
             />
@@ -129,20 +131,18 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
         )}
 
         {filtered.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-gray-50 border border-gray-100">
-              <Newspaper className="h-10 w-10 text-gray-300" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-700">{t('لا توجد مقالات بعد', 'No posts yet')}</h3>
-            <p className="text-gray-400 text-sm mt-2 max-w-sm mx-auto">
-              {t('المعلم لم ينشر أي مقال حتى الآن — عُد لاحقاً أو اكتشف الكورسات', 'Your teacher has not published any articles yet — check back later or explore the courses')}
-            </p>
-            <Link href={`/t/${slug}#courses`} className="inline-block mt-6">
-              <Button className="gap-2 rounded-full text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
-                <BookOpen className="h-4 w-4" /> {t('تصفح الكورسات', 'Browse courses')}
-              </Button>
-            </Link>
-          </div>
+          <EmptyState
+            icon={Newspaper}
+            title={t('لا توجد مقالات بعد', 'No posts yet')}
+            description={t('المعلم لم ينشر أي مقال حتى الآن — عُد لاحقاً أو اكتشف الكورسات', 'Your teacher has not published any articles yet — check back later or explore the courses')}
+            action={
+              <Link href={`/t/${slug}#courses`} className="inline-block mt-2">
+                <Button className="gap-2 rounded-full text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+                  <BookOpen className="h-4 w-4" /> {t('تصفح الكورسات', 'Browse courses')}
+                </Button>
+              </Link>
+            }
+          />
         ) : (
           <>
             {/* المقال المميز */}
@@ -150,7 +150,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
               <Link href={`/t/${slug}/blog/${featured.slug}`} className="group block mb-12">
                 <div className="grid lg:grid-cols-2 gap-0 overflow-hidden rounded-[2rem] shadow-xl bg-white border border-gray-100 transition-all hover:shadow-2xl">
                   <div className="relative h-64 lg:h-auto overflow-hidden" style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}>
-                    {featured.cover_image ? <img src={featured.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt="" /> : (
+                    {featured.cover_image ? <img src={featured.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={featured.title} /> : (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #0d9488 1px, transparent 0)', backgroundSize: '22px 22px' }} />
                         <Newspaper className="h-20 w-20 opacity-40 transition-transform duration-500 group-hover:scale-110" style={{ color: primary }} />
@@ -182,7 +182,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
                 <Link key={p.id} href={`/t/${slug}/blog/${p.slug}`} className="group">
                   <div className="border-0 shadow-sm card-hover overflow-hidden h-full bg-white border border-gray-100 rounded-[1.5rem] flex flex-col">
                     <div className="h-44 relative overflow-hidden flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}>
-                      {p.cover_image ? <img src={p.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" /> : (
+                      {p.cover_image ? <img src={p.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt={p.title} /> : (
                         <>
                           <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #0d9488 1px, transparent 0)', backgroundSize: '20px 20px' }} />
                           <Newspaper className="h-12 w-12 opacity-40 transition-transform duration-500 group-hover:scale-110" style={{ color: primary }} />

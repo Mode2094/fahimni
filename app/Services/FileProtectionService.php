@@ -105,7 +105,7 @@ class FileProtectionService
 
         $enrollment = Enrollment::where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         if (! $enrollment) {

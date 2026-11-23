@@ -5,15 +5,22 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CommunityComment;
 use App\Models\CommunityThread;
+use App\Models\User;
 use App\Services\FeatureService;
+use App\Services\NotificationService;
 use App\Traits\CommunityPayloads;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\Uid\UuidV7;
 
 class CommunityCommentController extends Controller
 {
     use CommunityPayloads;
+
+    public function __construct(
+        private readonly NotificationService $notificationService,
+    ) {}
 
     private function tenantId(Request $request): string
     {
@@ -110,9 +117,59 @@ class CommunityCommentController extends Controller
         }
         $thread->update(['last_activity_at' => now()]);
 
+        $this->notifyParticipants($request, $thread, $parent, $user->id, $validated['body']);
+
         return response()->json([
             'comment' => $this->commentPayload($comment->load('author:id,name,avatar_url'), null, $user->id),
         ], 201);
+    }
+
+    /**
+     * Notify the thread author (and, for a reply, the parent comment author)
+     * once each — never the commenter themselves, so a burst of replies can
+     * not spam one mailbox. Runs best-effort: a notification failure must
+     * never make posting a comment fail.
+     */
+    private function notifyParticipants(
+        Request $request,
+        CommunityThread $thread,
+        ?CommunityComment $parent,
+        string $commenterId,
+        string $body,
+    ): void {
+        try {
+            $recipientIds = collect([$thread->user_id]);
+
+            if ($parent) {
+                $recipientIds->push($parent->user_id);
+            }
+
+            $recipientIds = $recipientIds
+                ->filter(fn ($id) => $id && $id !== $commenterId)
+                ->unique()
+                ->values();
+
+            if ($recipientIds->isEmpty()) {
+                return;
+            }
+
+            $users = User::whereIn('id', $recipientIds)->get();
+
+            $this->notificationService->dispatch(
+                notifiable: $users,
+                type: 'community.reply',
+                title: 'رد جديد في المجتمع',
+                body: Str::limit(trim($body), 140),
+                sender: $request->user(),
+                tenantId: $this->tenantId($request),
+                data: [
+                    'thread_id' => $thread->id,
+                    'action_url' => '/community/threads/'.$thread->id,
+                ],
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     public function update(Request $request, string $threadId, string $commentId): JsonResponse

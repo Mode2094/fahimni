@@ -7,12 +7,14 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
+import { postLoginPath } from '@/lib/auth-routes';
 import { resolveLogoUrl } from '@/lib/logo';
 import { t } from '@/lib/i18n';
 import { Eye, EyeOff, ArrowLeft, BookOpen, Trophy, Award, Sparkles, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import PlatformLogo from '@/components/brand/platform-logo';
 
@@ -27,6 +29,8 @@ function StudentLoginPageInner() {
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [captchaId, setCaptchaId] = useState('');
+  // The math CAPTCHA id is single-use server-side; remounting mints a fresh one.
+  const [captchaKey, setCaptchaKey] = useState(0);
   const router = useRouter();
   const search = useSearchParams();
   const tenantSlug = search.get('tenant_slug') || '';
@@ -34,7 +38,17 @@ function StudentLoginPageInner() {
   const from = search.get('from') || '';
   const login = useAuth((s) => s.login);
   const login2fa = useAuth((s) => s.login2fa);
+  const initialized = useAuth((s) => s.initialized);
+  const currentUser = useAuth((s) => s.user);
   const { locale } = useLocale();
+
+  useEffect(() => {
+    // Already signed in: skip the form entirely. This is what makes a PWA
+    // launch (or a bookmarked login URL) resume the existing session.
+    if (initialized && currentUser) {
+      router.replace(postLoginPath(currentUser, from));
+    }
+  }, [initialized, currentUser, from, router]);
 
   useEffect(() => {
     // Credentials are never persisted client-side — purge any legacy copy.
@@ -65,8 +79,7 @@ function StudentLoginPageInner() {
     const roles: string[] = user?.roles || [];
     if (user?.is_super_admin) router.push('/admin/dashboard');
     else if (roles.includes('Teacher')) router.push('/teacher/dashboard');
-    else if (from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/\\')) router.push(from);
-    else router.push('/my-learning');
+    else router.push(postLoginPath(user, from));
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -82,6 +95,7 @@ function StudentLoginPageInner() {
       await finishLogin();
     } catch (error: any) {
       setErr(error?.response?.data?.message || error?.message || (locale === 'ar' ? 'فشل الدخول' : 'Login failed'));
+      setCaptchaKey((k) => k + 1);
     }
     setLoad(false);
   };
@@ -94,16 +108,16 @@ function StudentLoginPageInner() {
       persistRemember();
       await finishLogin();
     } catch (error: any) {
-      setErr(error?.response?.data?.message || error?.message || '2FA');
+      setErr(error?.response?.data?.message || error?.message || (locale === 'ar' ? 'رمز التحقق غير صحيح' : 'Invalid 2FA code'));
     }
     setLoad(false);
   };
 
   return (
     <div className="min-h-screen flex">
-      <div className="hidden lg:flex lg:w-[460px] relative overflow-hidden shrink-0" style={{ background: 'linear-gradient(135deg, #0c4a6e 0%, #0e7490 50%, #0891b2 100%)' }}>
+      <div className="hidden lg:flex lg:w-[460px] relative overflow-hidden shrink-0" style={{ background: 'linear-gradient(135deg, #0f2e2b 0%, #115e54 55%, #0d9488 100%)' }}>
         <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-300/10 rounded-full blur-3xl" />
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-teal-300/10 rounded-full blur-3xl" />
           <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-emerald-300/10 rounded-full blur-3xl" />
         </div>
         <div className="relative z-10 flex flex-col justify-center px-12 w-full">
@@ -115,10 +129,10 @@ function StudentLoginPageInner() {
             )}
             <div><span className="text-xl font-bold text-white">{settings.platform_name || 'فهمني'}</span><p className="text-xs text-white/70">{locale === 'ar' ? 'منصة الطلاب' : 'Student Portal'}</p></div>
           </div>
-          <h1 className="text-4xl font-bold text-white leading-tight mb-6 animate-in">
+          <h2 className="text-4xl font-bold text-white leading-tight mb-6 animate-in">
             {locale === 'ar' ? 'رحلة تعلمك' : 'Your Learning'}
-            <br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-200 to-emerald-200">{locale === 'ar' ? 'تبدأ من هنا' : 'Journey Starts Here'}</span>
-          </h1>
+            <br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-teal-200 to-emerald-200">{locale === 'ar' ? 'تبدأ من هنا' : 'Journey Starts Here'}</span>
+          </h2>
           <p className="text-white/70 text-lg mb-10 animate-in animate-in-delay-1">{locale === 'ar' ? 'كورساتك، تقدمك، اختباراتك، وشهاداتك — في مكان واحد' : 'Courses, progress, exams & certificates in one place.'}</p>
           <div className="space-y-4 animate-in animate-in-delay-2">
             {[{ icon: BookOpen, text: locale === 'ar' ? 'مئات الكورسات المتاحة' : 'Hundreds of courses' }, { icon: Trophy, text: locale === 'ar' ? 'تتبع تقدمك خطوة بخطوة' : 'Track progress' }, { icon: Award, text: locale === 'ar' ? 'شهادات عند الإتمام' : 'Certificates' }, { icon: Sparkles, text: locale === 'ar' ? 'سجل بالبطاقة من معلمك' : 'Enroll via card' }].map((it, i) => (
@@ -133,41 +147,65 @@ function StudentLoginPageInner() {
         <div className="w-full max-w-md space-y-8">
           <div className="text-center">
             {settings.logo_url ? (
-              <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="mx-auto mb-5 h-16 w-16 rounded-2xl object-cover shadow-xl shadow-cyan-500/25" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+              <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="mx-auto mb-5 h-16 w-16 rounded-2xl object-cover shadow-xl shadow-teal-500/25" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
             ) : (
-              <PlatformLogo className="mx-auto mb-5 h-16 w-16 rounded-2xl object-contain shadow-xl shadow-cyan-500/25" />
+              <PlatformLogo className="mx-auto mb-5 h-16 w-16 rounded-2xl object-contain shadow-xl shadow-teal-500/25" />
             )}
             <h1 className="text-2xl sm:text-3xl font-bold">{locale === 'ar' ? 'بوابة الطلاب' : 'Student Portal'}</h1>
             <p className="text-gray-500 mt-2">{locale === 'ar' ? 'سجل دخولك لمتابعة تعلمك' : 'Sign in to continue learning'}</p>
           </div>
           <div className="mb-4"><GoogleLoginButton role="student" label="المتابعة عبر Google" /></div><form onSubmit={submit} className="space-y-5 bg-white p-6 sm:p-8 rounded-2xl border shadow-sm">
             <div className="space-y-2">
-              <Label className="text-sm font-medium">{t(locale, 'common.email')}</Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="student@example.com" />
+              <Label htmlFor="email" className="text-sm font-medium">{t(locale, 'common.email')}</Label>
+              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="student@example.com" />
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{t(locale, 'common.password')}</Label>
-                <a href="/forgot-password" className="text-xs text-cyan-600 hover:underline font-medium">{t(locale, 'common.forgotPassword')}</a>
+                <Label htmlFor="password" className="text-sm font-medium">{t(locale, 'common.password')}</Label>
+                <a href="/forgot-password" className="text-xs text-teal-600 hover:underline font-medium">{t(locale, 'common.forgotPassword')}</a>
               </div>
               <div className="relative">
-                <Input type={show ? 'text' : 'password'} value={pass} onChange={(e) => setPass(e.target.value)} required className="h-12 bg-gray-50 pe-11" placeholder="••••••••" />
-                <button type="button" onClick={() => setShow(!show)} className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400">{show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                <Input id="password" type={show ? 'text' : 'password'} value={pass} onChange={(e) => setPass(e.target.value)} required className="h-12 bg-gray-50 pe-11" placeholder="••••••••" />
+                <button type="button" onClick={() => setShow(!show)} className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400" aria-label={show ? (locale === 'ar' ? 'إخفاء كلمة المرور' : 'Hide password') : (locale === 'ar' ? 'إظهار كلمة المرور' : 'Show password')}>{show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 rounded border-gray-300 accent-cyan-600" />
+                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 rounded border-gray-300 accent-teal-600" />
                 <span className="text-sm text-gray-600">{locale === 'ar' ? 'تذكرني' : 'Remember me'}</span>
               </label>
             </div>
-            {err && <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-600">{err}</div>}
-            <Button type="submit" disabled={load} className="w-full h-12 text-base rounded-xl shadow-lg shadow-cyan-500/20 text-white" style={{ background: 'linear-gradient(135deg, #0891b2, #059669)' }}>
-              {load ? <Loader2 className="h-5 w-5 animate-spin" /> : (locale === 'ar' ? 'تسجيل دخول الطالب' : 'Student Sign In')}
+            <Captcha key={captchaKey} value={captchaAnswer} onChange={setCaptchaAnswer} onId={setCaptchaId} locale={locale} />
+            {err && <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-600" role="alert">{err}</div>}
+            <Button type="submit" disabled={load} className="w-full h-12 text-base rounded-xl shadow-lg shadow-teal-500/20 text-white" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+              {load ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : (locale === 'ar' ? 'تسجيل دخول الطالب' : 'Student Sign In')}
             </Button>
+            {need2fa && (
+              <div className="space-y-3 rounded-xl border border-teal-100 bg-teal-50/60 p-4">
+                <Label htmlFor="student-2fa">{locale === 'ar' ? 'رمز التحقق بخطوتين' : 'Two-factor code'}</Label>
+                <Input
+                  id="student-2fa"
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="000000"
+                  className="text-center tracking-widest"
+                />
+                <Button
+                  type="button"
+                  onClick={confirm2fa}
+                  disabled={load || twoFactorCode.length < 6}
+                  className="w-full"
+                >
+                  {locale === 'ar' ? 'تأكيد الرمز' : 'Verify code'}
+                </Button>
+              </div>
+            )}
           </form>
           <div className="text-center space-y-2">
-            <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href="/register/student" className="text-cyan-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>
+            <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href="/register/student" className="text-teal-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>
             <Link href="/" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"><ArrowLeft className="h-3 w-3" /> {locale === 'ar' ? 'العودة للصفحة الرئيسية' : 'Back home'}</Link>
           </div>
         </div>

@@ -18,9 +18,11 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
-  alternates: {
-    canonical: '/',
-  },
+  // No blanket `alternates.canonical` here: a root default leaks a
+  // `canonical: '/'` into every page that does not override it — including
+  // private, `noindex` sections (e.g. /courses, the teacher course manager),
+  // which then advertise a conflicting canonical pointing at the homepage.
+  // Public pages set their own canonical (the home page sets '/' explicitly).
   verification: {
     google: process.env.NEXT_PUBLIC_GSC_VERIFICATION || undefined,
     other: process.env.NEXT_PUBLIC_BING_VERIFICATION ? { 'msvalidate.01': [process.env.NEXT_PUBLIC_BING_VERIFICATION] } : {},
@@ -50,12 +52,30 @@ export const metadata: Metadata = {
     apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
   },
   manifest: '/manifest.webmanifest',
+  // iOS ignores most of the web manifest. `appleWebApp` emits the modern
+  // `mobile-web-app-capable`; the legacy `apple-mobile-web-app-capable` is
+  // added explicitly for older Safari versions. Together they make the app
+  // launch full-screen with the right status-bar colour and home-screen title
+  // once added via Share → Add to Home Screen.
+  appleWebApp: {
+    capable: true,
+    title: 'فهمني للطلاب',
+    statusBarStyle: 'default',
+  },
+  other: {
+    'apple-mobile-web-app-capable': 'yes',
+  },
 };
 
 export const viewport: Viewport = {
   themeColor: '#0d9488',
   width: 'device-width',
   initialScale: 1,
+  // Opt into the full screen so `env(safe-area-inset-*)` is honoured on iPhone
+  // (notch + home indicator). The panel shell pads its own header/drawer and
+  // the assistant button respects the bottom inset, so nothing sits under the
+  // system UI.
+  viewportFit: 'cover',
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

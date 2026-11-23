@@ -2,15 +2,21 @@
 
 namespace Tests\Feature;
 
+use App\Media\MediaUsageService;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Lesson;
+use App\Models\LessonContent;
 use App\Models\MediaProvider;
 use App\Models\PlanFeature;
 use App\Models\ProviderCostRule;
+use App\Models\ProviderUsageCost;
 use App\Models\Section;
 use App\Models\SubscriptionPlan;
+use App\Models\TenantSubscription;
+use App\Models\VideoContent;
 use App\Services\SaasCostService;
+use App\Services\VideoProtectionService;
 use Illuminate\Support\Str;
 
 /**
@@ -90,8 +96,8 @@ class CostEngineTest extends TenantTestCase
         $tenant = $this->makeTenant();
 
         // استهلاك: 5GB تخزين + 60 دقيقة بث
-        app(\App\Media\MediaUsageService::class)->applyDelta($tenant->id, 'storage_bytes', 5 * self::GB, 'upload');
-        app(\App\Media\MediaUsageService::class)->applyDelta($tenant->id, 'live_minutes', 60, 'live.start');
+        app(MediaUsageService::class)->applyDelta($tenant->id, 'storage_bytes', 5 * self::GB, 'upload');
+        app(MediaUsageService::class)->applyDelta($tenant->id, 'live_minutes', 60, 'live.start');
 
         $cost = app(SaasCostService::class)->usageCost($tenant->id, cache: false);
 
@@ -189,7 +195,7 @@ class CostEngineTest extends TenantTestCase
         $this->setupProvider();
         $tenant = $this->makeTenant();
 
-        app(\App\Media\MediaUsageService::class)->applyDelta($tenant->id, 'storage_bytes', 2 * self::GB, 'upload');
+        app(MediaUsageService::class)->applyDelta($tenant->id, 'storage_bytes', 2 * self::GB, 'upload');
 
         $cost = app(SaasCostService::class)->persistUsageCost($tenant->id);
 
@@ -259,7 +265,7 @@ class CostEngineTest extends TenantTestCase
             'sort_order' => 0,
         ]);
 
-        $lessonContent = \App\Models\LessonContent::create([
+        $lessonContent = LessonContent::create([
             'id' => (string) Str::uuid(),
             'tenant_id' => $tenant->id,
             'lesson_id' => $lesson->id,
@@ -267,7 +273,7 @@ class CostEngineTest extends TenantTestCase
             'sort_order' => 0,
         ]);
 
-        $video = \App\Models\VideoContent::create([
+        $video = VideoContent::create([
             'id' => (string) Str::uuid(),
             'tenant_id' => $tenant->id,
             'lesson_content_id' => $lessonContent->id,
@@ -291,7 +297,7 @@ class CostEngineTest extends TenantTestCase
         // الطالب المسجل → يسمح له
         $enrolled = $this->makeUser();
         $this->attachToTenant($enrolled, $tenant, 'student');
-        \App\Models\Enrollment::create([
+        Enrollment::create([
             'id' => (string) Str::uuid(),
             'tenant_id' => $tenant->id,
             'course_id' => $course->id,
@@ -301,7 +307,7 @@ class CostEngineTest extends TenantTestCase
             'metadata' => [],
         ]);
 
-        $can = app(\App\Services\VideoProtectionService::class)->canAccess($video, $enrolled);
+        $can = app(VideoProtectionService::class)->canAccess($video, $enrolled);
         $this->assertTrue($can, 'canAccess should be true for enrolled student');
 
         $this->app['auth']->forgetGuards();
@@ -310,5 +316,86 @@ class CostEngineTest extends TenantTestCase
             ->withHeader('X-Tenant-Id', $tenant->id)
             ->getJson("/api/v1/videos/{$video->id}/playback");
         $response->assertOk();
+    }
+
+    /** @test */
+    public function test_bi_separates_paid_subscribers_from_free_trials()
+    {
+        $this->setupProvider();
+
+        $plan = $this->makePlanWithLimits(99, []);
+
+        foreach (['active', 'trialing'] as $status) {
+            $tenant = $this->makeTenant();
+            TenantSubscription::create([
+                'id' => (string) Str::uuid(),
+                'tenant_id' => $tenant->id,
+                'plan_id' => $plan->id,
+                'status' => $status,
+                'billing_cycle' => 'monthly',
+                'starts_at' => now(),
+                'auto_renew' => true,
+            ]);
+        }
+
+        $bi = app(SaasCostService::class)->biSummary();
+        $row = collect($bi['plans'])->firstWhere('plan_id', $plan->id);
+
+        // التجارب لا تدرّ إيراداً: المشترك الدافع واحد فقط، والباقي تجارب.
+        $this->assertSame(1, $row['paid_subscribers']);
+        $this->assertSame(1, $row['trial_subscribers']);
+        $this->assertSame(2, $row['subscribers']);
+        $this->assertSame(99.0, $bi['monthly_revenue_usd']);
+    }
+
+    /** @test */
+    public function test_bi_infra_cost_applies_the_provider_floor_once()
+    {
+        $this->setupProvider();
+        ProviderCostRule::where('provider', 'bunny')->where('resource', 'storage')
+            ->update(['metadata' => ['delivery_factor' => 2, 'expected_emails_month' => 100, 'min_monthly' => 1]]);
+
+        $ym = now()->format('Y-m');
+
+        // مستأجران بتكلفة رمزية 0.01$ لكل منهما = 0.02$ خام (أقل من الحد الأدنى)
+        foreach ([1, 2] as $i) {
+            $tenant = $this->makeTenant();
+            ProviderUsageCost::create([
+                'id' => (string) Str::uuid(),
+                'tenant_id' => $tenant->id,
+                'provider' => 'bunny',
+                'resource' => 'email',
+                'quantity' => 100,
+                'cost' => 0.01,
+                'currency' => 'USD',
+                'year_month' => $ym,
+                'metadata' => ['breakdown_total' => 0.01],
+            ]);
+        }
+
+        $bi = app(SaasCostService::class)->biSummary();
+
+        // الحد الأدنى 1$ يُطبّق مرة واحدة لكل مزود، لا لكل مستأجر (2$).
+        $this->assertSame(1.0, $bi['monthly_infra_cost']);
+        $this->assertSame(1.0, (float) collect($bi['infrastructure'])->firstWhere('provider', 'bunny')['total']);
+    }
+
+    /** @test */
+    public function test_plan_live_cost_estimated_from_session_limit_when_minutes_absent()
+    {
+        $this->setupProvider();
+
+        // بلا live_minutes_limit، 10 جلسات بث، تكلفة البث 0.03$/ساعة
+        $plan = $this->makePlanWithLimits(49, [
+            'storage_limit_mb' => '0',
+            'videos_limit' => '0',
+            'live_stream_enabled' => 'true',
+            'live_sessions_limit' => '10',
+        ]);
+
+        $cost = app(SaasCostService::class)->planExpectedCost($plan);
+
+        // live: 10 جلسات × 60 دقيقة = 10 ساعات × 0.03 = 0.30 | email: 0.01
+        $this->assertSame(0.31, round($cost, 4));
     }
 }

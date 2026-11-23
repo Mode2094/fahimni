@@ -28,7 +28,7 @@ beforeEach(() => {
     settings: {
       ...useSettings.getState().settings,
       platform_name: 'فهمني',
-      currency: 'JOD',
+      currency: 'USD',
       logo_url: null,
       student_app_hidden: true,
     },
@@ -85,6 +85,32 @@ describe('Landing page (home-client)', () => {
     render(<HomeClient />);
 
     expect(screen.getAllByText('Your teaching platform,').length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('button', { name: 'See Pricing' }).length).toBeGreaterThan(0);
+    // Secondary hero CTA now invites the visitor to see how the platform works.
+    expect(screen.getAllByRole('button', { name: 'See how the platform works' }).length).toBeGreaterThan(0);
+  });
+
+  it('exposes a main landmark, a labelled menu toggle and a skip link (WCAG)', () => {
+    stubPlans();
+    render(<HomeClient />);
+
+    // Exactly one <main> landmark wraps the page content.
+    expect(screen.getAllByRole('main').length).toBe(1);
+
+    // The mobile menu button has an accessible name and reports its state.
+    const toggle = screen.getByRole('button', { name: 'فتح القائمة' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', 'mobile-nav');
+
+    // Keyboard users can jump straight to the content.
+    expect(screen.getByRole('link', { name: 'تخطَّ إلى المحتوى الرئيسي' })).toHaveAttribute('href', '#main');
+  });
+
+  it('shows the profit calculator estimate on first render (50 × 25 = 1250, no scroll needed)', async () => {
+    stubPlans();
+    render(<HomeClient />);
+
+    // The estimate must be present immediately, not gated behind an
+    // IntersectionObserver that left it at 0 until the user scrolled.
+    expect(screen.getAllByText('1250 $').length).toBeGreaterThan(0);
   });
 });

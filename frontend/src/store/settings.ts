@@ -44,6 +44,22 @@ export type PlatformSettings = {
   contact_whatsapp: string;
   live_google_meet_enabled: boolean;
   live_default_provider: string;
+  analytics_enabled: boolean;
+  meta_pixel_id: string;
+  meta_domain_verification: string;
+  ga_measurement_id: string;
+  gtm_container_id: string;
+  // Teacher free trial: master switch + limited "first N teachers" offer.
+  teacher_trial_enabled: boolean;
+  teacher_trial_days: number;
+  teacher_trial_offer_enabled: boolean;
+  teacher_trial_offer_seats: number;
+  teacher_trial_offer_text: string;
+  teacher_trial_offer_text_rendered: string;
+  teacher_trial_offer_seats_used: number;
+  teacher_trial_offer_seats_remaining: number;
+  trial_available: boolean;
+  trial_days: number;
 };
 
 type SettingsState = {
@@ -59,7 +75,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: {
     platform_name: BRAND_NAME,
-    currency: 'JOD',
+    currency: 'USD',
     currency_rate: 1,
     default_locale: 'ar',
     logo_url: null,
@@ -98,21 +114,31 @@ export const useSettings = create<SettingsState>((set, get) => ({
     contact_whatsapp: '',
     live_google_meet_enabled: true,
     live_default_provider: 'google_meet',
+    analytics_enabled: true,
+    meta_pixel_id: '',
+    meta_domain_verification: '',
+    ga_measurement_id: '',
+    gtm_container_id: '',
+    teacher_trial_enabled: true,
+    teacher_trial_days: 7,
+    teacher_trial_offer_enabled: false,
+    teacher_trial_offer_seats: 50,
+    teacher_trial_offer_text: '🎁 تجربة مجانية لمدة {days} أيام لأول {seats} معلمًا — الأماكن المتبقية: {remaining}',
+    teacher_trial_offer_text_rendered: '',
+    teacher_trial_offer_seats_used: 0,
+    teacher_trial_offer_seats_remaining: 50,
+    trial_available: true,
+    trial_days: 7,
   },
   loaded: false,
 
   load: async () => {
     try {
-      // X-Tenant-Id يجعل الخادم يعيد لوجو/اسم المعلم (منصته) بدل لوجو المنصة العام.
-      const rawTid = typeof window !== 'undefined' ? localStorage.getItem('tenant_id') : null;
-      // tenant_id values are UUIDs server-side; a stale/garbled value makes the
-      // API 500, so only send well-formed UUIDs.
-      const tid = rawTid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTid) ? rawTid : null;
+      // هوية منصة فهمني العامة لا علاقة لها بالمستأجر/الجلسة: لا نرسل
+      // X-Tenant-Id إطلاقًا حتى لا يستبدل الخادم اسم/شعار المنصة بهوية معلّم.
+      // علامة كل معلّم تُقرأ من مصدرها المستقل (public/{slug} أو teacher/site-design).
       const res = await fetch(`${API}/platform-settings`, {
-        headers: {
-          Accept: 'application/json',
-          ...(tid ? { 'X-Tenant-Id': tid } : {}),
-        },
+        headers: { Accept: 'application/json' },
       });
       if (!res.ok) return;
       const d = await res.json();

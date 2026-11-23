@@ -40,14 +40,14 @@ export default function VerifyCertificatePage({ params }: { params: Promise<{ nu
           ) : invalid ? (
             <div className="text-center space-y-4 py-4">
               <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-50"><XCircle className="h-10 w-10 text-red-500" /></div>
-              <h1 className="text-xl font-bold">{t('لا يمكن التحقق من الشهادة', 'Certificate could not be verified')}</h1>
+              <h1 className="text-2xl font-bold">{t('لا يمكن التحقق من الشهادة', 'Certificate could not be verified')}</h1>
               <p className="text-sm text-gray-500">{t('هذا الرقم غير صالح أو أن الشهادة أُلغيَت', 'This number is invalid or the certificate was revoked')}</p>
             </div>
           ) : (
             <div className="text-center space-y-6 py-2">
               <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-50"><ShieldCheck className="h-10 w-10 text-green-600" /></div>
               <div>
-                <h1 className="text-xl font-bold text-green-700">{t('شهادة موثقة', 'Verified certificate')}</h1>
+                <h1 className="text-2xl font-bold text-green-700">{t('شهادة موثقة', 'Verified certificate')}</h1>
                 <p className="text-sm text-gray-500 mt-1">{t('تم التحقق من صحة هذه الشهادة', 'This certificate has been verified as authentic')}</p>
               </div>
               <div className="space-y-3 rounded-2xl border bg-gray-50/60 p-5 text-sm">

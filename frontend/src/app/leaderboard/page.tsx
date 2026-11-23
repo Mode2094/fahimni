@@ -46,11 +46,17 @@ export default function LeaderboardPage() {
     <div className="space-y-6 max-w-4xl mx-auto">
       <a href="/my-learning" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-teal-700 transition-colors"><ArrowLeft className="h-4 w-4" /> {t('رجوع لتعليمي', 'Back to my learning')}</a>
 
-      <div className="text-center space-y-2">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 mx-auto text-white shadow-lg shadow-amber-500/30"><Trophy className="h-8 w-8" /></div>
-        <h1 className="text-3xl font-bold">{t('ترتيب الطلاب', 'Student Leaderboard')}</h1>
-        <p className="text-muted-foreground">{t('نقاطك تكسبك مركزاً متقدماً — أكمل الدروس والاختبارات', 'Earn points by completing lessons and exams')}</p>
-        {myRank && <Badge className="bg-teal-100 text-teal-700 border-0 px-4 py-1.5 mt-1 gap-1.5 rounded-full"><Crown className="h-3.5 w-3.5" />{t('ترتيبك', 'Your rank')}: #{myRank}</Badge>}
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10">
+            <Trophy className="h-6 w-6 text-teal-600" />
+          </span>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">{t('ترتيب الطلاب', 'Student Leaderboard')}</h1>
+            <p className="text-muted-foreground mt-1">{t('نقاطك تكسبك مركزاً متقدماً — أكمل الدروس والاختبارات', 'Earn points by completing lessons and exams')}</p>
+          </div>
+        </div>
+        {myRank && <Badge className="bg-teal-100 text-teal-700 border-0 px-4 py-1.5 gap-1.5 rounded-full"><Crown className="h-3.5 w-3.5" />{t('ترتيبك', 'Your rank')}: #{myRank}</Badge>}
       </div>
 
       {rows.length === 0 ? (

@@ -49,14 +49,14 @@ export default function ExamsPage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* ─── ترحيب ─────────────────────────────── */}
-      <section className="relative overflow-hidden rounded-3xl p-6 sm:p-8" style={{ background: 'linear-gradient(135deg, #312e81 0%, #4c1d95 55%, #6d28d9 100%)' }}>
-        <div className="absolute top-0 left-1/4 w-72 h-72 bg-violet-300/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-64 h-64 bg-fuchsia-300/15 rounded-full blur-3xl" />
+      <section className="relative overflow-hidden rounded-3xl p-6 sm:p-8" style={{ background: 'linear-gradient(135deg, #0f2e2b 0%, #115e54 55%, #0d9488 100%)' }}>
+        <div className="absolute top-0 left-1/4 w-72 h-72 bg-teal-300/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-64 h-64 bg-emerald-300/15 rounded-full blur-3xl" />
         <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '26px 26px' }} />
         <div className="relative z-10 flex flex-wrap items-start justify-between gap-6">
           <div className="min-w-0 flex-1">
             <span className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1 text-xs font-medium text-white mb-3">
-              <Sparkles className="h-3.5 w-3.5 text-violet-200" />
+              <Sparkles className="h-3.5 w-3.5 text-teal-200" />
               {t('قاعة الاختبارات', 'Exam hall')}
             </span>
             <h1 className="text-2xl sm:text-3xl font-bold text-white leading-snug">{t('الاختبارات', 'Exams')}</h1>
@@ -71,7 +71,7 @@ export default function ExamsPage() {
               { icon: FileQuestion, label: t('أسئلة', 'Questions'), value: totalQuestions },
             ].map((s, i) => (
               <div key={i} className="glass rounded-2xl px-4 py-3 text-center">
-                <s.icon className="mx-auto h-5 w-5 text-violet-200 mb-1.5" />
+                <s.icon className="mx-auto h-5 w-5 text-teal-200 mb-1.5" />
                 <div className="text-xl font-black text-white">{s.value}</div>
                 <div className="text-[10px] text-white/60 mt-0.5">{s.label}</div>
               </div>
@@ -98,11 +98,11 @@ export default function ExamsPage() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {published.map((e) => (
               <Card key={e.id} className="border-0 shadow-sm overflow-hidden card-hover flex flex-col">
-                <div className="h-24 relative flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #4c1d9518, #7c3aed12)' }}>
-                  <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #7c3aed 1px, transparent 0)', backgroundSize: '18px 18px' }} />
-                  <ClipboardList className="h-10 w-10 opacity-50" style={{ color: '#7c3aed' }} />
+                <div className="h-24 relative flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0f766e18, #0d948812)' }}>
+                  <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #0d9488 1px, transparent 0)', backgroundSize: '18px 18px' }} />
+                  <ClipboardList className="h-10 w-10 opacity-50" style={{ color: '#0d9488' }} />
                   {e.questions_count > 0 && (
-                    <span className="absolute top-2.5 start-2.5 inline-flex items-center gap-1 rounded-full bg-white/90 backdrop-blur px-2.5 py-1 text-[10px] font-black text-violet-700 shadow-sm">
+                    <span className="absolute top-2.5 start-2.5 inline-flex items-center gap-1 rounded-full bg-white/90 backdrop-blur px-2.5 py-1 text-[10px] font-black text-teal-700 shadow-sm">
                       <FileQuestion className="h-3 w-3" />{e.questions_count} {t('سؤال', 'Q')}
                     </span>
                   )}
@@ -111,13 +111,13 @@ export default function ExamsPage() {
                   <h3 className="font-bold line-clamp-1">{e.title}</h3>
                   <p className="text-xs text-muted-foreground mt-1.5">{e.description || t('اختبر معلوماتك في هذا الاختبار', 'Test your knowledge in this exam')}</p>
                   <div className="flex flex-wrap items-center gap-2 mt-3">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700"><Clock className="h-3 w-3" />{e.duration_minutes} {t('دقيقة', 'min')}</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700"><Clock className="h-3 w-3" />{e.duration_minutes} {t('دقيقة', 'min')}</span>
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700"><Target className="h-3 w-3" />{t('نجاح', 'Pass')}: {e.pass_mark_percent}%</span>
                     {e.shuffle_questions && <Badge className="bg-teal-50 text-teal-700 border-0 text-[10px] rounded-full">{t('أسئلة عشوائية', 'Shuffled')}</Badge>}
                   </div>
                   <div className="mt-4 pt-4 border-t flex-1 flex items-end">
                     <a href={`/exam/${e.id}`} className="w-full">
-                      <Button className="w-full rounded-full gap-1.5 text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)' }}>
+                      <Button className="w-full rounded-full gap-1.5 text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                         <Play className="h-4 w-4" /> {t('ابدأ الاختبار', 'Start exam')}
                       </Button>
                     </a>

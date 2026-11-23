@@ -56,5 +56,25 @@ test('each teacher app keeps its own identity and start_url', () => {
 
   assert.match(route, /start_url:\s*teacherPath/, 'tenant manifest start_url must be the tenant path');
   assert.match(route, /id:\s*teacherPath/, 'tenant manifest id must be the tenant path (no OS-app collision)');
-  assert.match(route, /start_url:\s*'\/'/, 'platform manifest must keep the root start_url');
+  // The platform app launches the session-aware /app entry, which restores the
+  // signed-in user's role dashboard instead of the public landing page.
+  assert.match(route, /start_url:\s*'\/app'/, 'platform manifest must launch the session-aware /app entry');
+});
+
+test('student areas install the "فهمني للطلاب" identity without a second app', () => {
+  const route = src('src/app/manifest.webmanifest/route.ts');
+
+  // A dedicated student identity is served for student paths.
+  assert.match(route, /const STUDENT_PATHS/, 'student path matcher must exist');
+  assert.match(route, /STUDENT_PATHS\.test\(path\)/, 'student identity must be selected by path');
+  assert.match(route, /فهمني للطلاب/, 'student manifest must carry the student app name');
+  assert.match(route, /start_url:\s*'\/app'/, 'student app must launch the session-aware /app entry');
+
+  // …but it shares the platform id/scope, so the OS treats it as ONE app and
+  // never installs a colliding second icon on the same device.
+  const student = route.slice(route.indexOf('const STUDENT_MANIFEST'));
+  const shared = student.slice(0, student.indexOf('} as const'));
+  assert.match(shared, /scope:\s*'\/'/, 'student scope must be the platform root (shared)');
+  assert.match(shared, /id:\s*'\/'/, 'student id must be the platform root (shared id prevents a second app)');
+  assert.match(shared, /shortcuts:/, 'student app should expose home-screen shortcuts');
 });

@@ -12,6 +12,7 @@ use App\Models\LiveSession;
 use App\Models\Section;
 use App\Models\TextContent;
 use App\Models\VideoContent;
+use App\Rules\TenantScopedExists;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -102,7 +103,15 @@ class LessonController extends Controller
             'is_free_preview' => 'nullable|boolean',
             'lesson_type' => 'nullable|string|max:20',
             'metadata' => 'nullable|array',
+            'metadata.exercise_exam_id' => ['nullable', 'string', new TenantScopedExists('exams')],
+            'metadata.exercise_position' => 'nullable|string|in:after_video,after_content',
         ]);
+
+        // Merge metadata instead of replacing it so attaching an exercise never
+        // silently wipes any other key already stored on the lesson.
+        if (array_key_exists('metadata', $validated) && is_array($validated['metadata'])) {
+            $validated['metadata'] = array_merge($lesson->metadata ?? [], $validated['metadata']);
+        }
 
         $lesson->update($validated);
 
@@ -158,6 +167,28 @@ class LessonController extends Controller
         $lesson->delete();
 
         return response()->json(['message' => 'Lesson deleted successfully.']);
+    }
+
+    /**
+     * إنشاء نسخة (مسودة) من درس داخل نفس الوحدة — المحتوى فقط، بلا تقدّم
+     * أو أي بيانات طلاب. الوسائط الثقيلة تُعاد بالمرجع.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $lesson = Lesson::findOrFail($id);
+
+        $this->authorize('view', $lesson);
+        $this->authorize('create', Lesson::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateLesson($lesson, $validated['title'] ?? null);
+
+        return response()->json([
+            'lesson' => new LessonResource($result['model']),
+            'report' => $result['report'],
+        ], 201);
     }
 
     private function syncContent(Lesson $lesson, Request $request): void

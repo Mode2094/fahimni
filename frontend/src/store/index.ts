@@ -1,18 +1,35 @@
 import { create } from 'zustand';
 import type { User } from '@/types/api';
 import { API_BASE, authFetch, clearStoredUser, hasSessionHint, setSessionHint } from '@/lib/auth-client';
+import { dashboardPathFor } from '@/lib/auth-routes';
 
 type LoginOutcome = { requires2fa: boolean };
+
+/**
+ * `unknown`     — boot: the HttpOnly session has not been checked yet.
+ * `authenticated` — a live session (or a cached profile during a transient
+ *                   outage) exists.
+ * `unauthenticated` — the server explicitly answered 401.
+ * `unavailable` — the check failed for network/5xx reasons; local state is
+ *                 preserved and the user is NOT sent to the login page.
+ */
+export type AuthStatus = 'unknown' | 'authenticated' | 'unauthenticated' | 'unavailable';
 
 type AuthState = {
   user: User | null;
   loading: boolean;
   initialized: boolean;
+  status: AuthStatus;
+  /** Last successful server validation (ms) — drives background refresh. */
+  lastValidatedAt: number;
   login: (e: string, p: string, extra?: Record<string, unknown>) => Promise<LoginOutcome>;
   login2fa: (code: string) => Promise<void>;
+  completeProfile: (name: string, phone: string) => Promise<{ tenantId: string | null; trialStarted: boolean }>;
   loginAndRedirect: (e: string, p: string) => Promise<string>;
   logout: () => Promise<void>;
   load: () => Promise<void>;
+  refreshSession: () => Promise<boolean>;
+  handleUnauthorized: (at?: number) => void;
   check: () => boolean;
   hasRole: (...r: string[]) => boolean;
   hasPerm: (p: string) => boolean;
@@ -29,13 +46,29 @@ async function postJson(path: string, body: unknown): Promise<{ ok: boolean; dat
   return { ok: res.ok, data };
 }
 
-async function fetchCurrentUser(): Promise<User | null> {
-  const res = await authFetch('/api/session/me');
-  if (!res.ok) return null;
+function readCachedUser(): User | null {
+  if (typeof window === 'undefined') return null;
 
-  const data = await res.json().catch(() => null);
+  try {
+    const raw = localStorage.getItem('user');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
 
-  return (data?.user ?? null) as User | null;
+    return parsed && typeof parsed === 'object' && parsed.id ? (parsed as User) : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheUser(user: User | null): void {
+  if (typeof window === 'undefined') return;
+
+  if (user) {
+    localStorage.setItem('user', JSON.stringify(user));
+    setSessionHint(true);
+  } else {
+    clearStoredUser();
+  }
 }
 
 /**
@@ -66,12 +99,98 @@ async function healTenant(user: User): Promise<void> {
   }
 }
 
+let validationInFlight: Promise<boolean> | null = null;
+let lastAuthAt = 0;
+let loggingOut = false;
+
+/**
+ * Validate the HttpOnly session exactly once at a time.
+ *
+ * - 200 + user  → authenticated (cache the profile, heal tenant context)
+ * - 401         → unauthenticated (clear the cache; the server said no)
+ * - 5xx/network → unavailable (keep the cached profile; never fake a logout)
+ */
+function validateSession(): Promise<boolean> {
+  if (validationInFlight) return validationInFlight;
+
+  validationInFlight = (async () => {
+    const cached = useAuth.getState().user ?? readCachedUser();
+
+    // Show the cached profile immediately: protected shells render the app
+    // instead of a blank screen or a login redirect while the check runs.
+    useAuth.setState({
+      user: cached,
+      status: cached ? 'authenticated' : 'unknown',
+      loading: true,
+    });
+
+    try {
+      const res = await authFetch('/api/session/me', { cache: 'no-store' });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const user = (data?.user ?? null) as User | null;
+
+        if (user) {
+          cacheUser(user);
+          await healTenant(user);
+          useAuth.setState({
+            user,
+            status: 'authenticated',
+            loading: false,
+            initialized: true,
+            lastValidatedAt: Date.now(),
+          });
+
+          return true;
+        }
+      }
+
+      if (res.status === 401) {
+        cacheUser(null);
+        useAuth.setState({
+          user: null,
+          status: 'unauthenticated',
+          loading: false,
+          initialized: true,
+          lastValidatedAt: 0,
+        });
+
+        return false;
+      }
+
+      throw new Error(`Session check failed with ${res.status}`);
+    } catch {
+      // Offline, deploy in progress, 502/500, DNS failure: the cookie may
+      // still be perfectly valid. Preserve everything and retry later.
+      const current = useAuth.getState();
+      const keepUser = current.user ?? cached;
+
+      useAuth.setState({
+        user: keepUser,
+        status: 'unavailable',
+        loading: false,
+        initialized: true,
+      });
+
+      return !!keepUser;
+    }
+  })().finally(() => {
+    validationInFlight = null;
+  });
+
+  return validationInFlight;
+}
+
 export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   loading: false,
   initialized: false,
+  status: 'unknown',
+  lastValidatedAt: 0,
 
   login: async (email, password, extra) => {
+    loggingOut = false;
     set({ loading: true });
 
     try {
@@ -95,10 +214,16 @@ export const useAuth = create<AuthState>((set, get) => ({
         throw new Error('Login failed');
       }
 
-      localStorage.setItem('user', JSON.stringify(user));
-      setSessionHint(true);
+      lastAuthAt = Date.now();
+      cacheUser(user);
       await healTenant(user);
-      set({ user, loading: false, initialized: true });
+      set({
+        user,
+        loading: false,
+        initialized: true,
+        status: 'authenticated',
+        lastValidatedAt: Date.now(),
+      });
 
       // إعادة تحميل إعدادات المنصة (اللوجو/الاسم) بعد الدخول — فالجلب كضيف
       // (بلا X-Tenant-Id) يعيد لوجو المنصة العام ويبقى عالقاً طوال الجلسة.
@@ -115,6 +240,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   login2fa: async (code) => {
+    loggingOut = false;
     set({ loading: true });
 
     try {
@@ -130,10 +256,16 @@ export const useAuth = create<AuthState>((set, get) => ({
         throw new Error('Login failed');
       }
 
-      localStorage.setItem('user', JSON.stringify(user));
-      setSessionHint(true);
+      lastAuthAt = Date.now();
+      cacheUser(user);
       await healTenant(user);
-      set({ user, loading: false, initialized: true });
+      set({
+        user,
+        loading: false,
+        initialized: true,
+        status: 'authenticated',
+        lastValidatedAt: Date.now(),
+      });
 
       try {
         await import('@/store/settings').then((m) => m.useSettings.getState().load());
@@ -145,13 +277,48 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
+  completeProfile: async (name, phone) => {
+    const { ok, data } = await postJson('/api/session/complete-profile', { name, phone });
+
+    if (!ok) {
+      throw Object.assign(new Error(data?.message || 'Failed'), { response: { data } });
+    }
+
+    const user = (data?.user ?? null) as User | null;
+
+    if (user) {
+      cacheUser(user);
+      await healTenant(user);
+      set({
+        user,
+        loading: false,
+        initialized: true,
+        status: 'authenticated',
+        lastValidatedAt: Date.now(),
+      });
+    }
+
+    if (data?.tenant_id && typeof window !== 'undefined') {
+      localStorage.setItem('tenant_id', data.tenant_id);
+    }
+
+    try {
+      await import('@/store/settings').then((m) => m.useSettings.getState().load());
+      await import('@/store/plan').then((m) => m.usePlan.getState().load());
+    } catch { /* non-blocking */ }
+
+    return {
+      tenantId: (data?.tenant_id as string) ?? null,
+      trialStarted: !!data?.trial_started,
+    };
+  },
+
   loginAndRedirect: async (email, password) => {
     await get().login(email, password);
     const u = get().user;
     if (!u) return '/teacher/login';
-    if (u.is_super_admin) return '/admin/dashboard';
-    if (u.roles?.includes('Teacher')) return '/teacher/dashboard';
-    return '/my-learning';
+
+    return dashboardPathFor(u);
   },
 
   logout: async () => {
@@ -160,46 +327,86 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (u?.is_super_admin) target = '/admin/login';
     else if (u?.roles?.includes('Teacher')) target = '/teacher/login';
 
+    loggingOut = true;
+    lastAuthAt = 0;
+
+    // Drop this device's web-push subscription for the signing-out account
+    // FIRST (while the session is still valid) so a shared device never keeps
+    // receiving the previous student's notifications. Best-effort only.
+    try {
+      const [{ unsubscribeFromPush }, { pushTokens }] = await Promise.all([
+        import('@/lib/push'),
+        import('@/services/endpoints'),
+      ]);
+      const token = await unsubscribeFromPush();
+      if (token) await pushTokens.remove(token).catch(() => {});
+    } catch { /* push is optional and must never block sign-out */ }
+
     try {
       await authFetch('/api/session/logout', { method: 'POST' });
-    } catch { /* */ }
+    } catch { /* the BFF expires cookies even when the upstream is unreachable */ }
 
-    // Keep locale + device identity + remembered email — only session data is
-    // wiped. Passwords are never persisted (legacy copies are removed).
-    const locale = localStorage.getItem('locale');
-    const deviceId = localStorage.getItem('lms_device_id');
-    const rememberedEmail = localStorage.getItem('lms_remembered_email');
-    localStorage.clear();
-    if (locale) localStorage.setItem('locale', locale);
-    if (deviceId) localStorage.setItem('lms_device_id', deviceId);
-    if (rememberedEmail) localStorage.setItem('lms_remembered_email', rememberedEmail);
-    set({ user: null, loading: false, initialized: true });
-    if (typeof window !== 'undefined') window.location.href = target;
+    // Keep locale + device identity + remembered email — only auth data is
+    // wiped. Never call localStorage.clear(): it would erase unrelated PWA
+    // preferences and cached UI state.
+    cacheUser(null);
+    if (typeof window !== 'undefined') {
+      for (const key of ['token', 'user_role', 'lms_remembered_password', 'lms_admin_remembered_password']) {
+        localStorage.removeItem(key);
+      }
+    }
+
+    set({
+      user: null,
+      loading: false,
+      initialized: true,
+      status: 'unauthenticated',
+      lastValidatedAt: 0,
+    });
+
+    if (typeof window !== 'undefined') {
+      // replace() so the back button cannot reopen a protected page.
+      window.location.replace(target);
+    }
   },
 
   load: async () => {
-    set({ loading: true });
+    await validateSession();
+  },
 
-    try {
-      const user = await fetchCurrentUser();
+  refreshSession: async () => {
+    if (loggingOut) return false;
+    if (!get().user && !hasSessionHint()) return false;
 
-      if (user) {
-        localStorage.setItem('user', JSON.stringify(user));
-        setSessionHint(true);
-        await healTenant(user);
-        set({ user, loading: false, initialized: true });
+    return validateSession();
+  },
 
-        return;
-      }
+  /**
+   * Called from the global `auth:unauthorized` signal. Ignores 401s that were
+   * already in flight before a newer successful login (another tab).
+   */
+  handleUnauthorized: (at = Date.now()) => {
+    if (loggingOut || at < lastAuthAt) return;
+    if (get().status === 'unauthenticated') return;
 
-      clearStoredUser();
-      set({ user: null, loading: false, initialized: true });
-    } catch {
-      set({ loading: false, initialized: true });
-    }
+    cacheUser(null);
+    set({
+      user: null,
+      loading: false,
+      initialized: true,
+      status: 'unauthenticated',
+      lastValidatedAt: 0,
+    });
   },
 
   check: () => !!get().user || hasSessionHint(),
   hasRole: (...roles) => roles.some((r) => get().user?.roles?.includes(r) ?? false),
   hasPerm: (perm) => get().user?.permissions?.includes(perm) ?? false,
 }));
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('auth:unauthorized', (event) => {
+    const at = Number((event as CustomEvent<{ at?: number }>).detail?.at) || Date.now();
+    useAuth.getState().handleUnauthorized(at);
+  });
+}

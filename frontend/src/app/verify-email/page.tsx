@@ -22,9 +22,9 @@ export default function VerifyEmailPage() {
     try {
       const r = await fetch(`${API}/auth/email/resend`, { method: 'POST', headers: { Accept: 'application/json' } });
       const d = await r.json();
-      if (!r.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!r.ok) { toast.error(d.message || t('فشل', 'Failed')); return; }
       toast.success(t('تم إرسال رابط جديد إلى بريدك', 'A new verification link was sent'));
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('فشل', 'Failed')); }
     setBusy(false);
   };
 
