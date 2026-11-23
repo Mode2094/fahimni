@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\Auth\GoogleAuthController;
 use App\Http\Controllers\Api\Auth\MobileAuthController;
 use App\Http\Controllers\Api\BackupController;
 use App\Http\Controllers\Api\BiController;
+use App\Http\Controllers\Api\BundleController;
 use App\Http\Controllers\Api\CommunityCommentController;
 use App\Http\Controllers\Api\CommunityController;
 use App\Http\Controllers\Api\CommunityGroupController;
@@ -204,6 +205,15 @@ Route::prefix('v1')->group(function () {
             Route::delete('courses/{course}', [CourseController::class, 'destroy']);
             Route::post('courses/{course}/publish', [CourseController::class, 'publish']);
             Route::post('courses/{course}/unpublish', [CourseController::class, 'unpublish']);
+
+            // ─── Course bundles (حزم الكورسات) ────────────────────────
+            // A bundle groups existing courses; it never copies content.
+            Route::get('bundles', [BundleController::class, 'index']);
+            Route::post('bundles', [BundleController::class, 'store']);
+            Route::get('bundles/{bundle}', [BundleController::class, 'show']);
+            Route::put('bundles/{bundle}', [BundleController::class, 'update']);
+            Route::delete('bundles/{bundle}', [BundleController::class, 'destroy']);
+            Route::post('bundles/{bundle}/enroll', [BundleController::class, 'enroll']);
 
             // Sections
             Route::get('sections', [SectionController::class, 'index']);
@@ -809,6 +819,7 @@ Route::prefix('v1')->group(function () {
         Route::get('{slug}', [PublicSiteController::class, 'show']);
         Route::get('{slug}/courses', [PublicSiteController::class, 'courses']);
         Route::get('{slug}/courses/{course}', [PublicSiteController::class, 'course']);
+        Route::get('{slug}/bundles', [PublicSiteController::class, 'bundles']);
         Route::get('{slug}/posts', [TeacherBlogController::class, 'publicPosts']);
         Route::get('{slug}/posts/{post}', [TeacherBlogController::class, 'publicPost']);
     });

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivationCard;
+use App\Models\Bundle;
 use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
@@ -149,6 +150,53 @@ class PublicSiteController extends Controller
 
         return response()->json([
             'courses' => $courses->map(fn (Course $c) => $this->coursePayload($c)),
+        ]);
+    }
+
+    /**
+     * Published course bundles for a teacher's public site. Only courses that
+     * are themselves published are exposed inside a bundle, so an unpublished
+     * draft course can never leak through the package listing.
+     */
+    public function bundles(string $slug): JsonResponse
+    {
+        $tenant = Tenant::where('slug', $slug)->where('status', 'active')->first();
+
+        if (! $tenant) {
+            return response()->json(['message' => 'Site not found.'], 404);
+        }
+
+        $bundles = Bundle::where('tenant_id', $tenant->id)
+            ->where('is_published', true)
+            ->withCount(['courses' => fn ($q) => $q->where('courses.is_published', true)])
+            ->with(['courses' => fn ($q) => $q
+                ->where('courses.is_published', true)
+                ->select('courses.id', 'courses.title', 'courses.slug', 'courses.thumbnail_url', 'courses.price', 'courses.level'),
+            ])
+            ->orderBy('sort_order')
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json([
+            'bundles' => $bundles->map(fn (Bundle $b) => [
+                'id' => $b->id,
+                'title' => $b->title,
+                'slug' => $b->slug,
+                'description' => $b->description,
+                'short_description' => $b->short_description,
+                'thumbnail_url' => $b->thumbnail_url,
+                'price' => $b->price,
+                'currency' => $b->currency,
+                'courses_count' => $b->courses_count,
+                'courses' => $b->courses->map(fn (Course $c) => [
+                    'id' => $c->id,
+                    'title' => $c->title,
+                    'slug' => $c->slug,
+                    'thumbnail_url' => $c->thumbnail_url,
+                    'price' => $c->price,
+                    'level' => $c->level,
+                ])->values(),
+            ])->values(),
         ]);
     }
 

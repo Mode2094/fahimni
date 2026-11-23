@@ -4,7 +4,7 @@ import {
   ClipboardList, Video, CalendarDays, CalendarClock, HandCoins,
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
   BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
-  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing,
+  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Package,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -89,6 +89,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/students', icon: Users, ar: 'الطلاب', en: 'Students' },
       { href: '/teacher/terms', icon: CalendarDays, ar: 'الفصول الدراسية', en: 'Academic Terms', match: ['/teacher/terms'] },
       { href: '/teacher/cards', icon: Ticket, ar: 'البطاقات', en: 'Cards' },
+      { href: '/teacher/bundles', icon: Package, ar: 'الحزم', en: 'Bundles' },
       { href: '/teacher/student-app', icon: Smartphone, ar: 'تطبيق الطلاب', en: 'Student App', hideWithApp: true },
     ],
   },
