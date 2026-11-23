@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
 import { QUESTION_TYPE_META } from '@/components/exam/exam-editor';
@@ -193,7 +194,7 @@ export default function TeacherQuestionBankPage() {
       toast.error(t('لا يمكن الحذف: السؤال مرتبط باختبار. أزله من الاختبار أولاً.', 'Cannot delete: the question is used in an exam. Remove it from the exam first.'));
       return;
     }
-    if (!window.confirm(t('حذف هذا السؤال نهائياً من البنك؟', 'Permanently delete this question from the bank?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا السؤال نهائياً من البنك؟', 'Permanently delete this question from the bank?') }))) return;
     setBusy(qq.id);
     try {
       const res = await fetch(`${API}/questions/${qq.id}`, { method: 'DELETE', headers: headers() });
@@ -232,7 +233,7 @@ export default function TeacherQuestionBankPage() {
       toast.error(t('كل الأسئلة المحددة مرتبطة باختبارات؛ لا يمكن حذفها.', 'All selected questions are used in exams; they cannot be deleted.'));
       return;
     }
-    if (!window.confirm(t(`حذف ${targets.length} سؤالاً غير مرتبط بأي اختبار؟`, `Delete ${targets.length} question(s) not linked to any exam?`))) return;
+    if (!(await confirmDialog({ description: t(`حذف ${targets.length} سؤالاً غير مرتبط بأي اختبار؟`, `Delete ${targets.length} question(s) not linked to any exam?`) }))) return;
     setBusy('bulk');
     try {
       await Promise.all(targets.map((qq) => fetch(`${API}/questions/${qq.id}`, { method: 'DELETE', headers: headers() })));

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
@@ -104,7 +105,7 @@ function StudentsPageInner() {
   };
 
   const clearOverride = async (s: any) => {
-    if (!confirm(t('إزالة الصلاحية الخاصة عن هذا الطالب؟', 'Remove the special grant from this student?'))) return;
+    if (!(await confirmDialog({ description: t('إزالة الصلاحية الخاصة عن هذا الطالب؟', 'Remove the special grant from this student?') }))) return;
     setBusyId(s.id);
     try {
       const res = await fetch(`${API}/teacher/students/${s.id}/device-limit`, { method: 'DELETE', headers: headers() });

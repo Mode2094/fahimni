@@ -343,7 +343,7 @@ export default function AdminSettingsPage() {
                       {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{uploading ? t('جاري الرفع...', 'Uploading...') : t('رفع شعار', 'Upload logo')}
                     </Button>
                     {form.logo_url && (
-                      <Button variant="ghost" size="sm" className="text-red-500 gap-1 rounded-full" onClick={async () => { setForm({ ...form, logo_url: null }); try { await save({ logo_url: null }); toast.success(t('تمت الإزالة', 'Removed')); } catch { toast.error('Failed'); } }}>
+                      <Button variant="ghost" size="sm" className="text-red-500 gap-1 rounded-full" onClick={async () => { setForm({ ...form, logo_url: null }); try { await save({ logo_url: null }); toast.success(t('تمت الإزالة', 'Removed')); } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } }}>
                         <X className="h-3.5 w-3.5" />{t('إزالة', 'Remove')}
                       </Button>
                     )}

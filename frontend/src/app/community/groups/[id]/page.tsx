@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Users, Plus, Loader2, Lock, Heart, Eye, MessageSquare, CheckCircle2, HelpCircle,
   Pin, Tag, UserPlus, Clock, Shield, Trash2, ArrowRight, MessagesSquare,
@@ -105,7 +106,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   };
 
   const removeMember = async (m: CommunityGroupMember) => {
-    if (!confirm(t('إزالة هذا العضو من المجموعة؟', 'Remove this member from the group?'))) return;
+    if (!(await confirmDialog({ description: t('إزالة هذا العضو من المجموعة؟', 'Remove this member from the group?') }))) return;
     try {
       await communityApi.removeMember(id, m.id);
       toast.success(t('تمت الإزالة', 'Removed'));

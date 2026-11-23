@@ -101,7 +101,7 @@ export default function DomainManager() {
       if (!res.ok) { toast.error(d.message || 'Failed'); return; }
       toast.success(t('تم ربط الدومين — اتبع خطوات DNS بالأسفل', 'Domain connected — follow the DNS steps below'));
       setConnectDomain(''); load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setBusy(false);
   };
 
@@ -122,7 +122,7 @@ export default function DomainManager() {
       if (!res.ok) throw new Error();
       toast.success(t('تم فصل الدومين', 'Domain disconnected'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
   };
 
   const copy = async (v: string, label: string) => {

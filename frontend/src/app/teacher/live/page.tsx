@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog, promptDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -105,7 +106,7 @@ export default function LiveSessionsPage() {
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm(t('حذف هذه الجلسة نهائياً؟', 'Delete this session permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه الجلسة نهائياً؟', 'Delete this session permanently?') }))) return;
     try {
       const res = await fetch(`${API}/teacher/live-sessions/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
@@ -119,7 +120,7 @@ export default function LiveSessionsPage() {
       await navigator.clipboard.writeText(url);
       toast.success(t('تم نسخ رابط الانضمام', 'Join link copied'));
     } catch {
-      window.prompt(t('انسخ الرابط', 'Copy link:'), url);
+      void promptDialog({ inputLabel: t('انسخ الرابط', 'Copy link:'), defaultValue: url });
     }
   };
 
