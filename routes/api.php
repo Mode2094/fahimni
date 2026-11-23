@@ -156,6 +156,9 @@ Route::prefix('v1')->group(function () {
         Route::prefix('auth')->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);
+            // Complete a teacher account (Google sign-up / legacy) with the
+            // mandatory name + phone. Reachable WITHOUT the profile gate.
+            Route::post('complete-profile', [AuthController::class, 'completeProfile'])->middleware('throttle:login');
             Route::post('2fa/setup', [SecurityController::class, 'twoFactorSetup']);
             Route::post('2fa/enable', [SecurityController::class, 'twoFactorEnable']);
             Route::post('2fa/disable', [SecurityController::class, 'twoFactorDisable']);
@@ -163,7 +166,10 @@ Route::prefix('v1')->group(function () {
             Route::post('email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:email-verification');
         });
 
-        Route::prefix('user')->group(function () {
+        // `profile` blocks a teacher whose mandatory phone is still missing from
+        // editing an account around the completion step (students / super admins
+        // are unaffected). The completion endpoint itself stays outside.
+        Route::prefix('user')->middleware('profile')->group(function () {
             Route::put('profile', [UserController::class, 'updateProfile']);
             Route::put('password', [UserController::class, 'updatePassword']);
         });
@@ -190,7 +196,7 @@ Route::prefix('v1')->group(function () {
             Route::post('switch', [TenantController::class, 'switch']);
         });
 
-        Route::middleware(['tenant', 'device', 'subscription'])->group(function () {
+        Route::middleware(['tenant', 'device', 'subscription', 'profile'])->group(function () {
             Route::get('audit-logs', [SecurityController::class, 'auditLogs'])->middleware('role:teacher,owner,admin,permission:analytics.view');
 
             Route::get('dashboard', [DashboardController::class, 'index']);

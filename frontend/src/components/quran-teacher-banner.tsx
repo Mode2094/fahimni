@@ -34,8 +34,8 @@ export default function QuranTeacherBanner() {
   const juzOptions = useMemo(() => Array.from({ length: 30 }, (_, i) => i + 1), []);
 
   const handleSubmit = async () => {
-    if (!form.name || !form.email || !form.country) {
-      toast.error(t('يرجى تعبئة الاسم والبريد والدولة', 'Please fill in name, email and country'));
+    if (!form.name || !form.email || !form.country || !form.phone.trim()) {
+      toast.error(t('يرجى تعبئة الاسم والبريد والدولة ورقم الهاتف', 'Please fill in name, email, country and phone'));
       return;
     }
     setLoading(true);
@@ -126,11 +126,11 @@ export default function QuranTeacherBanner() {
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-bold text-white/60 mb-1 block">{t('رقم الهاتف', 'Phone')}</label>
+                    <label className="text-xs font-bold text-white/60 mb-1 block">{t('رقم الهاتف *', 'Phone *')}</label>
                     <Input
                       value={form.phone}
                       onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                      placeholder="+966..."
+                      placeholder="+962791234567"
                       className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
                     />
                   </div>

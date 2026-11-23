@@ -223,6 +223,8 @@ class TeacherTrialProgramTest extends TenantTestCase
             'password' => 'password-123',
             'password_confirmation' => 'password-123',
             'role' => 'Teacher',
+            // Every teacher account now requires a valid phone number.
+            'phone' => '+9627'.str_pad((string) random_int(0, 99999999), 8, '0', STR_PAD_LEFT),
         ]);
     }
 

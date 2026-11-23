@@ -20,6 +20,11 @@ class UserResource extends JsonResource
             'locale' => $this->locale,
             'email_verified_at' => $this->email_verified_at,
             'last_login_at' => $this->last_login_at,
+            // A teacher must supply a phone before using the workspace; the UI
+            // uses this to route them to the completion step.
+            'requires_profile_completion' => $this->hasRole('Teacher')
+                && ! $this->is_super_admin
+                && blank($this->phone),
             'tenants' => TenantResource::collection($this->whenLoaded('tenants')),
             'roles' => $this->getRoleNames(),
             'permissions' => $this->getAllPermissions()->pluck('name'),
