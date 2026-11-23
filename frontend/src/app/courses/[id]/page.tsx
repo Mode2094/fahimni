@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
 import VideoUploadQueue from '@/components/media/video-upload-queue';
 import CourseGroupsManager from '@/components/course/course-groups';
+import { DuplicateDialog, type DuplicateKind } from '@/components/content/duplicate-dialog';
 import { uploadVideoDirect } from '@/lib/tus-upload';
 import { stableIdempotencyKey } from '@/lib/video-upload-queue';
 import { buildLearnUrl } from '@/lib/course-preview';
@@ -64,6 +65,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  const [dup, setDup] = useState<{ kind: DuplicateKind; id: string; title: string } | null>(null);
 
   const [secOpen, setSecOpen] = useState(false);
   const [secTarget, setSecTarget] = useState<any>(null);
@@ -637,6 +640,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <Button variant="outline" className="gap-2 rounded-full" onClick={() => setGroupsOpen(true)} title={t('مجموعات الطلاب داخل الكورس', 'In-course student groups')}>
             <Users className="h-4 w-4" />{t('مجموعات الطلاب', 'Student groups')}
           </Button>
+          {course && (
+            <Button variant="outline" className="gap-2 rounded-full" onClick={() => setDup({ kind: 'course', id, title: course.title || '' })} title={t('إنشاء نسخة مسودة من الكورس كاملاً', 'Create a draft copy of the whole course')}>
+              <Copy className="h-4 w-4" />{t('إنشاء نسخة', 'Duplicate course')}
+            </Button>
+          )}
           <a href={buildLearnUrl(id, { preview: true })} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full" title={t('اعرض الكورس والدروس كما يراها الطالب (بما فيها المسودات)', 'View the course and lessons exactly as a student sees them (drafts included)')}><Eye className="h-4 w-4" />{t('معاينة كطالب', 'Preview as student')}</Button></a>
           {course && (
             <Button variant={course.is_published ? 'outline' : 'default'} className="gap-2 rounded-full" onClick={() => {
@@ -763,6 +771,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <a href={buildLearnUrl(id, { preview: true, lessonId: l.id })} target="_blank" rel="noreferrer" aria-label={t('معاينة الدرس كطالب', 'Preview lesson as student')} title={t('معاينة الدرس كطالب', 'Preview lesson as student')}>
                             <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700"><Eye className="h-3.5 w-3.5" /></Button>
                           </a>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => setDup({ kind: 'lesson', id: l.id, title: l.title })} aria-label={t('إنشاء نسخة من الدرس', 'Duplicate lesson')} title={t('إنشاء نسخة من الدرس', 'Duplicate lesson')}><Copy className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -785,6 +794,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         <Badge className={e.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{e.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>
                         <div className="flex items-center gap-1">
                           <Button size="sm" className="gap-1 rounded-full bg-violet-600 hover:bg-violet-700 text-white" onClick={() => openExamViewer(e)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-violet-700" onClick={() => setDup({ kind: 'exam', id: e.id, title: e.title })} aria-label={t('إنشاء نسخة من الاختبار', 'Duplicate exam')} title={t('إنشاء نسخة من الاختبار', 'Duplicate exam')}><Copy className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeExam(e.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       </div>
@@ -1093,6 +1103,16 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       />
 
       <CourseGroupsManager open={groupsOpen} onOpenChange={setGroupsOpen} courseId={id} />
+
+      {/* ─── حوار «إنشاء نسخة» (كورس/درس/اختبار) ─── */}
+      <DuplicateDialog
+        open={!!dup}
+        onOpenChange={(v) => { if (!v) setDup(null); }}
+        kind={dup?.kind || 'course'}
+        id={dup?.id || null}
+        originalTitle={dup?.title || ''}
+        onDuplicated={load}
+      />
     </div>
   );
 }

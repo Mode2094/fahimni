@@ -71,9 +71,9 @@ class UsageService
             // history releases its seat — see StudentSeatService.
             'students' => $this->seats->count($tenantId),
             'courses' => Course::withoutTenant()->where('tenant_id', $tenantId)->count(),
-            'videos' => VideoContent::withoutTenant()->where('tenant_id', $tenantId)->count(),
-            'files' => FileContent::withoutTenant()->where('tenant_id', $tenantId)->count(),
-            'pdfs' => FileContent::withoutTenant()->where('tenant_id', $tenantId)->where('extension', 'pdf')->count(),
+            'videos' => VideoContent::withoutTenant()->where('tenant_id', $tenantId)->where('is_shared_reference', false)->count(),
+            'files' => FileContent::withoutTenant()->where('tenant_id', $tenantId)->where('is_shared_reference', false)->count(),
+            'pdfs' => FileContent::withoutTenant()->where('tenant_id', $tenantId)->where('is_shared_reference', false)->where('extension', 'pdf')->count(),
             'questions' => Question::withoutTenant()->where('tenant_id', $tenantId)->count(),
             'exams' => Exam::withoutTenant()->where('tenant_id', $tenantId)->count(),
             'assignments' => Assignment::withoutTenant()->where('tenant_id', $tenantId)->count(),
@@ -104,8 +104,10 @@ class UsageService
 
     public function storageBytes(string $tenantId): int
     {
-        return (int) FileContent::withoutTenant()->where('tenant_id', $tenantId)->sum('size_bytes')
-            + (int) VideoContent::withoutTenant()->where('tenant_id', $tenantId)->sum('file_size_bytes')
+        // Mirrored (duplicated) media rows reuse the original bytes; counting
+        // them would charge the tenant twice for the same stored object.
+        return (int) FileContent::withoutTenant()->where('tenant_id', $tenantId)->where('is_shared_reference', false)->sum('size_bytes')
+            + (int) VideoContent::withoutTenant()->where('tenant_id', $tenantId)->where('is_shared_reference', false)->sum('file_size_bytes')
             + (int) Assignment::withoutTenant()->where('tenant_id', $tenantId)->sum('file_size_bytes')
             + (int) AssignmentSubmission::withoutTenant()->where('tenant_id', $tenantId)->sum('file_size_bytes');
     }

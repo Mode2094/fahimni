@@ -329,6 +329,22 @@ class MediaService
     {
         $asset = MediaAsset::withoutTenant()->findOrFail($assetId);
 
+        // A duplicated lesson/course reuses the SAME provider video (no
+        // re-upload, no extra Bunny copy), so destroying it here would silently
+        // break every other lesson that still plays it. When another video
+        // content references the asset, detach it from this lesson and keep the
+        // provider video alive.
+        if ($this->hasOtherVideoReferences($asset)) {
+            $asset->update(['lesson_content_id' => null]);
+
+            Log::info('media.asset.kept_for_references', [
+                'asset' => $asset->id,
+                'provider_asset' => $asset->provider_asset_id,
+            ]);
+
+            return;
+        }
+
         $driver = $this->manager->provider($asset->provider);
 
         try {
@@ -339,6 +355,28 @@ class MediaService
         }
 
         $this->deleteAssetRecord($asset, 'teacher_deleted');
+    }
+
+    /**
+     * True when some OTHER video content still points at the same provider
+     * video. Mirrors created by duplication are the usual reason — but any
+     * legitimate second use must be honoured, never deleted underneath.
+     */
+    private function hasOtherVideoReferences(MediaAsset $asset): bool
+    {
+        if (! $asset->provider_asset_id) {
+            return false;
+        }
+
+        return VideoContent::withoutTenant()
+            ->where('provider', $asset->provider)
+            ->where('provider_video_id', $asset->provider_asset_id)
+            ->when(
+                $asset->lesson_content_id !== null,
+                // Exclude the row this deletion belongs to; anything else counts.
+                fn ($q) => $q->where('lesson_content_id', '!=', $asset->lesson_content_id),
+            )
+            ->exists();
     }
 
     private function deleteAssetRecord(MediaAsset $asset, string $reason): void

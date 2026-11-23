@@ -15,13 +15,14 @@ class FileContent extends Model
     protected $fillable = [
         'lesson_content_id', 'tenant_id', 'original_name', 'storage_path',
         'mime_type', 'size_bytes', 'extension', 'is_downloadable',
-        'thumbnail_url', 'metadata',
+        'thumbnail_url', 'metadata', 'is_shared_reference',
     ];
 
     protected $casts = [
         'size_bytes' => 'integer',
         'is_downloadable' => 'boolean',
         'metadata' => 'array',
+        'is_shared_reference' => 'boolean',
     ];
 
     public function lessonContent(): BelongsTo
