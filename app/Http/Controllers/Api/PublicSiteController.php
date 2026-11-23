@@ -9,13 +9,13 @@ use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\Lesson;
-use App\Models\LessonProgress;
 use App\Models\Post;
 use App\Models\SubscriptionPlan;
 use App\Models\SupportTicket;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
 use App\Models\TicketMessage;
+use App\Models\User;
 use App\Services\VideoProtectionService;
 use App\Support\FeatureCatalog;
 use Illuminate\Http\JsonResponse;
@@ -154,6 +154,36 @@ class PublicSiteController extends Controller
     }
 
     /**
+     * Public course detail for a teacher's own site (/t/{slug}/courses/{course}).
+     * Only a PUBLISHED course that belongs to the active tenant slug is ever
+     * returned, so a course id from another academy can never be rendered under
+     * this teacher's brand, and an unpublished course simply 404s — a deleted
+     * or hidden course never leaves a page exposing private content.
+     *
+     * The curriculum payload itself is produced by `sections()`, so the public
+     * course page and the enrolled lesson player never drift apart.
+     */
+    public function course(Request $request, string $slug, string $courseId): JsonResponse
+    {
+        $tenant = Tenant::where('slug', $slug)->where('status', 'active')->first();
+
+        if (! $tenant) {
+            return response()->json(['message' => 'Site not found.'], 404);
+        }
+
+        $owned = Course::where('tenant_id', $tenant->id)
+            ->where('is_published', true)
+            ->whereKey($courseId)
+            ->exists();
+
+        if (! $owned) {
+            return response()->json(['message' => 'Course not found.'], 404);
+        }
+
+        return $this->sections($request, $courseId);
+    }
+
+    /**
      * Published course bundles for a teacher's public site. Only courses that
      * are themselves published are exposed inside a bundle, so an unpublished
      * draft course can never leak through the package listing.
@@ -202,6 +232,8 @@ class PublicSiteController extends Controller
 
     public function sections(Request $request, string $courseId): JsonResponse
     {
+        $user = $request->user() ?? auth('sanctum')->user();
+
         $course = Course::where('is_published', true)
             ->with(['sections.lessons.contents.file'])
             ->find($courseId);
@@ -209,82 +241,41 @@ class PublicSiteController extends Controller
         if (! $course) {
             // Students with an active enrollment may access the course even
             // while it is unpublished (e.g. they activated a card for it).
+            // The course author and authorised tenant staff may always open a
+            // draft course too — that is what powers "preview as student".
             $course = Course::with(['sections.lessons.contents.file'])
                 ->find($courseId);
 
-            $user = $request->user() ?? auth('sanctum')->user();
-            $enrolled = $user && $user->enrollments()
+            $isStaff = $course && $this->isTenantStaff($user, $course->tenant_id);
+
+            $enrolled = $user && $course && $user->enrollments()
                 ->where('course_id', $courseId)
                 ->effective()
                 ->exists();
 
-            if (! $course || ! $enrolled) {
+            if (! $course || ! ($enrolled || $isStaff)) {
                 abort(404, 'Course not found.');
             }
         }
 
-        return response()->json($this->sectionsPayload($request, $course));
-    }
-
-    /**
-     * Public course detail for a teacher's own site (/t/{slug}/courses/{course}).
-     * Only a PUBLISHED course that belongs to the active tenant slug is ever
-     * returned, so a course id from another academy can never be rendered under
-     * this teacher's brand, and an unpublished course simply 404s — a deleted
-     * or hidden course never leaves a page exposing private content.
-     */
-    public function course(Request $request, string $slug, string $courseId): JsonResponse
-    {
-        $tenant = Tenant::where('slug', $slug)->where('status', 'active')->first();
-
-        if (! $tenant) {
-            return response()->json(['message' => 'Site not found.'], 404);
-        }
-
-        $course = Course::where('tenant_id', $tenant->id)
-            ->where('is_published', true)
-            ->with(['sections.lessons.contents.file'])
-            ->find($courseId);
-
-        if (! $course) {
-            return response()->json(['message' => 'Course not found.'], 404);
-        }
-
-        return response()->json($this->sectionsPayload($request, $course));
-    }
-
-    /**
-     * Shared course + curriculum payload used by both the sections endpoint and
-     * the public course page. Locking, course-group visibility and drip rules
-     * live here only, so the two paths can never drift apart.
-     */
-    private function sectionsPayload(Request $request, Course $course): array
-    {
         $settings = TenantSetting::where('tenant_id', $course->tenant_id)->first();
         $downloadsEnabled = (bool) ($settings?->file_downloads_enabled ?? true);
 
-        $user = $request->user() ?? auth('sanctum')->user();
-        $enrolled = false;
         $enrollment = null;
-        $isOwner = false;
+
+        // المالك/طاقم المؤسسة (معلم/مدير) يعتبر "مسجلاً" تلقائياً — يملك الكورس
+        // ولا يحتاج تسجيلاً رسمياً، ويُعدّ في وضع "المعاينة كطالب".
+        $isOwner = $this->isTenantStaff($user, $course->tenant_id);
+        $preview = $isOwner;
 
         if ($user) {
-            // المالك/طاقم المؤسسة (معلم/مدير) يعتبر "مسجلاً" تلقائياً —
-            // يملك الكورس ولا يحتاج تسجيلاً رسمياً.
-            $isOwner = $user->is_super_admin
-                || $user->tenants()
-                    ->where('tenant_id', $course->tenant_id)
-                    ->wherePivotIn('role', ['teacher', 'owner', 'admin'])
-                    ->wherePivot('status', 'active')
-                    ->exists();
-
             $enrollment = $user->enrollments()
                 ->where('course_id', $course->id)
                 ->effective()
                 ->first();
-
-            $enrolled = $isOwner || $enrollment !== null;
         }
+
+        $enrolled = $isOwner || $enrollment !== null;
 
         // Course groups: a lesson restricted to groups is only visible to their
         // members. Staff/owner always see everything. Membership never creates
@@ -314,24 +305,19 @@ class PublicSiteController extends Controller
             return count(array_intersect($lessonGroupIds[$lessonId], $memberGroupIds)) > 0;
         };
 
-        // Drip content: lessons unlock gradually after enrollment.
-        $dripEnabled = (bool) $course->drip_enabled && $enrolled;
+        // Drip content: lessons unlock gradually after enrollment. Staff in
+        // preview mode always see everything unlocked, so drip is never applied
+        // to them (they have no enrollment date to drip from).
+        $dripEnabled = (bool) $course->drip_enabled && $enrolled && ! $isOwner;
         $intervalDays = max(1, (int) $course->drip_interval_days);
         $position = 0;
 
-        // Per-lesson completion for THIS student's own enrollment (never the
-        // owner/staff preview), so the player can show check marks, overall
-        // progress and "resume where you left off" without extra round-trips.
-        $progressByLesson = $enrollment
-            ? LessonProgress::where('enrollment_id', $enrollment->id)->get()->keyBy('lesson_id')
-            : collect();
-
-        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $progressByLesson) {
+        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $isOwner) {
             return [
                 'id' => $section->id,
                 'title' => $section->title,
                 'sort_order' => $section->sort_order,
-                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $progressByLesson) {
+                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $isOwner) {
                     $position++;
 
                     // Hidden for this student's group — not merely locked.
@@ -351,7 +337,6 @@ class PublicSiteController extends Controller
                     }
 
                     $file = $lesson->contents->where('content_type', 'file')->first()?->file;
-                    $progress = $progressByLesson->get($lesson->id);
 
                     return [
                         'id' => $lesson->id,
@@ -362,9 +347,6 @@ class PublicSiteController extends Controller
                         'locked' => $locked,
                         'unlock_at' => $locked ? $unlockAt?->toIso8601String() : null,
                         'position' => $position,
-                        'completed' => ($progress?->status) === 'completed',
-                        'progress_status' => $progress?->status,
-                        'watch_time_seconds' => (int) ($progress?->watch_time_seconds ?? 0),
                         'file_url' => ! $locked && $file
                             ? '/lessons/'.$lesson->id.'/file-ticket?tenant_id='.$course->tenant_id
                             : null,
@@ -375,21 +357,45 @@ class PublicSiteController extends Controller
             ];
         });
 
-        return [
+        return response()->json([
             'course' => $this->coursePayload($course),
             'sections' => $sections,
             // Whether the caller is enrolled (owner/staff count as enrolled):
             // drives the "Enrolled / Guest" badge on the lesson page.
             'is_enrolled' => $enrolled,
-            // The student's OWN enrollment id, used to persist lesson progress.
-            // Null for guests and for owner/staff previews (they have none).
-            'enrollment_id' => $enrollment?->id,
+            // True when the viewer is the course author / authorised staff, so
+            // the client can flag "preview as student". Purely informational —
+            // the server already authorised the request above.
+            'preview' => $preview,
             'drip' => [
                 'enabled' => $dripEnabled,
                 'interval_days' => $dripEnabled ? $intervalDays : null,
             ],
             'file_downloads_enabled' => $downloadsEnabled,
-        ];
+        ]);
+    }
+
+    /**
+     * The course author and authorised tenant staff (teacher/owner/admin) for
+     * this course's tenant. Super admins always qualify. Gates "preview as
+     * student" access to draft (unpublished) content; a student can never
+     * satisfy it, so `?preview=1` can never bypass publishing or a subscription.
+     */
+    private function isTenantStaff(?User $user, string $tenantId): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->is_super_admin) {
+            return true;
+        }
+
+        return $user->tenants()
+            ->where('tenant_id', $tenantId)
+            ->wherePivotIn('role', ['teacher', 'owner', 'admin'])
+            ->wherePivot('status', 'active')
+            ->exists();
     }
 
     private function isPreviewable($file): bool
@@ -413,15 +419,19 @@ class PublicSiteController extends Controller
 
         if (! $course) {
             // Enrolled students may access lessons of unpublished courses
-            // (card-activated courses that are not yet public).
+            // (card-activated courses that are not yet public). The course
+            // author / authorised staff may always open a draft lesson — this
+            // powers "preview as student" for unpublished content.
             $course = Course::find($courseId);
+
+            $isStaff = $course && $this->isTenantStaff($user, $course->tenant_id);
 
             $enrolled = $user && $course && $user->enrollments()
                 ->where('course_id', $course->id)
                 ->effective()
                 ->exists();
 
-            if (! $course || ! $enrolled) {
+            if (! $course || ! ($enrolled || $isStaff)) {
                 abort(404, 'Course not found.');
             }
         }
@@ -432,18 +442,12 @@ class PublicSiteController extends Controller
             ->firstOrFail();
 
         $enrollment = null;
-        $isOwner = false;
+
+        // المالك/طاقم المؤسسة (معلم/مدير) يملك الكورس ولا يحتاج تسجيلاً
+        // رسمياً — نفس منطق sections() حتى لا يُحجب المعلم عن درسـه.
+        $isOwner = $this->isTenantStaff($user, $course->tenant_id);
 
         if ($user) {
-            // المالك/طاقم المؤسسة (معلم/مدير) يملك الكورس ولا يحتاج تسجيلاً
-            // رسمياً — نفس منطق sections() حتى لا يُحجب المعلم عن درسـه.
-            $isOwner = $user->is_super_admin
-                || $user->tenants()
-                    ->where('tenant_id', $course->tenant_id)
-                    ->wherePivotIn('role', ['teacher', 'owner', 'admin'])
-                    ->wherePivot('status', 'active')
-                    ->exists();
-
             $enrollment = $user->enrollments()
                 ->where('course_id', $course->id)
                 ->effective()
@@ -471,7 +475,7 @@ class PublicSiteController extends Controller
             return response()->json(['message' => 'This lesson is locked. Enroll to access it.'], 403);
         }
 
-        if ((bool) $course->drip_enabled && ! $lesson->is_free_preview) {
+        if ((bool) $course->drip_enabled && ! $lesson->is_free_preview && ! $isOwner) {
             $intervalDays = max(1, (int) $course->drip_interval_days);
             $position = $lesson->positionInCourse();
             $unlockAt = $enrollment?->enrolled_at?->addDays(max(0, $position - 1) * $intervalDays);
@@ -489,7 +493,7 @@ class PublicSiteController extends Controller
         $settings = TenantSetting::where('tenant_id', $course->tenant_id)->first();
         $downloadsEnabled = (bool) ($settings?->file_downloads_enabled ?? true);
 
-        $contents = $lesson->contents->map(function ($content) use ($user, $protection, $downloadsEnabled) {
+        $contents = $lesson->contents->map(function ($content) use ($user, $protection, $downloadsEnabled, $lesson) {
             $payload = [
                 'id' => $content->id,
                 'content_type' => $content->content_type,
@@ -505,21 +509,25 @@ class PublicSiteController extends Controller
                     ? $protection->providerPlaybackPayload($content->video, $user)
                     : $protection->playbackPayload($content->video, $user);
             } elseif ($content->video) {
-                // Guest (or non-enrolled) view. The access check above already
-                // rejected everything except free-preview lessons, so this only
-                // ever runs for content the visitor is allowed to preview.
-                // Externally hosted clips (YouTube/Vimeo) are public anyway, so
-                // their id can be embedded directly; uploaded/Bunny videos need
-                // a signed, user-bound URL and therefore stay behind sign-in.
-                $external = in_array($content->video->provider, ['youtube', 'vimeo'], true);
                 $payload['video'] = [
                     'type' => 'external',
                     'provider' => $content->video->provider,
-                    'provider_video_id' => $external ? $content->video->provider_video_id : null,
                     'title' => $content->video->title,
                     'duration' => (int) $content->video->duration,
-                    'requires_login' => ! $external,
                 ];
+
+                // A free-preview lesson can be watched by a guest. When the
+                // video lives on an external public host (YouTube/Vimeo) the
+                // provider id is already part of the public embed URL, so
+                // exposing it leaks nothing and lets the storefront preview it.
+                // A hosted (Bunny) stream stays hidden — only a "requires
+                // login" flag is sent, never a stream URL.
+                if (in_array($content->video->provider, ['youtube', 'vimeo'], true)) {
+                    $payload['video']['provider_video_id'] = $content->video->provider_video_id;
+                    $payload['video']['requires_login'] = ! $lesson->is_free_preview;
+                } else {
+                    $payload['video']['requires_login'] = true;
+                }
             }
 
             if ($content->text) {
@@ -618,6 +626,8 @@ class PublicSiteController extends Controller
                 'is_free_preview' => (bool) $lesson->is_free_preview,
                 'enrolled' => $enrolled,
             ],
+            // True when the viewer is the author / authorised staff.
+            'preview' => $isOwner,
             'contents' => $contents,
             'exercise' => $exercise,
         ]);

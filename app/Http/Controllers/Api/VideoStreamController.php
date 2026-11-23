@@ -9,6 +9,7 @@ use App\Models\VideoPlaybackSession;
 use App\Plans\Exceptions\QuotaExceededException;
 use App\Plans\PlanEngine;
 use App\Services\VideoProtectionService;
+use App\Services\VideoWatchPositionService;
 use App\Support\DevicePolicy;
 use App\Support\StoragePathGuard;
 use Illuminate\Http\JsonResponse;
@@ -25,6 +26,7 @@ class VideoStreamController extends Controller
 
     public function __construct(
         private readonly VideoProtectionService $protection,
+        private readonly VideoWatchPositionService $positions,
     ) {}
 
     /**
@@ -131,13 +133,51 @@ class VideoStreamController extends Controller
         //    - روابط خارجية (youtube/vimeo) → payload خارجي يُشغَّل داخل iframe.
         //    - بث مزوّد (bunny/cloudflare) → روابط موقّعة من المزوّد (providerPayload).
         if ($video->is_uploaded || in_array($video->provider, ['youtube', 'vimeo'], true)) {
-            return response()->json([
-                'playback' => $this->protection->playbackPayload($video, $user, $deviceHash),
-            ]);
+            $playback = $this->protection->playbackPayload($video, $user, $deviceHash);
+        } else {
+            $playback = $this->providerPayload($video, $user);
         }
 
+        // آخر موضع مشاهدة للطالب نفسه (استكمال من حيث توقف) — لا يُكشف موضع
+        // أي طالب آخر، ويُهمَل إن تغيّرت مدة الفيديو بعد إعادة الرفع.
+        $playback['resume'] = $this->positions->read($video, $user);
+
+        return response()->json(['playback' => $playback]);
+    }
+
+    /**
+     * يحفظ موضع المشاهدة للطالب الحالي (نبضة خفيفة كل بضع ثوانٍ + عند
+     * الإيقاف/الخروج). الاستدعاء من نفس من يشاهد، فلا موضع لطالب آخر.
+     */
+    public function savePosition(Request $request, string $videoId): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $video = VideoContent::findOrFail($videoId);
+
+        // نفس سلسلة الوصول المستخدمة في التشغيل — لا حفظ لغير المصرّح لهم.
+        if (! $this->protection->canAccess($video, $user)) {
+            return response()->json(['message' => 'No access to this video.'], 403);
+        }
+
+        $validated = $request->validate([
+            'position_seconds' => 'required|numeric|min:0|max:86400',
+            'duration_seconds' => 'nullable|numeric|min:0|max:86400',
+        ]);
+
+        $saved = $this->positions->save(
+            $video,
+            $user,
+            (int) floor((float) $validated['position_seconds']),
+            isset($validated['duration_seconds']) ? (int) floor((float) $validated['duration_seconds']) : null,
+        );
+
+        // فشل الحفظ المتوقّع (لا تسجيل/فشل قاعدة) لا يجب أن يُظهر خطأ يعطّل
+        // المشغّل — نُبلّغ بحالة صريحة والعميل يكمل التشغيل.
         return response()->json([
-            'playback' => $this->providerPayload($video, $user),
+            'ok' => $saved !== null,
+            'position' => $saved,
         ]);
     }
 

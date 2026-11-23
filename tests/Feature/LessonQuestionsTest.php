@@ -11,14 +11,16 @@ use Illuminate\Support\Str;
 use Symfony\Component\Uid\UuidV7;
 
 /**
- * Lesson notes & Q&A.
+ * Per-lesson Q&A.
  *
- * Guarantees: notes are private to their author unless explicitly shared;
- * students never see another student's private question; the teacher can read
- * and answer every question of the tenant; and one student can never edit or
- * delete another student's note/question.
+ * Guarantees: a public question is visible to the tenant's students while a
+ * private one is not; the teacher (and only the teacher) can answer; an
+ * answered question can no longer be deleted; and a lesson from another tenant
+ * is never reachable.
+ *
+ * (Student notes live in a separate feature — see LessonNoteTest.)
  */
-class LessonNotesQuestionsTest extends TenantTestCase
+class LessonQuestionsTest extends TenantTestCase
 {
     private function tree(Tenant $tenant): array
     {
@@ -41,95 +43,11 @@ class LessonNotesQuestionsTest extends TenantTestCase
     }
 
     /** @test */
-    public function test_student_creates_and_reads_only_their_own_notes(): void
-    {
-        $tenant = $this->makeTenant();
-        $this->attachSubscription($tenant);
-        [$course, $lesson] = $this->tree($tenant);
-
-        $student = $this->makeUser();
-        $this->attachToTenant($student, $tenant, 'student');
-
-        $this->postJson("/api/v1/lessons/{$lesson->id}/notes", [
-            'body' => 'نقطة مهمة',
-            'timestamp_seconds' => 42,
-        ], $this->authHeaders($student, $tenant))->assertStatus(201);
-
-        $res = $this->getJson('/api/v1/lesson-notes', $this->authHeaders($student, $tenant));
-        $res->assertOk();
-        $this->assertCount(1, $res->json('notes'));
-        $this->assertSame(42, $res->json('notes.0.timestamp_seconds'));
-
-        // Another student sees nothing.
-        $other = $this->makeUser();
-        $this->attachToTenant($other, $tenant, 'student');
-        $otherRes = $this->getJson('/api/v1/lesson-notes', $this->authHeaders($other, $tenant));
-        $this->assertCount(0, $otherRes->json('notes'));
-    }
-
-    /** @test */
-    public function test_teacher_only_sees_shared_notes(): void
-    {
-        $tenant = $this->makeTenant();
-        $this->attachSubscription($tenant);
-        [$course, $lesson] = $this->tree($tenant);
-
-        $student = $this->makeUser();
-        $this->attachToTenant($student, $tenant, 'student');
-        $teacher = $this->makeUser();
-        $this->attachToTenant($teacher, $tenant, 'teacher');
-
-        $this->postJson("/api/v1/lessons/{$lesson->id}/notes", ['body' => 'خاصة'], $this->authHeaders($student, $tenant));
-        $this->postJson("/api/v1/lessons/{$lesson->id}/notes", ['body' => 'مشتركة', 'is_shared' => true], $this->authHeaders($student, $tenant));
-
-        $res = $this->getJson('/api/v1/lesson-notes', $this->authHeaders($teacher, $tenant));
-        $res->assertOk();
-        $this->assertCount(1, $res->json('notes'));
-        $this->assertSame('مشتركة', $res->json('notes.0.body'));
-    }
-
-    /** @test */
-    public function test_student_cannot_edit_or_delete_another_students_note(): void
-    {
-        $tenant = $this->makeTenant();
-        $this->attachSubscription($tenant);
-        [$course, $lesson] = $this->tree($tenant);
-
-        $owner = $this->makeUser();
-        $this->attachToTenant($owner, $tenant, 'student');
-        $intruder = $this->makeUser();
-        $this->attachToTenant($intruder, $tenant, 'student');
-
-        $noteId = $this->postJson("/api/v1/lessons/{$lesson->id}/notes", ['body' => 'ملكي'], $this->authHeaders($owner, $tenant))
-            ->json('note.id');
-
-        $this->putJson("/api/v1/lesson-notes/{$noteId}", ['body' => 'معدّل'], $this->authHeaders($intruder, $tenant))
-            ->assertStatus(403);
-        $this->deleteJson("/api/v1/lesson-notes/{$noteId}", [], $this->authHeaders($intruder, $tenant))
-            ->assertStatus(403);
-    }
-
-    /** @test */
-    public function test_a_lesson_from_another_tenant_is_not_reachable(): void
-    {
-        $tenantA = $this->makeTenant();
-        $tenantB = $this->makeTenant();
-        $this->attachSubscription($tenantA);
-        [, $lessonB] = $this->tree($tenantB);
-
-        $student = $this->makeUser();
-        $this->attachToTenant($student, $tenantA, 'student');
-
-        $this->postJson("/api/v1/lessons/{$lessonB->id}/notes", ['body' => 'x'], $this->authHeaders($student, $tenantA))
-            ->assertStatus(404);
-    }
-
-    /** @test */
     public function test_public_question_is_visible_to_other_students_but_private_is_not(): void
     {
         $tenant = $this->makeTenant();
         $this->attachSubscription($tenant);
-        [$course, $lesson] = $this->tree($tenant);
+        [, $lesson] = $this->tree($tenant);
 
         $asker = $this->makeUser();
         $this->attachToTenant($asker, $tenant, 'student');
@@ -151,7 +69,7 @@ class LessonNotesQuestionsTest extends TenantTestCase
     {
         $tenant = $this->makeTenant();
         $this->attachSubscription($tenant);
-        [$course, $lesson] = $this->tree($tenant);
+        [, $lesson] = $this->tree($tenant);
 
         $student = $this->makeUser();
         $this->attachToTenant($student, $tenant, 'student');
@@ -180,7 +98,7 @@ class LessonNotesQuestionsTest extends TenantTestCase
     {
         $tenant = $this->makeTenant();
         $this->attachSubscription($tenant);
-        [$course, $lesson] = $this->tree($tenant);
+        [, $lesson] = $this->tree($tenant);
 
         $student = $this->makeUser();
         $this->attachToTenant($student, $tenant, 'student');
@@ -197,5 +115,20 @@ class LessonNotesQuestionsTest extends TenantTestCase
         $this->deleteJson("/api/v1/lesson-questions/{$openId}", [], $this->authHeaders($student, $tenant))
             ->assertOk();
         $this->assertNull(LessonQuestion::withoutTenant()->find($openId));
+    }
+
+    /** @test */
+    public function test_a_lesson_from_another_tenant_is_not_reachable(): void
+    {
+        $tenantA = $this->makeTenant();
+        $tenantB = $this->makeTenant();
+        $this->attachSubscription($tenantA);
+        [, $lessonB] = $this->tree($tenantB);
+
+        $student = $this->makeUser();
+        $this->attachToTenant($student, $tenantA, 'student');
+
+        $this->postJson("/api/v1/lessons/{$lessonB->id}/questions", ['body' => 'x'], $this->authHeaders($student, $tenantA))
+            ->assertStatus(404);
     }
 }

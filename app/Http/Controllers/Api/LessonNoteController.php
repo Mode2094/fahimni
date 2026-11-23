@@ -3,118 +3,93 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Lesson;
 use App\Models\LessonNote;
-use App\Traits\AuthorizesTenantAccess;
+use App\Services\LessonNoteService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Symfony\Component\Uid\UuidV7;
 
 /**
- * Per-lesson student notes (optionally pinned to a video timestamp).
+ * ملاحظات الطالب وعلاماتهم المرجعية — خاصة بصاحبها حصراً.
  *
- * A note always belongs to its author. Staff of the tenant can read a note
- * only when the student explicitly shared it. There is no cross-student leak:
- * a plain student listing is always filtered to `user_id = me`.
+ * الوصول مقصور على تسجيل الدخول؛ وكل عملية تتحقّق أن الطالب هو مالك الصف وأنه
+ * يملك حق الوصول الفعلي للدرس (تسجيل فعّال + فتح الدرس + تقييد المجموعة)، فلا
+ * يمكن قراءة ملاحظات طالب آخر ولا الكتابة في درس غير مسموح.
  */
 class LessonNoteController extends Controller
 {
-    use AuthorizesTenantAccess;
+    public function __construct(private readonly LessonNoteService $notes) {}
 
+    /** قائمة ملاحظات الطالب (مع ترقيم وتصفية وبحث بسيط). */
     public function index(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $staff = $this->isTenantStaff($request);
-
-        $notes = LessonNote::with(['lesson:id,title'])
-            ->when(! $staff || $request->boolean('mine'), fn ($q) => $q->where('user_id', $user->id))
-            ->when($staff && ! $request->boolean('mine'), fn ($q) => $q->where('is_shared', true))
-            ->when($request->filled('lesson_id'), fn ($q) => $q->where('lesson_id', $request->lesson_id))
-            ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->course_id))
-            ->orderByDesc('created_at')
-            ->limit(500)
-            ->get();
-
-        return response()->json(['notes' => $notes]);
-    }
-
-    public function store(Request $request, string $lessonId): JsonResponse
-    {
-        $lesson = $this->resolveLesson($request, $lessonId);
-
-        $validated = $request->validate([
-            'body' => 'required|string|max:5000',
-            'timestamp_seconds' => 'nullable|integer|min:0|max:360000',
-            'is_shared' => 'nullable|boolean',
+        $filters = $request->validate([
+            'course_id' => ['nullable', 'string', 'max:64'],
+            'lesson_id' => ['nullable', 'string', 'max:64'],
+            'type' => ['nullable', 'in:note,bookmark'],
+            'q' => ['nullable', 'string', 'max:200'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $note = LessonNote::create([
-            'id' => UuidV7::generate(),
-            'tenant_id' => $lesson->tenant_id,
-            'user_id' => $request->user()->id,
-            'lesson_id' => $lesson->id,
-            'course_id' => $lesson->section?->course_id,
-            'timestamp_seconds' => $validated['timestamp_seconds'] ?? null,
-            'body' => $validated['body'],
-            'is_shared' => $request->boolean('is_shared', false),
+        return response()->json($this->notes->list($request->user(), $filters));
+    }
+
+    /** شجرة الكورس ← الدرس لملاحظات الطالب (لتنظيم صفحة «ملاحظاتي»). */
+    public function summary(Request $request): JsonResponse
+    {
+        return response()->json(['courses' => $this->notes->summary($request->user())]);
+    }
+
+    /** حفظ ملاحظة جديدة أو علامة مرجعية («احفظ هذه اللحظة»). */
+    public function store(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'lesson_id' => ['required', 'string', 'max:64'],
+            'type' => ['nullable', 'in:note,bookmark'],
+            'body' => ['nullable', 'string', 'max:'.LessonNote::MAX_BODY_LENGTH],
+            'position_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
+            'duration_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
+            'video_id' => ['nullable', 'string', 'max:64'],
         ]);
 
-        return response()->json(['note' => $note], 201);
+        $lesson = $this->notes->resolveAccessibleLesson($request->user(), $data['lesson_id']);
+        $note = $this->notes->create($request->user(), $lesson, $data);
+
+        return response()->json([
+            'note' => $this->notes->present(collect([$note]))[0],
+        ], 201);
     }
 
-    public function update(Request $request, string $noteId): JsonResponse
+    /** تعديل ملاحظة يملكها الطالب. */
+    public function update(Request $request, string $note): JsonResponse
     {
-        $note = LessonNote::findOrFail($noteId);
-
-        if ($note->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'You can only edit your own notes.'], 403);
-        }
-
-        $validated = $request->validate([
-            'body' => 'sometimes|required|string|max:5000',
-            'timestamp_seconds' => 'nullable|integer|min:0|max:360000',
-            'is_shared' => 'nullable|boolean',
+        $data = $request->validate([
+            'body' => ['nullable', 'string', 'max:'.LessonNote::MAX_BODY_LENGTH],
+            'position_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
         ]);
 
-        $data = [];
-        if ($request->has('body')) {
-            $data['body'] = $validated['body'];
-        }
-        if ($request->has('timestamp_seconds')) {
-            $data['timestamp_seconds'] = $validated['timestamp_seconds'];
-        }
-        if ($request->has('is_shared')) {
-            $data['is_shared'] = $request->boolean('is_shared');
-        }
+        $model = $this->ownNote($request, $note);
+        $this->notes->update($request->user(), $model, $data);
 
-        $note->update($data);
-
-        return response()->json(['note' => $note->fresh()]);
+        return response()->json(['note' => $this->notes->present(collect([$model]))[0]]);
     }
 
-    public function destroy(Request $request, string $noteId): JsonResponse
+    /** حذف ملاحظة يملكها الطالب. */
+    public function destroy(Request $request, string $note): JsonResponse
     {
-        $note = LessonNote::findOrFail($noteId);
+        $model = $this->ownNote($request, $note);
+        $this->notes->delete($request->user(), $model);
 
-        if ($note->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'You can only delete your own notes.'], 403);
-        }
-
-        $note->delete();
-
-        return response()->json(['message' => 'Note deleted.']);
+        return response()->json(['ok' => true]);
     }
 
-    private function resolveLesson(Request $request, string $lessonId): Lesson
+    /**
+     * يجلب الملاحظة بشرط أن يملكها الطالب؛ ملاحظة غيره لا تُكشف أصلاً (404).
+     */
+    private function ownNote(Request $request, string $noteId): LessonNote
     {
-        $tenantId = (string) $request->current_tenant->id;
-
-        $lesson = Lesson::with('section.course')->findOrFail($lessonId);
-
-        if ($lesson->tenant_id !== $tenantId) {
-            abort(404, 'Lesson not found.');
-        }
-
-        return $lesson;
+        return LessonNote::withoutTenant()
+            ->where('user_id', $request->user()->id)
+            ->findOrFail($noteId);
     }
 }

@@ -4,7 +4,9 @@ use App\Http\Middleware\AdminMiddleware;
 use App\Http\Middleware\BlockViewAsWrites;
 use App\Http\Middleware\CheckFeature;
 use App\Http\Middleware\DeviceSessionMiddleware;
+use App\Http\Middleware\EnsureAccountActive;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\EnsureTeacherProfileComplete;
 use App\Http\Middleware\MaintenanceMiddleware;
 use App\Http\Middleware\MetricsMiddleware;
 use App\Http\Middleware\RequireSubscription;
@@ -28,6 +30,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => AdminMiddleware::class,
             'role' => EnsureRole::class,
             'subscription' => RequireSubscription::class,
+            'profile' => EnsureTeacherProfileComplete::class,
         ]);
 
         // All traffic enters through our own nginx (or, once deployed, the
@@ -45,6 +48,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToGroup('api', MaintenanceMiddleware::class);
         $middleware->appendToGroup('api', 'throttle:api');
         $middleware->appendToGroup('api', MetricsMiddleware::class);
+        // Revoke web sessions after password changes / deactivation. Must run
+        // after StartSession (statefulApi) and before route auth middleware.
+        $middleware->appendToGroup('api', EnsureAccountActive::class);
         // Runs on every API request (after the session is started) so the
         // read-only view-as guard also covers authenticated routes registered
         // outside the main group — bookings, uploads, cancellations. A write

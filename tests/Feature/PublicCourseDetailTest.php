@@ -6,7 +6,6 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Lesson;
 use App\Models\LessonContent;
-use App\Models\LessonProgress;
 use App\Models\Section;
 use App\Models\Tenant;
 use App\Models\VideoContent;
@@ -176,7 +175,7 @@ class PublicCourseDetailTest extends TenantTestCase
     }
 
     /** @test */
-    public function test_guest_curriculum_has_no_enrollment_or_progress(): void
+    public function test_guest_curriculum_exposes_no_student_specific_data(): void
     {
         $tenant = $this->makeTenant();
         $course = $this->makeCourse($tenant);
@@ -185,22 +184,23 @@ class PublicCourseDetailTest extends TenantTestCase
         $res = $this->getJson("/api/v1/public/{$tenant->slug}/courses/{$course->id}");
 
         $res->assertOk();
+        // A guest is never enrolled and no per-student progress is exposed.
+        $this->assertFalse($res->json('is_enrolled'));
         $this->assertNull($res->json('enrollment_id'));
-        $this->assertFalse($res->json('sections.0.lessons.0.completed'));
+        $this->assertNull($res->json('sections.0.lessons.0.completed'));
     }
 
     /** @test */
-    public function test_enrolled_student_sees_their_own_enrollment_id_and_completed_lessons(): void
+    public function test_enrolled_student_sees_the_unlocked_curriculum(): void
     {
         $tenant = $this->makeTenant();
         $this->attachSubscription($tenant);
         $course = $this->makeCourse($tenant);
-        $done = $this->addLesson($tenant, $course, true, 'youtube');
-        $pending = $this->addLesson($tenant, $course, false, 'youtube');
+        $this->addLesson($tenant, $course, false, 'youtube');
 
         $student = $this->makeUser();
         $this->attachToTenant($student, $tenant, 'student');
-        $enrollment = Enrollment::create([
+        Enrollment::create([
             'id' => UuidV7::generate(),
             'tenant_id' => $tenant->id,
             'course_id' => $course->id,
@@ -209,31 +209,14 @@ class PublicCourseDetailTest extends TenantTestCase
             'enrolled_at' => now(),
         ]);
 
-        LessonProgress::create([
-            'id' => UuidV7::generate(),
-            'tenant_id' => $tenant->id,
-            'enrollment_id' => $enrollment->id,
-            'lesson_id' => $done->id,
-            'user_id' => $student->id,
-            'status' => 'completed',
-            'watch_time_seconds' => 300,
-            'completed_at' => now(),
-            'metadata' => [],
-        ]);
-
         $res = $this->getJson(
             "/api/v1/public/{$tenant->slug}/courses/{$course->id}",
             $this->authHeaders($student, $tenant),
         );
 
         $res->assertOk();
-        $this->assertSame($enrollment->id, $res->json('enrollment_id'));
-
-        // Lessons are ordered by the section tree; find by id, not by index.
-        $lessons = collect($res->json('sections'))->flatMap(fn ($s) => $s['lessons'])->keyBy('id');
-        $this->assertTrue($lessons[$done->id]['completed']);
-        $this->assertSame('completed', $lessons[$done->id]['progress_status']);
-        $this->assertSame(300, $lessons[$done->id]['watch_time_seconds']);
-        $this->assertFalse($lessons[$pending->id]['completed']);
+        $this->assertTrue($res->json('is_enrolled'));
+        // An enrolled student sees the lesson unlocked (no drip configured).
+        $this->assertFalse($res->json('sections.0.lessons.0.locked'));
     }
 }

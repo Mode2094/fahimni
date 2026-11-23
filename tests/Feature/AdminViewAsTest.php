@@ -109,7 +109,7 @@ class AdminViewAsTest extends TenantTestCase
         // Every write is refused before it can reach any controller.
         $this->withHeaders($base)->postJson('/api/v1/student/favorites/anything')->assertStatus(403)->assertJsonPath('code', 'VIEW_AS_READ_ONLY');
         $this->withHeaders($base)->putJson('/api/v1/user/profile', ['name' => 'hacked'])->assertStatus(403)->assertJsonPath('code', 'VIEW_AS_READ_ONLY');
-        $this->withHeaders($base)->deleteJson('/api/v1/lesson-notes/not-real')->assertStatus(403)->assertJsonPath('code', 'VIEW_AS_READ_ONLY');
+        $this->withHeaders($base)->deleteJson('/api/v1/lesson-questions/not-real')->assertStatus(403)->assertJsonPath('code', 'VIEW_AS_READ_ONLY');
 
         // Nothing leaked through.
         $this->assertSame($student->fresh()->name, $student->name);

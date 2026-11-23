@@ -22,6 +22,8 @@ vi.mock('@/components/layout/panel-shell', () => ({
 function seedTeacher({ superAdmin = false } = {}) {
   useAuth.setState({
     user: { roles: ['Teacher'], is_super_admin: superAdmin } as any,
+    initialized: true,
+    status: 'authenticated',
     check: () => true,
   } as any);
 }
@@ -81,6 +83,8 @@ describe('TeacherShell — forced plan selection', () => {
   it('does not send a non-teacher to /pricing (they are routed by the auth guard)', async () => {
     useAuth.setState({
       user: { roles: ['Student'], is_super_admin: false } as any,
+      initialized: true,
+      status: 'authenticated',
       check: () => true,
     } as any);
     usePlan.setState({ loaded: true, active: false });
@@ -91,7 +95,7 @@ describe('TeacherShell — forced plan selection', () => {
       </TeacherShell>,
     );
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/student/login'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/my-learning'));
     expect(replace).not.toHaveBeenCalledWith('/pricing');
   });
 

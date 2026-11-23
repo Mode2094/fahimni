@@ -69,8 +69,8 @@ use App\Http\Controllers\Api\StudentAttemptController;
 use App\Http\Controllers\Api\StudentCertificateController;
 use App\Http\Controllers\Api\StudentProfileController;
 use App\Http\Controllers\Api\SubscriptionPlanController;
-use App\Http\Controllers\Api\TeacherAnalyticsController;
 use App\Http\Controllers\Api\TeacherAdminNotificationController;
+use App\Http\Controllers\Api\TeacherAnalyticsController;
 use App\Http\Controllers\Api\TeacherAvailabilityController;
 use App\Http\Controllers\Api\TeacherBlogController;
 use App\Http\Controllers\Api\TeacherBookingController;
@@ -82,6 +82,7 @@ use App\Http\Controllers\Api\TeacherServiceController;
 use App\Http\Controllers\Api\TeacherSiteController;
 use App\Http\Controllers\Api\TeacherStaffController;
 use App\Http\Controllers\Api\TeacherStudentAppController;
+use App\Http\Controllers\Api\TeacherStudentFollowUpController;
 use App\Http\Controllers\Api\TeacherVideoSecurityController;
 use App\Http\Controllers\Api\TenantController;
 use App\Http\Controllers\Api\TenantSettingController;
@@ -138,6 +139,7 @@ Route::prefix('v1')->group(function () {
             Route::get('courses', [MobileAppController::class, 'courses']);
             Route::get('courses/{course}', [MobileAppController::class, 'course']);
             Route::get('lessons/{lesson}', [MobileAppController::class, 'lesson']);
+            Route::post('video-position', [MobileAppController::class, 'saveVideoPosition'])->middleware('throttle:position');
             Route::get('announcements', [MobileAppController::class, 'announcements']);
         });
     });
@@ -160,6 +162,9 @@ Route::prefix('v1')->group(function () {
         Route::prefix('auth')->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);
+            // Complete a teacher account (Google sign-up / legacy) with the
+            // mandatory name + phone. Reachable WITHOUT the profile gate.
+            Route::post('complete-profile', [AuthController::class, 'completeProfile'])->middleware('throttle:login');
             Route::post('2fa/setup', [SecurityController::class, 'twoFactorSetup']);
             Route::post('2fa/enable', [SecurityController::class, 'twoFactorEnable']);
             Route::post('2fa/disable', [SecurityController::class, 'twoFactorDisable']);
@@ -177,13 +182,19 @@ Route::prefix('v1')->group(function () {
             Route::delete('/', [ViewAsController::class, 'stop'])->name('admin.view-as.stop');
         });
 
-        Route::prefix('user')->group(function () {
+        // `profile` blocks a teacher whose mandatory phone is still missing from
+        // editing an account around the completion step (students / super admins
+        // are unaffected). The completion endpoint itself stays outside.
+        Route::prefix('user')->middleware('profile')->group(function () {
             Route::put('profile', [UserController::class, 'updateProfile']);
             Route::put('password', [UserController::class, 'updatePassword']);
         });
 
         // Protected video playback (auth only — students may not have tenant context)
         Route::get('videos/{video}/playback', [VideoStreamController::class, 'playback'])->middleware('throttle:playback');
+        // حفظ موضع المشاهدة للاستكمال بين الأجهزة (نفس سلسلة الوصول؛ لا يمسّ
+        // احتساب الدقائق ولا جلسات التشغيل المحمية).
+        Route::post('videos/{video}/position', [VideoStreamController::class, 'savePosition'])->middleware('throttle:position');
 
         // ─── Student Profile & Gamification (auth only) ──
         Route::prefix('student')->group(function () {
@@ -196,6 +207,15 @@ Route::prefix('v1')->group(function () {
             Route::get('activity', [StudentProfileController::class, 'activity']);
             Route::get('favorites', [StudentProfileController::class, 'favorites']);
             Route::post('favorites/{course}', [StudentProfileController::class, 'toggleFavorite']);
+
+            // ─── ملاحظات الطالب والعلامات المرجعية (خاصة بصاحبها) ──
+            // لا مشاركة افتراضية: لا يقرأ/يعدّل ملاحظات الطالب إلا هو. كل كتابة
+            // تتحقّق من ملكية الدرس وصلاحية الوصول (تسجيل/فتح تدريجي/مجموعة).
+            Route::get('notes', [LessonNoteController::class, 'index'])->middleware('throttle:notes-read');
+            Route::get('notes/summary', [LessonNoteController::class, 'summary'])->middleware('throttle:notes-read');
+            Route::post('notes', [LessonNoteController::class, 'store'])->middleware('throttle:notes-write');
+            Route::put('notes/{note}', [LessonNoteController::class, 'update'])->middleware('throttle:notes-write');
+            Route::delete('notes/{note}', [LessonNoteController::class, 'destroy'])->middleware('throttle:notes-write');
         });
 
         Route::prefix('tenants')->group(function () {
@@ -205,7 +225,7 @@ Route::prefix('v1')->group(function () {
             Route::post('switch', [TenantController::class, 'switch']);
         });
 
-        Route::middleware(['tenant', 'device', 'subscription'])->group(function () {
+        Route::middleware(['tenant', 'device', 'subscription', 'profile'])->group(function () {
             Route::get('audit-logs', [SecurityController::class, 'auditLogs'])->middleware('role:teacher,owner,admin,permission:analytics.view');
 
             Route::get('dashboard', [DashboardController::class, 'index']);
@@ -219,6 +239,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('courses/{course}', [CourseController::class, 'destroy']);
             Route::post('courses/{course}/publish', [CourseController::class, 'publish']);
             Route::post('courses/{course}/unpublish', [CourseController::class, 'unpublish']);
+            Route::post('courses/{course}/duplicate', [CourseController::class, 'duplicate']);
 
             // ─── Course bundles (حزم الكورسات) ────────────────────────
             // A bundle groups existing courses; it never copies content.
@@ -243,6 +264,7 @@ Route::prefix('v1')->group(function () {
             Route::get('lessons/{lesson}', [LessonController::class, 'show']);
             Route::put('lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('lessons/{lesson}', [LessonController::class, 'destroy']);
+            Route::post('lessons/{lesson}/duplicate', [LessonController::class, 'duplicate']);
 
             // ─── Course groups (مجموعات الطلاب داخل الكورس) ───────────
             // Separate from community/forum groups and from academic terms.
@@ -262,12 +284,6 @@ Route::prefix('v1')->group(function () {
             Route::get('lesson-contents/{content}', [LessonContentController::class, 'show']);
             Route::put('lesson-contents/{content}', [LessonContentController::class, 'update']);
             Route::delete('lesson-contents/{content}', [LessonContentController::class, 'destroy']);
-
-            // ─── Student notes on lessons (ملاحظات الطالب) ────────────
-            Route::get('lesson-notes', [LessonNoteController::class, 'index']);
-            Route::post('lessons/{lesson}/notes', [LessonNoteController::class, 'store']);
-            Route::put('lesson-notes/{note}', [LessonNoteController::class, 'update']);
-            Route::delete('lesson-notes/{note}', [LessonNoteController::class, 'destroy']);
 
             // ─── Lesson Q&A (أسئلة الطلاب داخل الدرس) ─────────────────
             Route::get('lesson-questions', [LessonQuestionController::class, 'teacherIndex']);
@@ -339,7 +355,9 @@ Route::prefix('v1')->group(function () {
             Route::put('exams/{exam}', [ExamController::class, 'update']);
             Route::delete('exams/{exam}', [ExamController::class, 'destroy']);
             Route::post('exams/{exam}/publish', [ExamController::class, 'publish']);
+            Route::post('exams/{exam}/duplicate', [ExamController::class, 'duplicate']);
             Route::post('exams/{exam}/add-questions', [ExamController::class, 'addQuestions']);
+            Route::post('exams/{exam}/draw-questions', [ExamController::class, 'drawQuestions']);
             Route::post('exams/{exam}/questions/reorder', [ExamController::class, 'reorderQuestions']);
             Route::delete('exams/{exam}/questions/{question}', [ExamController::class, 'removeQuestion']);
 
@@ -509,7 +527,11 @@ Route::prefix('v1')->group(function () {
                 Route::get('/', [MediaAssetController::class, 'index']);
                 Route::get('usage', [MediaAssetController::class, 'usage']);
                 Route::post('upload-ticket', [MediaAssetController::class, 'uploadTicket']);
-                Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy']);
+                // رفع جماعي مباشر إلى Bunny (بلا مرور الفيديو عبر السيرفر):
+                // تذكرة TUS لكل ملف + إتمام/ربط بعد نجاح الرفع + تنظيف.
+                Route::post('resumable-ticket', [MediaAssetController::class, 'resumableTicket'])->middleware('throttle:media-ticket');
+                Route::post('resumable-complete', [MediaAssetController::class, 'resumableComplete'])->middleware('throttle:media-ticket');
+                Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy'])->middleware('throttle:media-ticket');
             });
 
             // ─── Teacher: Video security (watermark) ───────
@@ -735,8 +757,12 @@ Route::prefix('v1')->group(function () {
             // ─── Teacher: Plan & Limits ───────────────────
             Route::get('teacher/plan', [TeacherPlanController::class, 'index']);
 
-            // ─── Teacher: Getting-started checklist ───────
-            Route::middleware('role:teacher,owner,admin')->get('teacher/onboarding', [OnboardingController::class, 'index']);
+            // ─── Teacher: Getting-started guide ───────────
+            Route::middleware('role:teacher,owner,admin')->prefix('teacher/onboarding')->group(function () {
+                Route::get('/', [OnboardingController::class, 'index']);
+                Route::post('dismiss', [OnboardingController::class, 'dismiss']);
+                Route::post('restore', [OnboardingController::class, 'restore']);
+            });
 
             // ─── Teacher: Site Design ─────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/site-design')->group(function () {
@@ -759,6 +785,8 @@ Route::prefix('v1')->group(function () {
 
             // ─── Teacher: Device Control ────────────────
             Route::middleware('role:teacher,owner,admin,permission:students.manage')->prefix('teacher')->group(function () {
+                // متابعة الطلاب: من يحتاج انتباهاً (نشاط/تقدم/استحقاقات).
+                Route::get('follow-up', [TeacherStudentFollowUpController::class, 'index']);
                 Route::get('device-policy', [TeacherDeviceController::class, 'policy']);
                 Route::put('device-policy', [TeacherDeviceController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);

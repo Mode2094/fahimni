@@ -4,7 +4,6 @@ namespace App\Monitoring;
 
 use App\Models\Backup;
 use App\Models\MonitoringSnapshot;
-use App\Monitoring\MetricsRegistry;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
@@ -67,6 +66,7 @@ class MetricCollector
 
         return [
             'cpu_percent' => $cpu,
+            'cpu_cores' => $this->cpuCores(),
             'loadavg_1' => $load['load1'] ?? null,
             'loadavg_5' => $load['load5'] ?? null,
             'loadavg_15' => $load['load15'] ?? null,
@@ -102,7 +102,9 @@ class MetricCollector
         $key = 'monitoring:prev_cpu';
 
         $prev = MetricsRegistry::get($key);
-        MetricsRegistry::set($key, implode(':', [$total, $idle]), 300);
+        // TTL أطول من دورة الجمع (300s) وإلا انتهت القيمة قبل القراءة التالية
+        // فتعود النسبة صفراً دائماً.
+        MetricsRegistry::set($key, implode(':', [$total, $idle]), 900);
 
         if ($prev === null) {
             return 0.0; // first read — no delta yet
@@ -191,6 +193,24 @@ class MetricCollector
         ];
     }
 
+    /**
+     * عدد أنوية المعالج المتاحة للحاوية. يُستخدم لتحويل `load average` إلى
+     * حمل «لكل نواة»، لأن عتبات config/monitoring.php نسبية وليست مطلقة
+     * (على خادم بنواتين، حمل 1.5 يعني 75% لكل نواة وليس 150%).
+     */
+    private function cpuCores(): int
+    {
+        $info = @file_get_contents('/proc/cpuinfo');
+        if ($info !== false) {
+            $count = substr_count($info, 'processor');
+            if ($count > 0) {
+                return $count;
+            }
+        }
+
+        return 1;
+    }
+
     private function loadAverage(): array
     {
         $load = @file_get_contents('/proc/loadavg');
@@ -226,15 +246,15 @@ class MetricCollector
         }
 
         try {
-            $activity = DB::select("SELECT state, count(*) AS count FROM pg_stat_activity WHERE datname = current_database() GROUP BY state");
-            $total = DB::selectOne("SELECT count(*) AS count FROM pg_stat_activity");
+            $activity = DB::select('SELECT state, count(*) AS count FROM pg_stat_activity WHERE datname = current_database() GROUP BY state');
+            $total = DB::selectOne('SELECT count(*) AS count FROM pg_stat_activity');
             $maxConnections = DB::selectOne("SELECT setting FROM pg_settings WHERE name = 'max_connections'");
-            $dbSize = DB::selectOne("SELECT pg_database_size(current_database()) AS size");
-            $cache = DB::selectOne("SELECT sum(blks_hit)::float AS hits, sum(blks_read)::float AS reads FROM pg_stat_database WHERE datname = current_database()");
-            $deadlocks = DB::selectOne("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()");
-            $numBackends = DB::selectOne("SELECT numbackends FROM pg_stat_database WHERE datname = current_database()");
-            $locks = DB::selectOne("SELECT count(*) AS count FROM pg_locks");
-            $longQueries = DB::select("SELECT pid, state, round(extract(epoch FROM now() - xact_start)::numeric, 1) AS seconds, query FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND now() - xact_start > interval '" . (int) config('monitoring.database.slow_query_seconds', 5) . " seconds' ORDER BY xact_start LIMIT 20");
+            $dbSize = DB::selectOne('SELECT pg_database_size(current_database()) AS size');
+            $cache = DB::selectOne('SELECT sum(blks_hit)::float AS hits, sum(blks_read)::float AS reads FROM pg_stat_database WHERE datname = current_database()');
+            $deadlocks = DB::selectOne('SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()');
+            $numBackends = DB::selectOne('SELECT numbackends FROM pg_stat_database WHERE datname = current_database()');
+            $locks = DB::selectOne('SELECT count(*) AS count FROM pg_locks');
+            $longQueries = DB::select("SELECT pid, state, round(extract(epoch FROM now() - xact_start)::numeric, 1) AS seconds, query FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND now() - xact_start > interval '".(int) config('monitoring.database.slow_query_seconds', 5)." seconds' ORDER BY xact_start LIMIT 20");
 
             $states = [];
             foreach ($activity as $row) {

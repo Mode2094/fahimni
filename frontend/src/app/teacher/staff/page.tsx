@@ -14,6 +14,7 @@ import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { UsersRound, Plus, Loader2, Trash2, Crown, Shield, Mail, XCircle, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import { usePlan } from '@/store/plan';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -69,10 +70,10 @@ export default function TeacherStaffPage() {
     setBusyId('save');
     try {
       const res = await fetch(`${API}/teacher/staff/invitations`, { method: 'POST', headers: headers(), body: JSON.stringify(form) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر إرسال الدعوة', 'Could not send the invitation')); return; }
       toast.success(t('تم إرسال الدعوة — وصل المعلم بريداً برابط القبول', 'Invitation sent — the teacher received an email with an accept link'));
       setShowForm(false); setForm({ email: '', role: 'teacher', permissions: [] }); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إرسال الدعوة', 'Could not send the invitation'))); }
     setBusyId('');
   };
 
@@ -83,7 +84,7 @@ export default function TeacherStaffPage() {
       const res = await fetch(`${API}/teacher/staff/invitations/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم إلغاء الدعوة', 'Invitation cancelled')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إلغاء الدعوة', 'Could not cancel the invitation'))); }
     setRemovingId('');
   };
 
@@ -92,9 +93,9 @@ export default function TeacherStaffPage() {
     setRemovingId(member.id);
     try {
       const res = await fetch(`${API}/teacher/staff/members/${member.id}`, { method: 'DELETE', headers: headers() });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر إزالة المعلم', 'Could not remove the teacher')); return; }
       toast.success(t('تمت الإزالة', 'Member removed')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة المعلم', 'Could not remove the teacher'))); }
     setRemovingId('');
   };
 

@@ -11,11 +11,12 @@ use App\Models\TenantUser;
 use App\Models\User;
 use App\Plans\TeacherTrialProgram;
 use App\Services\TenantSlugService;
+use App\Support\PhoneNumber;
+use App\Support\WebSessionAuth;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -121,6 +122,10 @@ class GoogleAuthController extends Controller
         $email = strtolower(trim((string) $google->getEmail()));
         $name = $regData['name'] ?? $google->getName() ?? $google->getNickname() ?? 'User';
 
+        // One canonical phone form (E.164). A teacher account will NOT get a
+        // workspace or a trial until a phone is on file — see the transaction.
+        $phone = PhoneNumber::toE164($regData['phone'] ?? null);
+
         if ($email === '') {
             return $this->redirectToFrontend($frontend, $role, ['error' => 'no_email']);
         }
@@ -185,7 +190,7 @@ class GoogleAuthController extends Controller
         //    tenant, no tenant without an owner membership. ────────────────
         try {
             $trialStarted = false;
-            [$user, $tenant] = DB::transaction(function () use ($email, $name, $regData, $role, $wantsStaffTenant, &$trialStarted) {
+            [$user, $tenant] = DB::transaction(function () use ($email, $name, $phone, $regData, $role, $wantsStaffTenant, &$trialStarted) {
                 // Re-read inside the transaction and take a row lock so
                 // concurrent callbacks converge on one row.
                 $user = User::withTrashed()->where('email', $email)->lockForUpdate()->first();
@@ -201,7 +206,7 @@ class GoogleAuthController extends Controller
                         'id' => UuidV7::generate(),
                         'name' => $name,
                         'email' => $email,
-                        'phone' => $regData['phone'] ?? null,
+                        'phone' => $phone,
                         // Random unusable password — OAuth users set one if needed.
                         'password' => Hash::make(Str::random(64)),
                         'is_active' => true,
@@ -218,12 +223,25 @@ class GoogleAuthController extends Controller
                     if (! empty($regData['name'])) {
                         $updates['name'] = $regData['name'];
                     }
-                    if (! empty($regData['phone'])) {
-                        $updates['phone'] = $regData['phone'];
+                    if ($phone !== null) {
+                        $updates['phone'] = $phone;
                     }
                     if ($updates) {
                         $user->update($updates);
                     }
+                }
+
+                // A teacher MUST have a phone before a workspace or trial is
+                // created. Give the account the Teacher role (so the UI and the
+                // server gate see a pending profile), but provision nothing:
+                // the tenant, membership and free trial are created exactly once
+                // by /auth/complete-profile.
+                if ($role === 'teacher' && ! filled($user->phone)) {
+                    if (! $user->hasRole('Teacher')) {
+                        $user->assignRole(Role::findOrCreate('Teacher', 'web'));
+                    }
+
+                    return [$user, null];
                 }
 
                 return [$user, $this->ensureWorkspaceTenant($user, $name, $email, $wantsStaffTenant, $trialStarted)];
@@ -247,14 +265,19 @@ class GoogleAuthController extends Controller
             $tenant = $wantsStaffTenant ? Tenant::where('owner_id', $user->id)->first() : null;
         }
 
+        // A teacher still lacking a phone has no workspace/trial yet: send the
+        // browser to the «أكمل بيانات حسابك» step instead of the dashboard.
+        $needsProfile = $role === 'teacher' && ! filled($user->phone);
+
         // Web browser flow: sign in with an HttpOnly session cookie — the
         // Sanctum token never leaves the server. Mobile keeps using the
         // bearer-token flow of /api/v1/mobile/auth/google.
         if ($request->hasSession()) {
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
-            return $this->redirectToFrontend($frontend, $role, ['step' => 'done', 'trial_started' => $trialStarted ? '1' : '0']);
+            return $this->redirectToFrontend($frontend, $role, $needsProfile
+                ? ['step' => 'profile_required']
+                : ['step' => 'done', 'trial_started' => $trialStarted ? '1' : '0']);
         }
 
         $token = $user->createToken('auth-token')->plainTextToken;
@@ -266,6 +289,7 @@ class GoogleAuthController extends Controller
             'tenant_id' => $tenant?->id ?? '',
             'role' => $role,
             'trial_started' => $trialStarted ? '1' : '0',
+            'needs_profile_completion' => $needsProfile ? '1' : '0',
             'user' => json_encode([
                 'id'    => $user->id,
                 'name'  => $user->name,

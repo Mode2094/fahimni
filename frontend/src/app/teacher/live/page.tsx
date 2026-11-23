@@ -17,6 +17,7 @@ import {
   Copy, Share2, ExternalLink, Link2, MonitorPlay,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -72,7 +73,7 @@ export default function LiveSessionsPage() {
       if (!res.ok) throw new Error();
       toast.success(editing ? t('تم تحديث الجلسة', 'Session updated') : t('تم إنشاء الجلسة — شارك رابط الانضمام مع طلابك', 'Session created — share the join link with your students'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الجلسة', 'Could not save the session'))); }
     setBusyId('');
   };
 
@@ -80,10 +81,10 @@ export default function LiveSessionsPage() {
     setBusyId(id);
     try {
       const res = await fetch(`${API}/teacher/live-sessions/${id}/${act}`, { method: 'POST', headers: headers() });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر تحديث حالة الجلسة', 'Could not update the session status')); return; }
       toast.success(act === 'start' ? t('الحصة جاهزة — افتح رابط Google Meet كمضيف', 'Session ready — open the Google Meet link as host') : act === 'end' ? t('تم إنهاء الحصة', 'Session ended') : t('تم إلغاء الجلسة', 'Session cancelled'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحديث حالة الجلسة', 'Could not update the session status'))); }
     setBusyId('');
   };
 
@@ -95,11 +96,11 @@ export default function LiveSessionsPage() {
       const res = await fetch(`${API}/teacher/live-sessions/${id}/recording`, {
         method: 'POST', headers: headers(), body: JSON.stringify({ record_url: url }),
       });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ رابط التسجيل', 'Could not save the recording link')); return; }
       toast.success(t('تم حفظ رابط التسجيل', 'Recording link saved'));
       setRecInputs((p) => ({ ...p, [id]: '' }));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ رابط التسجيل', 'Could not save the recording link'))); }
     setBusyId('');
   };
 
@@ -109,7 +110,7 @@ export default function LiveSessionsPage() {
       const res = await fetch(`${API}/teacher/live-sessions/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الجلسة', 'Could not delete the session'))); }
   };
 
   const copyLink = async (s: any) => {

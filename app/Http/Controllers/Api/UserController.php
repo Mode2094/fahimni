@@ -4,9 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
+use App\Rules\ValidPhoneNumber;
+use App\Support\PhoneNumber;
+use App\Support\WebSessionAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class UserController extends Controller
 {
@@ -14,10 +18,15 @@ class UserController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:50',
+            'phone' => ['sometimes', 'nullable', 'string', 'max:25', new ValidPhoneNumber],
             'avatar_url' => 'sometimes|url|max:500',
             'locale' => 'sometimes|string|in:ar,en',
         ]);
+
+        // One canonical phone form whenever a phone is supplied.
+        if (array_key_exists('phone', $validated) && $validated['phone'] !== null) {
+            $validated['phone'] = PhoneNumber::toE164($validated['phone']);
+        }
 
         $request->user()->update($validated);
 
@@ -34,14 +43,22 @@ class UserController extends Controller
         ]);
 
         $user = $request->user();
-        $currentTokenId = $user->currentAccessToken()?->id;
+        // Session-authenticated (web) requests hold a TransientToken with no
+        // id; only personal access tokens can be compared/excluded.
+        $currentToken = $user->currentAccessToken();
+        $currentTokenId = $currentToken instanceof PersonalAccessToken ? $currentToken->id : null;
 
         $user->update([
             'password' => Hash::make($validated['password']),
         ]);
 
         // A changed password may indicate a compromised credential: revoke
-        // every session except the one performing the change.
+        // every session except the one performing the change. Bumping the
+        // account version invalidates every other web session on its next
+        // request; the current session adopts the new value below.
+        $user->increment('auth_version');
+        WebSessionAuth::adoptCurrentVersion($request, $user);
+
         $user->tokens()
             ->when($currentTokenId, fn ($q) => $q->where('id', '!=', $currentTokenId))
             ->delete();

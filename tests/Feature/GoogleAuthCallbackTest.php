@@ -17,6 +17,7 @@ use Laravel\Socialite\Contracts\Provider as SocialiteProvider;
 use Laravel\Socialite\Contracts\User as SocialiteUser;
 use Laravel\Socialite\Facades\Socialite;
 use Mockery;
+use Spatie\Permission\Models\Role;
 use Symfony\Component\Uid\UuidV7;
 
 /**
@@ -51,14 +52,25 @@ class GoogleAuthCallbackTest extends TenantTestCase
         config(['sanctum.stateful' => ['fahimni.me', 'www.fahimni.me']]);
     }
 
-    /** The browser's session cookie as a raw `Cookie` header value. */
+    /** The browser's session id (plaintext), replayed via withCookie(). */
     private function sessionCookie($response): string
     {
         $name = (string) config('session.cookie');
         $cookie = $response->getCookie($name);
         $this->assertNotNull($cookie, 'Expected the session cookie '.$name.' to be set.');
 
-        return $name.'='.$cookie->getValue();
+        return (string) $this->app['session']->getId();
+    }
+
+    /** Issue a request as a fresh browser carrying the session cookie. */
+    private function asCookie(string $cookie, array $extraHeaders = [])
+    {
+        $this->flushSession();
+        $this->app['auth']->forgetGuards();
+
+        return $this->withCredentials()
+            ->withCookie((string) config('session.cookie'), $cookie)
+            ->withHeaders(array_merge(['Origin' => self::STATE_ORIGIN, 'Accept' => 'application/json'], $extraHeaders));
     }
 
     private function fakeGoogle(string $email, string $name = 'New Teacher'): void
@@ -82,7 +94,9 @@ class GoogleAuthCallbackTest extends TenantTestCase
         $payload = array_merge([
             'role' => 'teacher',
             'name' => null,
-            'phone' => null,
+            // Most teacher fixtures must be fully provisioned, so a valid
+            // phone is the default; the "no phone" path is exercised explicitly.
+            'phone' => '+962790000000',
             'exp' => time() + 600,
             'n' => Str::random(16),
         ], $overrides);
@@ -310,14 +324,7 @@ class GoogleAuthCallbackTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($response);
 
-        // A fresh request: reset the guard the callback authenticated.
-        $this->app['auth']->forgetGuards();
-
-        $me = $this->withHeaders([
-            'Cookie' => $cookie,
-            'Origin' => self::STATE_ORIGIN,
-            'Accept' => 'application/json',
-        ])->getJson('/api/v1/auth/me');
+        $me = $this->asCookie($cookie)->getJson('/api/v1/auth/me');
 
         $me->assertOk()->assertJsonPath('user.email', $email);
         $this->assertContains('Teacher', (array) $me->json('user.roles'));
@@ -345,18 +352,10 @@ class GoogleAuthCallbackTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($this->callbackWith($this->signedState(['role' => 'teacher'])));
 
-        // A fresh request in its own process: reset the shared session store and
-        // the guard the callback authenticated.
-        $this->flushSession();
-        $this->app['auth']->forgetGuards();
-
         // `http://localhost:3000` is exactly what Next.js forwarded behind the
         // proxy (its own listen address), and it is not a stateful domain.
-        $response = $this->withHeaders([
-            'Cookie' => $cookie,
-            'Origin' => 'http://localhost:3000',
-            'Accept' => 'application/json',
-        ])->getJson('/api/v1/auth/me');
+        $response = $this->asCookie($cookie, ['Origin' => 'http://localhost:3000'])
+            ->getJson('/api/v1/auth/me');
 
         $response->assertStatus(401);
 
@@ -395,18 +394,141 @@ class GoogleAuthCallbackTest extends TenantTestCase
         $this->assertStringNotContainsString('token=', (string) $response->headers->get('Location'));
 
         $cookie = $this->sessionCookie($response);
-        $this->app['auth']->forgetGuards();
 
         // Still not signed in: the pending challenge lives server-side.
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->getJson('/api/v1/auth/me')
             ->assertStatus(401);
 
         // Completing the factor signs the user in over the same session.
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->postJson('/api/v1/auth/2fa/confirm', ['code' => TOTP::code('JBSWY3DPEHPK3PXP')])
             ->assertOk()
             ->assertJsonPath('user.email', $email)
             ->assertJsonMissingPath('token');
+    }
+
+    // ───────────────── teacher phone requirement (Google flow) ──────────────
+
+    /**
+     * A teacher who signs up with Google but supplies no phone must NOT get a
+     * workspace or a trial yet: the callback stops at «أكمل بيانات حسابك».
+     */
+    public function test_teacher_google_signup_without_phone_defers_workspace_and_trial(): void
+    {
+        $this->useProductionStatefulDomains();
+        PlatformSetting::set('teacher_registration_enabled', true);
+        $this->makePlan();
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'No Phone');
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher', 'phone' => null]));
+        $response->assertRedirect();
+
+        $location = (string) $response->headers->get('Location');
+        $this->assertStringContainsString('step=profile_required', $location);
+        $this->assertStringNotContainsString('token=', $location);
+
+        $user = User::where('email', $email)->firstOrFail();
+        $this->assertTrue($user->hasRole('Teacher'), 'the account still gets the Teacher role');
+        $this->assertNull($user->phone, 'no phone is invented');
+        $this->assertSame(0, Tenant::where('owner_id', $user->id)->count(), 'no workspace before the phone');
+        $this->assertSame(0, TenantSubscription::withoutTenant()->count(), 'no trial before the phone');
+    }
+
+    /**
+     * Completing the profile starts the workspace + trial exactly once; a
+     * second call is a no-op and can never duplicate them.
+     */
+    public function test_completing_profile_provisions_the_workspace_and_trial_once(): void
+    {
+        $this->useProductionStatefulDomains();
+        PlatformSetting::set('teacher_registration_enabled', true);
+        $this->makePlan();
+
+        $email = $this->freshEmail('teacher');
+        $this->fakeGoogle($email, 'No Phone');
+
+        $response = $this->callbackWith($this->signedState(['role' => 'teacher', 'phone' => null]));
+        $cookie = $this->sessionCookie($response);
+
+        $done = $this->asCookie($cookie)->postJson('/api/v1/auth/complete-profile', [
+            'name' => 'Completed Teacher',
+            'phone' => '0791234567',
+        ]);
+
+        $done->assertOk();
+        $this->assertSame('+962791234567', $done->json('user.phone'), 'stored in canonical E.164');
+        $this->assertFalse((bool) $done->json('user.requires_profile_completion'));
+
+        $tenantId = $done->json('tenant_id');
+        $this->assertNotNull($tenantId);
+
+        $user = User::where('email', $email)->firstOrFail();
+        $this->assertSame('Completed Teacher', $user->name);
+        $this->assertSame(1, Tenant::where('owner_id', $user->id)->count());
+        $this->assertSame(1, TenantSubscription::withoutTenant()->where('tenant_id', $tenantId)->count());
+
+        // Idempotent: finishing again must not create a second tenant/trial.
+        $this->asCookie($cookie)->postJson('/api/v1/auth/complete-profile', [
+            'name' => 'Completed Teacher',
+            'phone' => '+962791234567',
+        ])->assertOk();
+
+        $this->assertSame(1, Tenant::where('owner_id', $user->id)->count());
+        $this->assertSame(1, TenantUser::where('user_id', $user->id)->count());
+        $this->assertSame(1, TenantSubscription::withoutTenant()->where('tenant_id', $tenantId)->count());
+    }
+
+    /** A teacher without a phone is blocked from tenant routes server-side. */
+    public function test_teacher_without_phone_is_blocked_from_tenant_routes(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+
+        $user = $this->makeUser(['phone' => null]);
+        Role::findOrCreate('Teacher', 'web');
+        $user->assignRole('Teacher');
+        $this->attachToTenant($user, $tenant, 'owner');
+
+        $this->getJson('/api/v1/dashboard', $this->authHeaders($user, $tenant))
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'profile_incomplete');
+    }
+
+    /** A teacher with a phone on file reaches the dashboard normally. */
+    public function test_teacher_with_phone_reaches_tenant_routes(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+
+        $user = $this->makeUser(['phone' => '+962791234567']);
+        Role::findOrCreate('Teacher', 'web');
+        $user->assignRole('Teacher');
+        $this->attachToTenant($user, $tenant, 'owner');
+
+        $this->getJson('/api/v1/dashboard', $this->authHeaders($user, $tenant))->assertOk();
+    }
+
+    /** Existing teacher accounts (no phone) are never deleted or suspended. */
+    public function test_legacy_teacher_without_phone_keeps_its_workspace_and_trial(): void
+    {
+        $tenant = $this->makeTenant();
+        $subscription = $this->attachSubscription($tenant);
+
+        $user = $this->makeUser(['phone' => null]);
+        Role::findOrCreate('Teacher', 'web');
+        $user->assignRole('Teacher');
+        $this->attachToTenant($user, $tenant, 'owner');
+
+        // The gate blocks dashboard use but must not touch the data.
+        $this->getJson('/api/v1/dashboard', $this->authHeaders($user, $tenant))->assertStatus(403);
+
+        $this->assertDatabaseHas('tenants', ['id' => $tenant->id]);
+        $this->assertDatabaseHas('tenant_subscriptions', ['id' => $subscription->id, 'status' => 'trialing']);
+        $this->assertDatabaseHas('tenant_user', ['tenant_id' => $tenant->id, 'user_id' => $user->id]);
+        $this->assertNotNull(User::find($user->id), 'the account must survive');
+        $this->assertSame($subscription->trial_ends_at?->timestamp, TenantSubscription::find($subscription->id)->trial_ends_at?->timestamp);
     }
 }

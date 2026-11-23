@@ -131,6 +131,26 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
  */
 let patched = false;
 
+/**
+ * Parse `XMLHttpRequest.getAllResponseHeaders()` safely.
+ *
+ * `line.split(': ')` (the previous approach) splits on EVERY `': '`, so any
+ * header whose value itself contains `': '` produced a 3-element tuple and
+ * `new Headers(...)` threw `TypeError: Failed to construct 'Headers': Invalid
+ * value`. Split only on the first colon and drop malformed lines.
+ */
+export function parseRawHeaders(raw: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i <= 0) continue;
+    const name = line.slice(0, i).trim();
+    const value = line.slice(i + 1).trim();
+    if (name) out.push([name, value]);
+  }
+  return out;
+}
+
 function fetchViaXhr(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -150,10 +170,16 @@ function fetchViaXhr(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     }
 
     xhr.onload = () => {
+      let headers: Headers;
+      try {
+        headers = new Headers(parseRawHeaders(xhr.getAllResponseHeaders()));
+      } catch {
+        headers = new Headers();
+      }
       resolve(new Response(xhr.response, {
         status: xhr.status,
         statusText: xhr.statusText,
-        headers: new Headers(xhr.getAllResponseHeaders().split(/\r?\n/).filter(Boolean).map((line) => line.split(': ')) as any),
+        headers,
       }));
     };
     xhr.onerror = () => reject(new Error('Failed to fetch'));

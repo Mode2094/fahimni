@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   addFiles, markDone, markFailed, markUploading, cancelPending, cancelAllPending,
-  retryFailed, retryOne, nextPending, counts, MAX_FILE_BYTES, type QueueState,
+  retryFailed, retryOne, nextPending, counts, MAX_FILE_BYTES, MAX_PARALLEL,
+  stableIdempotencyKey, nextPendingBatch, overallProgress, markCanceled, markAsset,
+  type QueueState,
 } from './video-upload-queue';
 
 const empty: QueueState = { items: [], rejected: [] };
@@ -91,5 +93,49 @@ describe('video upload queue', () => {
     s = { ...s, items: [{ ...s.items[0], assetId: 'asset-1' }] };
     s = retryOne(s, s.items[0].id);
     expect(s.items[0].assetId).toBe('asset-1');
+  });
+
+  // ─── Bulk: parallel, resume keys, aggregate progress ───
+
+  it('derives one stable idempotency key per file (same file ⇒ same key)', () => {
+    const a = { name: 'lecture.mp4', size: 10_000_000, lastModified: 1711111111 };
+    expect(stableIdempotencyKey(a)).toBe(stableIdempotencyKey({ ...a }));
+    expect(stableIdempotencyKey(a)).toMatch(/^vq-[0-9a-f]+$/);
+    // A different file (different size) never collides in practice.
+    expect(stableIdempotencyKey(a)).not.toBe(stableIdempotencyKey({ ...a, size: 10_000_001 }));
+  });
+
+  it('stamps a deterministic key on every queued item', () => {
+    const f = { name: 'x.mp4', size: 2048, lastModified: 5, type: 'video/mp4' } as unknown as File;
+    const s = addFiles(empty, [f], { remainingSlots: null, makeId });
+    expect(s.items[0].key).toBe(stableIdempotencyKey(f));
+  });
+
+  it('hands out at most MAX_PARALLEL pending items so the pool is bounded', () => {
+    const s = addFiles(empty, [file('1.mp4'), file('2.mp4'), file('3.mp4'), file('4.mp4')], { remainingSlots: null, makeId });
+    expect(nextPendingBatch(s, MAX_PARALLEL).map((i) => i.name)).toEqual(['1.mp4', '2.mp4', '3.mp4']);
+    expect(nextPendingBatch(s, 0)).toEqual([]);
+    expect(MAX_PARALLEL).toBeGreaterThanOrEqual(2);
+    expect(MAX_PARALLEL).toBeLessThanOrEqual(3);
+  });
+
+  it('reports overall progress across every file, ignoring canceled ones', () => {
+    let s = addFiles(empty, [file('a.mp4'), file('b.mp4'), file('c.mp4')], { remainingSlots: null, makeId });
+    expect(overallProgress(s)).toEqual({ percent: 0, settled: 0, total: 3 });
+    s = markDone(s, s.items[0].id); // 100
+    s = { ...s, items: s.items.map((i, idx) => (idx === 1 ? { ...i, progress: 50 } : i)) }; // 50
+    s = markCanceled(s, s.items[2].id); // excluded
+    expect(overallProgress(s)).toEqual({ percent: 75, settled: 1, total: 2 });
+  });
+
+  it('cancels an active item and records its asset id for cleanup', () => {
+    let s = addFiles(empty, [file('a.mp4')], { remainingSlots: null, makeId });
+    s = markAsset(s, s.items[0].id, 'asset-9');
+    s = markUploading(s, s.items[0].id);
+    s = markCanceled(s, s.items[0].id);
+    expect(s.items[0].status).toBe('canceled');
+    expect(s.items[0].assetId).toBe('asset-9');
+    // A canceled item is never picked up again.
+    expect(nextPendingBatch(s, MAX_PARALLEL)).toEqual([]);
   });
 });

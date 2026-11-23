@@ -29,10 +29,12 @@ use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
 use App\Plans\TeacherTrialProgram;
+use App\Rules\ValidPhoneNumber;
 use App\Services\EnrollmentService;
 use App\Services\PaymentCompletionService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
+use App\Support\PhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -129,26 +131,51 @@ class AdminController extends Controller
 
     public function teachers(Request $request): JsonResponse
     {
-        $query = User::role('Teacher')
+        $base = User::role('Teacher')
             ->with([
                 'tenantPivots.tenant.settings',
                 'tenantPivots.tenant.subscriptions' => fn ($q) => $q->latest('starts_at')->limit(1),
             ]);
 
-        if ($request->filled('search')) {
-            $query->where(fn ($q) => $q
-                ->where('name', 'ilike', '%'.$request->search.'%')
-                ->orWhere('email', 'ilike', '%'.$request->search.'%')
-                ->orWhereHas('tenantPivots.tenant', fn ($t) => $t->where('name', 'ilike', '%'.$request->search.'%')));
-        }
         if ($request->filled('is_active')) {
-            $query->where('is_active', $request->boolean('is_active'));
+            $base->where('is_active', $request->boolean('is_active'));
         }
         if ($request->filled('plan_id')) {
-            $query->whereHas('tenantPivots.tenant.subscriptions', fn ($s) => $s->where('plan_id', $request->plan_id)->whereIn('status', ['active', 'trialing']));
+            $base->whereHas('tenantPivots.tenant.subscriptions', fn ($s) => $s->where('plan_id', $request->plan_id)->whereIn('status', ['active', 'trialing']));
         }
 
-        $rows = $query->orderByDesc('created_at')->limit(200)->get();
+        $search = $request->filled('search') ? trim((string) $request->input('search')) : null;
+
+        $rows = (clone $base);
+
+        if ($search !== null) {
+            // Postgres supports case-insensitive ILIKE; SQLite's LIKE is already
+            // case-insensitive for ASCII, so pick the portable operator.
+            $like = DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
+
+            $rows->where(fn ($q) => $q
+                ->where('name', $like, '%'.$search.'%')
+                ->orWhere('email', $like, '%'.$search.'%')
+                ->orWhereHas('tenantPivots.tenant', fn ($t) => $t->where('name', $like, '%'.$search.'%')));
+        }
+
+        $rows = $rows->orderByDesc('created_at')->limit(200)->get();
+
+        // Phone lives encrypted at rest, so it cannot be matched with SQL LIKE.
+        // When the term carries digits, scan the (small) teacher set and match
+        // on the decrypted value, then merge — name/email hits stay primary.
+        if ($search !== null && preg_match('/\d/', $search) === 1) {
+            $digits = preg_replace('/\D/', '', $search) ?? '';
+
+            $phoneMatches = (clone $base)
+                ->orderByDesc('created_at')
+                ->limit(500)
+                ->get()
+                ->filter(fn (User $u) => filled($u->phone)
+                    && str_contains(preg_replace('/\D/', '', (string) $u->phone) ?? '', $digits));
+
+            $rows = $rows->concat($phoneMatches)->unique('id')->sortByDesc('created_at')->values();
+        }
 
         $teachers = $rows->map(fn (User $u) => $this->teacherPayload($u));
 
@@ -170,6 +197,8 @@ class AdminController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
+            // Every teacher account — including admin-created ones — needs a phone.
+            'phone' => ['required', 'string', 'max:25', new ValidPhoneNumber],
             'password' => 'nullable|string|min:8',
             'plan_id' => 'nullable|exists:subscription_plans,id',
         ]);
@@ -186,6 +215,7 @@ class AdminController extends Controller
             'id' => UuidV7::generate(),
             'name' => $validated['name'],
             'email' => strtolower($validated['email']),
+            'phone' => PhoneNumber::toE164($validated['phone']),
             'password' => Hash::make($password),
             'is_active' => true,
             'email_verified_at' => now(),
@@ -437,8 +467,10 @@ class AdminController extends Controller
         $tenantIds = TenantUser::where('user_id', $user->id)->where('status', 'active')->pluck('tenant_id');
         Tenant::whereIn('id', $tenantIds)->update(['status' => $request->boolean('is_active') ? 'active' : 'suspended']);
 
-        // Deactivation must kill every live session immediately.
+        // Deactivation must kill every live session immediately — bearer
+        // tokens here and all web sessions through the version bump.
         if (! $request->boolean('is_active')) {
+            $user->increment('auth_version');
             $user->tokens()->delete();
         }
 
@@ -458,6 +490,7 @@ class AdminController extends Controller
         // Soft-delete the teacher and their tenants (data preserved for audits).
         $tenantIds = TenantUser::where('user_id', $user->id)->pluck('tenant_id');
         Tenant::whereIn('id', $tenantIds)->delete();
+        $user->increment('auth_version');
         $user->tokens()->delete();
         $user->delete();
 
@@ -479,6 +512,7 @@ class AdminController extends Controller
             'phone' => $user->phone,
             'is_active' => (bool) $user->is_active,
             'created_at' => $user->created_at?->toIso8601String(),
+            'last_login_at' => $user->last_login_at?->toIso8601String(),
             'tenant' => $tenant ? [
                 'id' => $tenant->id,
                 'name' => $tenant->name,
@@ -638,6 +672,7 @@ class AdminController extends Controller
         $student = User::whereHas('tenantPivots', fn ($q) => $q->withoutGlobalScope('tenant')->where('role', 'student'))
             ->findOrFail($id);
 
+        $student->increment('auth_version');
         $student->tokens()->delete();
         $student->delete();
 
@@ -682,8 +717,10 @@ class AdminController extends Controller
 
         $student->update(['is_active' => $request->boolean('is_active')]);
 
-        // Deactivated students lose their sessions immediately.
+        // Deactivated students lose their sessions immediately (tokens and
+        // every web session via the version bump).
         if (! $request->boolean('is_active')) {
+            $student->increment('auth_version');
             $student->tokens()->delete();
         }
 

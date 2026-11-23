@@ -3,6 +3,7 @@ export interface User {
   avatar_url: string | null; is_super_admin: boolean; is_active: boolean;
   locale: string; email_verified_at: string | null; last_login_at: string | null;
   roles: string[]; permissions: string[]; created_at: string;
+  requires_profile_completion?: boolean;
   tenants?: Tenant[];
 }
 export interface LoginResponse { user: User; token: string; }

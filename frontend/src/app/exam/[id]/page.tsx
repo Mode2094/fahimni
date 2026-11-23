@@ -8,7 +8,7 @@ import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertTriangle, Clock, CheckCircle, Trophy, XCircle, ArrowLeft, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Loader2, AlertTriangle, Clock, CheckCircle, Trophy, XCircle, ArrowLeft, RotateCcw, ShieldAlert, Pencil } from 'lucide-react';
 import { QuestionRenderer, type AnswerValue } from '@/components/exam/question-renderer';
 import { Latex } from '@/components/exam/latex';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 export default function ExamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { check } = useAuth();
+  const { initialized, user, status } = useAuth();
   const { locale } = useLocale();
   const router = useRouter();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -84,9 +84,15 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   };
 
   useEffect(() => {
-    if (!check()) { router.replace('/student/login'); return; }
+    // Wait for the session check: a missing localStorage hint is not proof of
+    // being signed out, and an outage must not bounce the student to login.
+    if (!initialized) return;
+    if (!user) {
+      if (status === 'unauthenticated') router.replace('/student/login');
+      return;
+    }
     loadMeta();
-  }, [id]);
+  }, [id, initialized, user, status, router]);
 
   // Timer
   useEffect(() => {
@@ -282,9 +288,14 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     return (
       <div className="max-w-2xl mx-auto space-y-8 py-8 px-4">
         {previewMode && (
-          <div className="flex items-start gap-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800" role="status">
+          <div className="flex flex-wrap items-start gap-2 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800" role="status">
             <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>{t('وضع المعاينة (كما يراها الطالب): لا تُسجَّل محاولة، ولا تُحفظ درجات، ولا تُحتسب ضدّ الطلاب. تظهر حتى لو كان الاختبار غير منشور.', 'Preview mode (exactly as a student sees it): no attempt is recorded, no score is saved, and nothing counts against students. Works even for an unpublished exam.')}</span>
+            <span className="flex-1 min-w-[200px]">{t('وضع المعاينة (كما يراها الطالب): لا تُسجَّل محاولة، ولا تُحفظ درجات، ولا تُحتسب ضدّ الطلاب. تظهر حتى لو كان الاختبار غير منشور.', 'Preview mode (exactly as a student sees it): no attempt is recorded, no score is saved, and nothing counts against students. Works even for an unpublished exam.')}</span>
+            {exam?.course_id && (
+              <a href={`/courses/${exam.course_id}`} className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-700 shrink-0">
+                <Pencil className="h-3.5 w-3.5" />{t('العودة للتحرير', 'Back to editing')}
+              </a>
+            )}
           </div>
         )}
         <Card className="border-0 shadow-sm p-8 text-center space-y-6">

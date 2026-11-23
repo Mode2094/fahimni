@@ -10,7 +10,7 @@ import { enrollments, dashboardApi, favoritesApi, cardsApi, tenants } from '@/se
 
 vi.mock('@/services/endpoints', () => ({
   enrollments: { myCourses: vi.fn() },
-  dashboardApi: { studentLessons: vi.fn() },
+  dashboardApi: { studentLessons: vi.fn(), studentOverview: vi.fn() },
   favoritesApi: { list: vi.fn(), toggle: vi.fn() },
   cardsApi: { redeem: vi.fn() },
   tenants: { list: vi.fn() },
@@ -42,6 +42,9 @@ beforeEach(() => {
   useAuth.setState({ user: { name: 'سارة الطالبة' } as any } as any);
   (enrollments.myCourses as any).mockResolvedValue([]);
   (dashboardApi.studentLessons as any).mockResolvedValue([]);
+  (dashboardApi.studentOverview as any).mockResolvedValue({
+    learning_tasks: { due_assignments: [], upcoming_exams: [] },
+  });
   (favoritesApi.list as any).mockResolvedValue([]);
   (cardsApi.redeem as any).mockResolvedValue({});
   (tenants.list as any).mockResolvedValue([{ id: 't1' }]);
@@ -85,15 +88,65 @@ describe('Student dashboard (my-learning)', () => {
     expect(await screen.findByText('لم تسجل في أي كورس بعد')).toBeInTheDocument();
   });
 
-  it('falls back to the empty state (never hangs) when the API fails', async () => {
+  it('shows a recoverable load error instead of pretending the student has no courses', async () => {
     (enrollments.myCourses as any).mockRejectedValue(new Error('boom'));
     (dashboardApi.studentLessons as any).mockRejectedValue(new Error('boom'));
     (favoritesApi.list as any).mockRejectedValue(new Error('boom'));
 
     const { container } = render(<MyLearningPage />);
 
-    expect(await screen.findByText('لم تسجل في أي كورس بعد')).toBeInTheDocument();
+    expect(await screen.findByText('تعذر تحميل كورساتك الآن')).toBeInTheDocument();
+    expect(screen.queryByText('لم تسجل في أي كورس بعد')).toBeNull();
+    expect(screen.getByRole('button', { name: 'إعادة تحميل الكورسات' })).toBeInTheDocument();
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
+  });
+
+  it('shows real due assignments and upcoming exams with direct links', async () => {
+    (enrollments.myCourses as any).mockResolvedValue(COURSES);
+    (dashboardApi.studentOverview as any).mockResolvedValue({
+      learning_tasks: {
+        due_assignments: [{
+          id: 'a1',
+          course_id: 'c1',
+          course_title: 'كورس الفيزياء',
+          title: 'واجب الحركة',
+          due_at: '2099-12-05T10:00:00+00:00',
+          allow_late: false,
+          is_overdue: false,
+        }],
+        upcoming_exams: [{
+          id: 'e1',
+          course_id: 'c1',
+          course_title: 'كورس الفيزياء',
+          title: 'اختبار الحركة',
+          starts_at: '2099-12-04T10:00:00+00:00',
+          ends_at: '2099-12-06T10:00:00+00:00',
+        }],
+      },
+    });
+
+    const { container } = render(<MyLearningPage />);
+
+    expect(await screen.findByText('واجب الحركة')).toBeInTheDocument();
+    expect(screen.getByText('اختبار الحركة')).toBeInTheDocument();
+    expect(container.querySelector('a[href="/course/c1/learn?tab=assignments&assignment=a1"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/exam/e1"]')).toBeTruthy();
+  });
+
+  it('keeps card enrollment available but secondary after the student has a course', async () => {
+    const user = userEvent.setup();
+    (enrollments.myCourses as any).mockResolvedValue(COURSES);
+
+    render(<MyLearningPage />);
+
+    await screen.findByText('كورس الفيزياء');
+    const enrollmentToggle = screen.getByRole('button', { name: /إدخال بطاقة/ });
+    expect(enrollmentToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('textbox', { name: 'رمز البطاقة' })).toBeNull();
+
+    await user.click(enrollmentToggle);
+    expect(enrollmentToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('textbox', { name: 'رمز البطاقة' })).toBeInTheDocument();
   });
 
   it('redeems a registration card code and confirms success', async () => {
@@ -102,7 +155,7 @@ describe('Student dashboard (my-learning)', () => {
     await screen.findByText('لم تسجل في أي كورس بعد');
 
     await user.type(screen.getByPlaceholderText('XXXX-XXXX-XXXX'), 'ABC-123');
-    await user.click(screen.getByRole('button', { name: /تسجيل/ }));
+    await user.click(screen.getByRole('button', { name: 'تسجيل' }));
 
     await waitFor(() => expect(cardsApi.redeem).toHaveBeenCalledWith('ABC-123'));
     expect(toast.success).toHaveBeenCalled();
@@ -116,7 +169,7 @@ describe('Student dashboard (my-learning)', () => {
     await screen.findByText('لم تسجل في أي كورس بعد');
 
     await user.type(screen.getByPlaceholderText('XXXX-XXXX-XXXX'), 'BAD-CODE');
-    await user.click(screen.getByRole('button', { name: /تسجيل/ }));
+    await user.click(screen.getByRole('button', { name: 'تسجيل' }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('فشل'));
     expect(screen.getByPlaceholderText('XXXX-XXXX-XXXX')).toBeInTheDocument();

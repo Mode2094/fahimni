@@ -11,6 +11,7 @@ use App\Models\Exam;
 use App\Models\ExamAnswer;
 use App\Models\ExamQuestion;
 use App\Models\ExamSection;
+use App\Models\Question;
 use App\Plans\QuotaService;
 use App\Rules\TenantScopedExists;
 use App\Traits\AuthorizesTenantAccess;
@@ -129,6 +130,28 @@ class ExamController extends Controller
         return response()->json(['message' => 'Exam deleted successfully.']);
     }
 
+    /**
+     * إنشاء نسخة (مسودة) من اختبار — الإعدادات والأقسام والأسئلة (من بنك
+     * الأسئلة) فقط، بلا محاولات أو درجات أو أي بيانات طلاب.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $exam = Exam::findOrFail($id);
+
+        $this->authorize('view', $exam);
+        $this->authorize('create', Exam::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateExam($exam, $validated['title'] ?? null);
+
+        return response()->json([
+            'exam' => new ExamResource($result['model']->load(['sections', 'questions.options'])),
+            'report' => $result['report'],
+        ], 201);
+    }
+
     public function publish(string $id): JsonResponse
     {
         $exam = Exam::findOrFail($id);
@@ -196,6 +219,76 @@ class ExamController extends Controller
 
         return response()->json([
             'message' => count($attached).' question(s) added to exam.',
+            'exam' => new ExamResource($exam->fresh(['questions.options'])),
+        ]);
+    }
+
+    /**
+     * اسحب عدداً محدداً من أسئلة البنك عشوائيًّا وأضفها إلى الاختبار.
+     *
+     * المصدر هو بنك أسئلة المعلم نفسه (يمكن تصفيته بالمادة/القسم/التصنيف/
+     * الصعوبة/النوع)، والسحب يستثني أي سؤال مضاف إلى هذا الاختبار بالفعل فلا
+     * تتكرر الأسئلة عند إعادة السحب. الأسئلة تُربط بالاختبار عبر exam_questions
+     * فقط؛ لا تُنسخ ولا تُحتسب من حدود الخطة (كما في addQuestions)، ونتائج
+     * المحاولات القائمة لا تُمس.
+     */
+    public function drawQuestions(Request $request, string $id): JsonResponse
+    {
+        $exam = Exam::findOrFail($id);
+
+        $this->authorize('update', $exam);
+
+        $validated = $request->validate([
+            'count' => 'required|integer|min:1|max:200',
+            'course_id' => ['nullable', 'string', new TenantScopedExists('courses')],
+            'section_id' => ['nullable', 'string', new TenantScopedExists('sections')],
+            'category' => 'nullable|string|max:100',
+            'difficulty' => 'nullable|string|in:easy,medium,hard',
+            'question_type' => 'nullable|string|in:'.implode(',', Question::TYPES),
+        ]);
+
+        // Never hand out a question the exam already contains.
+        $alreadyAttached = ExamQuestion::where('exam_id', $exam->id)->pluck('question_id')->all();
+
+        $candidates = Question::query()
+            ->where('is_active', true)
+            ->when(! empty($validated['course_id']), fn ($q) => $q->where('course_id', $validated['course_id']))
+            ->when(! empty($validated['section_id']), fn ($q) => $q->where('section_id', $validated['section_id']))
+            ->when(! empty($validated['category']), fn ($q) => $q->where('category', $validated['category']))
+            ->when(! empty($validated['difficulty']), fn ($q) => $q->where('difficulty', $validated['difficulty']))
+            ->when(! empty($validated['question_type']), fn ($q) => $q->where('question_type', $validated['question_type']))
+            ->whereNotIn('id', $alreadyAttached)
+            ->inRandomOrder()
+            ->limit($validated['count'])
+            ->pluck('id');
+
+        if ($candidates->isEmpty()) {
+            return response()->json([
+                'message' => 'No matching questions are available in the bank.',
+                'added_count' => 0,
+                'requested_count' => (int) $validated['count'],
+                'exam' => new ExamResource($exam->fresh(['questions.options'])),
+            ]);
+        }
+
+        $nextSort = (int) (ExamQuestion::where('exam_id', $exam->id)->max('sort_order') ?? -1) + 1;
+
+        DB::transaction(function () use ($exam, $candidates, &$nextSort) {
+            foreach ($candidates as $questionId) {
+                ExamQuestion::create([
+                    'id' => UuidV7::generate(),
+                    'tenant_id' => $exam->tenant_id,
+                    'exam_id' => $exam->id,
+                    'question_id' => $questionId,
+                    'sort_order' => $nextSort++,
+                ]);
+            }
+        });
+
+        return response()->json([
+            'message' => $candidates->count().' question(s) drawn from the bank.',
+            'added_count' => $candidates->count(),
+            'requested_count' => (int) $validated['count'],
             'exam' => new ExamResource($exam->fresh(['questions.options'])),
         ]);
     }

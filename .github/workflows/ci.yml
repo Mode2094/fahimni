@@ -143,6 +143,12 @@ jobs:
       - name: Bash syntax
         run: bash -n deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
 
+      - name: Security headers stay consistent (no media/payment lockout)
+        # Multiple Permissions-Policy headers are intersected by the browser, so
+        # a stricter edge value silently disables live camera/microphone and
+        # Freemius checkout; also pins the X-Powered-By stripping.
+        run: deploy/tests/security-headers-test.sh
+
       - name: ShellCheck
         run: |
           sudo apt-get update -qq

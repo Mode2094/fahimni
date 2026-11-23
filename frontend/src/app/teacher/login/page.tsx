@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
+import { dashboardPathFor } from '@/lib/auth-routes';
 import { resolveLogoUrl } from '@/lib/logo';
 import { t } from '@/lib/i18n';
 import { Eye, EyeOff, ArrowLeft, Users, BookOpen, Sparkles, Shield, Loader2, KeyRound } from 'lucide-react';
@@ -28,10 +29,21 @@ export default function TeacherLoginPage() {
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [captchaId, setCaptchaId] = useState('');
+  // The math CAPTCHA id is single-use server-side; remounting mints a fresh one.
+  const [captchaKey, setCaptchaKey] = useState(0);
   const router = useRouter();
   const login = useAuth((s) => s.login);
+  const initialized = useAuth((s) => s.initialized);
+  const currentUser = useAuth((s) => s.user);
   const { locale } = useLocale();
   const { settings } = useSettings();
+
+  useEffect(() => {
+    // Already signed in: never show a login form over a live session.
+    if (initialized && currentUser) {
+      router.replace(dashboardPathFor(currentUser));
+    }
+  }, [initialized, currentUser, router]);
 
   useEffect(() => {
     // Credentials are never persisted client-side — purge any legacy copy.
@@ -54,7 +66,10 @@ export default function TeacherLoginPage() {
     setErr('');
     setLoad(true);
     try {
-      const { requires2fa } = await login(email, pass);
+      const { requires2fa } = await login(email, pass, {
+        captcha_id: captchaId,
+        captcha_answer: captchaAnswer,
+      });
       if (requires2fa) { setNeed2fa(true); setLoad(false); return; }
       persistRemember();
       const stored = useAuth.getState().user;
@@ -62,10 +77,12 @@ export default function TeacherLoginPage() {
       else if (stored?.is_super_admin) router.push('/admin/dashboard');
       else {
         setErr(locale === 'ar' ? 'هذا الدخول مخصص للمعلمين فقط' : 'For teachers only');
+        setCaptchaKey((k) => k + 1);
         await useAuth.getState().logout();
       }
     } catch (err: any) {
       setErr(err?.response?.data?.message ? String(err.response.data.message).replace('Device limit reached', locale === 'ar' ? 'تم الوصول للحد الأقصى للأجهزة المسموحة. تواصل مع معلمك لإعادة تعيين أجهزتك' : 'Device limit reached') : err?.response?.status ? t(locale, 'common.invalidCredentials') : (locale === 'ar' ? 'تعذر الاتصال بالخادم' : 'Cannot reach server'));
+      setCaptchaKey((k) => k + 1);
     }
     setLoad(false);
   };
@@ -133,19 +150,20 @@ export default function TeacherLoginPage() {
           </div>
           <div className="mb-4"><GoogleLoginButton role="teacher" label="المتابعة عبر Google" /></div><form onSubmit={submit} className="space-y-5 bg-white p-6 sm:p-8 rounded-2xl border shadow-sm">
             <div className="space-y-2">
-              <Label className="text-sm font-medium">{t(locale, 'common.email')}</Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="teacher@example.com" />
+              <Label htmlFor="teacher-email" className="text-sm font-medium">{t(locale, 'common.email')}</Label>
+              <Input id="teacher-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="teacher@example.com" autoComplete="username" />
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{t(locale, 'common.password')}</Label>
+                <Label htmlFor="teacher-password" className="text-sm font-medium">{t(locale, 'common.password')}</Label>
                 <a href="/forgot-password" className="text-xs text-teal-700 hover:underline font-medium">{t(locale, 'common.forgotPassword')}</a>
               </div>
               <div className="relative">
-                <Input type={show ? 'text' : 'password'} value={pass} onChange={(e) => setPass(e.target.value)} required className="h-12 bg-gray-50 pe-11" placeholder="••••••••" />
-                <button type="button" onClick={() => setShow(!show)} className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400" aria-label={show ? (locale === 'ar' ? 'إخفاء كلمة المرور' : 'Hide password') : (locale === 'ar' ? 'إظهار كلمة المرور' : 'Show password')}>{show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                <Input id="teacher-password" type={show ? 'text' : 'password'} value={pass} onChange={(e) => setPass(e.target.value)} required className="h-12 bg-gray-50 pe-11" placeholder="••••••••" autoComplete="current-password" />
+                <button type="button" onClick={() => setShow(!show)} className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400" aria-label={show ? (locale === 'ar' ? 'إخفاء كلمة المرور' : 'Hide password') : (locale === 'ar' ? 'إظهار كلمة المرور' : 'Show password')}>{show ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}</button>
               </div>
             </div>
+            <Captcha key={captchaKey} value={captchaAnswer} onChange={setCaptchaAnswer} onId={setCaptchaId} locale={locale} />
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 rounded border-gray-300 accent-teal-600" />
@@ -158,8 +176,9 @@ export default function TeacherLoginPage() {
             </Button>
             {need2fa && (
               <div className="space-y-3 rounded-xl border border-teal-100 bg-teal-50/60 p-4">
-                <Label>{locale === 'ar' ? 'رمز التحقق بخطوتين' : 'Two-factor code'}</Label>
+                <Label htmlFor="teacher-2fa">{locale === 'ar' ? 'رمز التحقق بخطوتين' : 'Two-factor code'}</Label>
                 <Input
+                  id="teacher-2fa"
                   value={twoFactorCode}
                   onChange={(e) => setTwoFactorCode(e.target.value)}
                   inputMode="numeric"

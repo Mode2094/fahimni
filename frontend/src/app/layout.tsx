@@ -52,6 +52,19 @@ export const metadata: Metadata = {
     apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
   },
   manifest: '/manifest.webmanifest',
+  // iOS ignores most of the web manifest. `appleWebApp` emits the modern
+  // `mobile-web-app-capable`; the legacy `apple-mobile-web-app-capable` is
+  // added explicitly for older Safari versions. Together they make the app
+  // launch full-screen with the right status-bar colour and home-screen title
+  // once added via Share → Add to Home Screen.
+  appleWebApp: {
+    capable: true,
+    title: 'فهمني للطلاب',
+    statusBarStyle: 'default',
+  },
+  other: {
+    'apple-mobile-web-app-capable': 'yes',
+  },
 };
 
 export const viewport: Viewport = {

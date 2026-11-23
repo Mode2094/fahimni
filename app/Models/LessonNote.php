@@ -9,27 +9,45 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A private note a student keeps on a lesson, optionally pinned to a moment
- * in the video (`timestamp_seconds`). Only its author (and, if shared, the
- * tenant's staff) can read it.
+ * ملاحظة/علامة مرجعية خاصة بطالب واحد.
+ *
+ * `type = note` ملاحظة نصية، و`type = bookmark` علامة زمنية. `body` و
+ * `position_seconds` كلاهما اختياري، فيمكن لعلامة مرجعية أن تحمل تعليقاً أو لا.
  */
 class LessonNote extends Model
 {
     use BelongsToTenant, HasFactory, HasUuid;
 
+    public const TYPE_NOTE = 'note';
+
+    public const TYPE_BOOKMARK = 'bookmark';
+
+    /** أقصى طول للملاحظة — حدّ معقول يحمي من الإساءة. */
+    public const MAX_BODY_LENGTH = 2000;
+
     protected $fillable = [
-        'tenant_id', 'user_id', 'lesson_id', 'course_id',
-        'timestamp_seconds', 'body', 'is_shared',
+        'tenant_id', 'user_id', 'course_id', 'lesson_id', 'video_id',
+        'type', 'body', 'position_seconds', 'duration_seconds',
     ];
 
     protected $casts = [
-        'timestamp_seconds' => 'integer',
-        'is_shared' => 'boolean',
+        'position_seconds' => 'integer',
+        'duration_seconds' => 'integer',
     ];
 
-    public function student(): BelongsTo
+    public function tenant(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(Tenant::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function course(): BelongsTo
+    {
+        return $this->belongsTo(Course::class);
     }
 
     public function lesson(): BelongsTo
@@ -37,8 +55,8 @@ class LessonNote extends Model
         return $this->belongsTo(Lesson::class);
     }
 
-    public function course(): BelongsTo
+    public function video(): BelongsTo
     {
-        return $this->belongsTo(Course::class);
+        return $this->belongsTo(VideoContent::class, 'video_id');
     }
 }

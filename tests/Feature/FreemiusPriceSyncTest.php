@@ -709,4 +709,83 @@ class FreemiusPriceSyncTest extends TenantTestCase
         $this->assertSame(49.0, (float) $plan->fresh()->monthly_price);
         Http::assertNothingSent();
     }
+
+    // ── Approved-price publish command (plans:publish-approved-prices) ──
+
+    private function approvedPlan(string $slug, float $monthly, float $yearly): SubscriptionPlan
+    {
+        return SubscriptionPlan::create([
+            'id' => (string) Str::uuid(),
+            'name' => ucfirst($slug),
+            'slug' => $slug,
+            'monthly_price' => $monthly,
+            'yearly_price' => $yearly,
+            'currency' => 'USD',
+            'trial_days' => 7,
+            'is_active' => true,
+            'is_public' => true,
+            'sort_order' => 0,
+            'metadata' => ['freemius_monthly_plan_id' => '1010', 'freemius_yearly_plan_id' => '2020'],
+        ]);
+    }
+
+    public function test_approved_prices_command_dry_run_never_calls_freemius_and_changes_nothing(): void
+    {
+        $this->configureFreemius();
+        $this->approvedPlan('starter', 29, 299);
+        $pro = $this->approvedPlan('professional', 49, 599); // yearly already approved
+        $this->approvedPlan('enterprise', 79, 899);
+
+        Http::fake();
+
+        $this->artisan('plans:publish-approved-prices', ['--dry-run' => true])->assertExitCode(0);
+
+        Http::assertNothingSent();
+        $this->assertSame(49.0, (float) $pro->fresh()->monthly_price);
+    }
+
+    public function test_approved_prices_command_adopts_only_a_verified_price(): void
+    {
+        $this->configureFreemius();
+        $this->approvedPlan('starter', 29, 299);
+        $pro = $this->approvedPlan('professional', 49, 599);
+
+        $updated = false;
+
+        Http::fake([
+            'api.freemius.test/v1/ping.json' => $this->ping(),
+            'api.freemius.test/v1/developers/*' => function () use (&$updated) {
+                $updated = true;
+
+                return Http::response(['pricing' => ['id' => '5005', 'monthly_price' => 59]], 200);
+            },
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => function () use (&$updated) {
+                return $this->pricingList($updated ? 59.0 : 49.0);
+            },
+        ]);
+
+        $this->artisan('plans:publish-approved-prices')->assertExitCode(0);
+
+        $fresh = $pro->fresh();
+        $this->assertSame(59.0, (float) $fresh->monthly_price);
+        $this->assertSame('5005', (string) ($fresh->metadata['freemius_prices']['monthly']['pricing_id'] ?? ''));
+    }
+
+    public function test_approved_prices_command_does_not_adopt_when_freemius_does_not_confirm(): void
+    {
+        $this->configureFreemius();
+        $this->approvedPlan('starter', 29, 299);
+        $pro = $this->approvedPlan('professional', 49, 599);
+
+        Http::fake([
+            'api.freemius.test/v1/ping.json' => $this->ping(),
+            'api.freemius.test/v1/developers/*' => Http::response(['pricing' => ['id' => '5005', 'monthly_price' => 59]], 200),
+            // يقرأ السعر القديم دائماً → لا تطابق → لا اعتماد محلي.
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => $this->pricingList(49.0),
+        ]);
+
+        $this->artisan('plans:publish-approved-prices')->assertExitCode(1);
+
+        $this->assertSame(49.0, (float) $pro->fresh()->monthly_price);
+    }
 }

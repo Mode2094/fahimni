@@ -9,21 +9,43 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dashboard-kit';
+import SetupGuide from '@/components/teacher/setup-guide';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, ClipboardCheck, FileQuestion, BellRing, Plus, Crown, CalendarClock, Film, Copy, Check, Construction, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight, HardDrive, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-const ONBOARDING_META: Record<string, { ar: string; en: string; icon: any; href: string }> = {
-  course: { ar: 'أنشئ كورسك الأول', en: 'Create your first course', icon: BookOpen, href: '/courses' },
-  lesson: { ar: 'أضف درساً داخل الكورس', en: 'Add a lesson to the course', icon: BookOpen, href: '/courses' },
-  video: { ar: 'ارفع فيديو تعليمياً', en: 'Upload a teaching video', icon: Video, href: '/courses' },
-  card: { ar: 'أنشئ بطاقة تسجيل لطلابك', en: 'Create a registration card', icon: Ticket, href: '/teacher/cards' },
-  assignment: { ar: 'أضف واجباً لطلابك', en: 'Add an assignment', icon: ClipboardList, href: '/courses' },
-  live: { ar: 'ابدأ بثاً مباشراً', en: 'Hold a live session', icon: Radio, href: '/teacher/live' },
-  schedule: { ar: 'جدوِل درساً بموعد ثابت', en: 'Schedule a lesson', icon: CalendarDays, href: '/teacher/schedule' },
+/** Real work items surfaced on the dashboard (from GET /dashboard). */
+type DashboardWorkItems = {
+  pending_assignment_submissions: number;
+  pending_exam_reviews: number;
+  pending_bookings: number;
+  unread_admin_notifications: number;
 };
+
+/** Last-known snapshots so a failed request never turns real numbers into 0. */
+const CACHE = {
+  plan: 'fahimni.cache.teacher.plan',
+  analytics: 'fahimni.cache.teacher.analytics',
+};
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode / quota: caching is best-effort only.
+  }
+}
 
 export default function TeacherDashboard() {
   const { user, check } = useAuth();
@@ -36,14 +58,19 @@ export default function TeacherDashboard() {
   const [plan, setPlan] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [workItems, setWorkItems] = useState<DashboardWorkItems | null>(null);
+  const [workItemsError, setWorkItemsError] = useState(false);
   const [lessons, setLessons] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [studentApp, setStudentApp] = useState<any>(null);
-  const [onboarding, setOnboarding] = useState<any>(null);
   const [platform, setPlatform] = useState<{ url: string; slug: string; customDomain: string | null; verified: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // Which data sources failed to load — drives the honest error notice instead
+  // of the old "?? 0" fallbacks that showed a fake zero on a network error.
+  const [planFailed, setPlanFailed] = useState(false);
+  const [analyticsFailed, setAnalyticsFailed] = useState(false);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -63,25 +90,81 @@ export default function TeacherDashboard() {
 
   const loadAll = async () => {
     setLoading(true);
+    setWorkItems(null);
+    setWorkItemsError(false);
+    let workItemsHandled = false;
     try {
       // Each request degrades on its own: one failing endpoint must never blank
       // the dashboard or leave it stuck on skeletons forever.
-      const [planR, anaR, lesR, bkR, appR, onbR, domR] = await Promise.all([
+      const [planR, anaR, lesR, bkR, appR, domR, dashboardR] = await Promise.all([
         fetch(`${API}/teacher/plan`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }).catch(() => null),
-        fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/scheduled-lessons?upcoming=1`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
-        fetch(`${API}/teacher/onboarding`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/domain`, { headers: headers() }).catch(() => null),
+        user?.is_super_admin ? Promise.resolve(null) : fetch(`${API}/dashboard`, { headers: headers() }).catch(() => null),
       ]);
 
-      if (planR?.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
-      if (anaR?.ok) { const d = await anaR.json(); setAnalytics(d.overview || null); }
+      if (planR?.ok) {
+        const d = await planR.json();
+        const snapshot = { plan: d.plan || null, usage: d.usage || null };
+        setPlan(snapshot.plan);
+        setUsage(snapshot.usage);
+        setPlanFailed(false);
+        writeCache(CACHE.plan, snapshot);
+      } else {
+        // Never blank real numbers on a transient error: keep the last-known
+        // snapshot and flag the failure so the tiles are marked as stale.
+        const cached = readCache<{ plan: any; usage: any }>(CACHE.plan);
+        if (cached) { setPlan(cached.plan); setUsage(cached.usage); }
+        setPlanFailed(true);
+      }
+      if (anaR?.ok) {
+        const d = await anaR.json();
+        setAnalytics(d.overview || null);
+        setAnalyticsFailed(false);
+        writeCache(CACHE.analytics, d.overview || null);
+      } else {
+        const cached = readCache<any>(CACHE.analytics);
+        if (cached) setAnalytics(cached);
+        setAnalyticsFailed(true);
+      }
       if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
       if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
       if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
-      if (onbR?.ok) { const d = await onbR.json(); setOnboarding(d || null); }
+      if (user?.is_super_admin) {
+        setWorkItems(null);
+        setWorkItemsError(false);
+        workItemsHandled = true;
+      } else if (dashboardR?.ok) {
+        try {
+          const d = await dashboardR.json();
+          const values = [
+            d.pending_assignment_submissions,
+            d.pending_exam_reviews,
+            d.pending_bookings,
+            d.unread_admin_notifications,
+          ];
+          if (values.every((value) => Number.isSafeInteger(value) && value >= 0)) {
+            setWorkItems({
+              pending_assignment_submissions: d.pending_assignment_submissions,
+              pending_exam_reviews: d.pending_exam_reviews,
+              pending_bookings: d.pending_bookings,
+              unread_admin_notifications: d.unread_admin_notifications,
+            });
+          } else {
+            setWorkItemsError(true);
+          }
+          workItemsHandled = true;
+        } catch {
+          setWorkItemsError(true);
+          workItemsHandled = true;
+        }
+      } else if (!user?.is_super_admin) {
+        setWorkItemsError(true);
+        workItemsHandled = true;
+      }
 
       let platformInfo = domR?.ok ? buildPlatform(await domR.json()) : null;
       if (!platformInfo) {
@@ -99,6 +182,7 @@ export default function TeacherDashboard() {
       setPlatform(platformInfo);
     } catch {
       // Malformed payloads etc. — render whatever we have instead of locking up.
+      if (!user?.is_super_admin && !workItemsHandled) setWorkItemsError(true);
     } finally {
       setLoading(false);
     }
@@ -144,9 +228,14 @@ export default function TeacherDashboard() {
     { key: 'teachers', label: t('المعلمون', 'Teachers') },
   ];
 
+  const bookingTimestamp = (booking: any) => {
+    const raw = booking.starts_at || (booking.date ? `${booking.date}${booking.time ? `T${booking.time}` : ''}` : '');
+    return raw ? new Date(raw).getTime() : Number.NaN;
+  };
+
   const upcomingBookings = (bookings || [])
-    .filter((b) => b.status !== 'cancelled')
-    .filter((b) => b.date && new Date(b.date + (b.time ? 'T' + b.time : '')) >= new Date(Date.now() - 3600e3))
+    .filter((b) => b.status !== 'cancelled' && Number.isFinite(bookingTimestamp(b)) && bookingTimestamp(b) >= Date.now() - 3600e3)
+    .sort((a, b) => bookingTimestamp(a) - bookingTimestamp(b))
     .slice(0, 3);
 
   const perf = [
@@ -155,14 +244,54 @@ export default function TeacherDashboard() {
     { label: t('نسبة النجاح', 'Pass rate'), key: 'pass' },
   ];
 
+  // A stat is only "0" when the data actually resolved; when a request failed
+  // and there is no last-known snapshot it is unknown and renders as "—".
+  const usageUnknown = planFailed && !usage;
+  const analyticsUnknown = analyticsFailed && !analytics;
+  const usageValue = (v: number | undefined) => (usageUnknown ? '—' : (v ?? 0));
+  const attemptsValue = () => (analyticsUnknown ? '—' : (analytics?.total_attempts ?? 0));
+
   const stats = [
-    { label: t('الطلاب', 'Students'), value: usage?.students?.used ?? 0, href: '/students', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
-    { label: t('الكورسات', 'Courses'), value: usage?.courses?.used ?? 0, href: '/courses', icon: BookOpen, tone: 'bg-sky-500/10 text-sky-600' },
-    { label: t('الاختبارات', 'Exams'), value: usage?.exams?.used ?? 0, href: '/courses', icon: ClipboardList, tone: 'bg-violet-500/10 text-violet-600' },
-    { label: t('المحاولات', 'Attempts'), value: analytics?.total_attempts ?? 0, href: '/analytics', icon: FileQuestion, tone: 'bg-amber-500/10 text-amber-600' },
+    { label: t('الطلاب', 'Students'), value: usageValue(usage?.students?.used), href: '/students', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
+    { label: t('الكورسات', 'Courses'), value: usageValue(usage?.courses?.used), href: '/courses', icon: BookOpen, tone: 'bg-sky-500/10 text-sky-600' },
+    { label: t('الاختبارات', 'Exams'), value: usageValue(usage?.exams?.used), href: '/courses', icon: ClipboardList, tone: 'bg-violet-500/10 text-violet-600' },
+    { label: t('المحاولات', 'Attempts'), value: attemptsValue(), href: '/analytics', icon: FileQuestion, tone: 'bg-amber-500/10 text-amber-600' },
   ];
 
-  const hasData = (analytics?.total_attempts ?? 0) > 0 || (analytics?.watch_seconds ?? 0) > 0;
+  const hasData = !analyticsUnknown && ((analytics?.total_attempts ?? 0) > 0 || (analytics?.watch_seconds ?? 0) > 0);
+  const canReviewExams = !!user?.is_super_admin || !!user?.permissions?.includes('exams.manage');
+  const workQueue = [
+    ...(workItems && canReviewExams && workItems.pending_exam_reviews > 0 ? [{
+      key: 'exam-reviews',
+      count: workItems.pending_exam_reviews,
+      href: '/teacher/exams',
+      icon: ClipboardList,
+      label: t('اختبارات تحتاج تصحيحاً', 'Exams need grading'),
+    }] : []),
+    ...(workItems && workItems.pending_assignment_submissions > 0 ? [{
+      key: 'assignment-reviews',
+      count: workItems.pending_assignment_submissions,
+      href: '/courses',
+      icon: ClipboardCheck,
+      label: t('واجبات تحتاج مراجعة', 'Assignments need review'),
+    }] : []),
+    ...(workItems && workItems.pending_bookings > 0 ? [{
+      key: 'booking-requests',
+      count: workItems.pending_bookings,
+      href: '/teacher/appointments',
+      icon: CalendarClock,
+      label: t('طلبات حجز معلقة', 'Pending booking requests'),
+    }] : []),
+    ...(workItems && workItems.unread_admin_notifications > 0 ? [{
+      key: 'admin-notifications',
+      count: workItems.unread_admin_notifications,
+      href: '/teacher/notifications',
+      icon: BellRing,
+      label: t('إشعارات إدارة غير مقروءة', 'Unread platform notices'),
+    }] : []),
+  ];
+  const nextLesson = lessons.find((lesson) => !lesson.is_past) || null;
+  const nextBooking = upcomingBookings.find((booking) => booking.status === 'confirmed') || null;
 
   if (loading) {
     return (
@@ -222,6 +351,114 @@ export default function TeacherDashboard() {
           </div>
         </div>
       </section>
+
+      {/* ─── تنبيه تعذّر التحميل (لا نعرض صفراً كاذباً) ──── */}
+      {(planFailed || analyticsFailed) && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+          data-testid="dashboard-load-error"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1 font-semibold">
+            {t('تعذر تحميل بعض البيانات', 'Some data could not be loaded')}
+            {((planFailed && plan) || (analyticsFailed && analytics)) &&
+              t(' — تُعرض آخر قيمة معروفة', ' — showing the last known values')}
+          </span>
+          <Button size="sm" variant="outline" className="rounded-full bg-white" onClick={loadAll}>
+            {t('إعادة المحاولة', 'Retry')}
+          </Button>
+        </div>
+      )}
+
+      {/* ─── مهام ومواعيد تحتاج متابعة ──────────────── */}
+      {!user?.is_super_admin && <section
+        className="rounded-2xl border border-slate-100 bg-card p-4 shadow-sm sm:p-5"
+        aria-labelledby="teacher-work-items-title"
+        data-testid="teacher-work-items"
+      >
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="teacher-work-items-title" className="font-bold">{t('مهام تحتاج متابعتك', 'Needs your attention')}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{t('أعمال فعلية من منصتك، مرتبة لتصل إليها بسرعة.', 'Real work from your workspace, with direct links.')}</p>
+          </div>
+          <a href="/teacher/follow-up" className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-semibold text-teal-700 hover:bg-teal-50">
+            {t('متابعة الطلاب', 'Student follow-up')}<Arrow className="h-4 w-4" />
+          </a>
+        </div>
+
+        {workItemsError ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3" role="alert">
+            <p className="text-sm text-amber-900">{t('تعذر تحميل المهام الآن؛ لم نعرض أعداداً تقديرية.', 'Could not load tasks; no estimated counts are shown.')}</p>
+            <Button size="sm" variant="outline" onClick={loadAll} disabled={loading} className="min-h-11 gap-2">
+              {t('إعادة المحاولة', 'Retry')}
+            </Button>
+          </div>
+        ) : (
+          <>
+            {workQueue.length > 0 && (
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                {workQueue.map((task) => (
+                  <a key={task.key} href={task.href} className="flex min-h-[76px] items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-teal-200 hover:bg-teal-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/10 text-teal-700">
+                      <task.icon className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">{task.label}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{task.count}</span>
+                    </span>
+                    <Arrow className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+            )}
+
+            {(nextLesson || nextBooking) && (
+              <div className={cn('grid gap-2.5 sm:grid-cols-2', workQueue.length > 0 && 'mt-2.5')}>
+                {nextLesson && (
+                  <a href="/teacher/schedule" className="flex min-h-[76px] items-center gap-3 rounded-xl border border-slate-100 p-3 transition hover:border-teal-200 hover:bg-teal-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-700">
+                      <CalendarClock className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-semibold text-muted-foreground">{t('الدرس القادم', 'Next lesson')}</span>
+                      <span className="block truncate text-sm font-semibold">{nextLesson.title}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {nextLesson.instance_date
+                          ? new Date(`${nextLesson.instance_date}T${nextLesson.start_time || '00:00'}`).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+                          : ''}
+                      </span>
+                    </span>
+                    <Arrow className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+                  </a>
+                )}
+                {nextBooking && (
+                  <a href="/teacher/appointments" className="flex min-h-[76px] items-center gap-3 rounded-xl border border-slate-100 p-3 transition hover:border-teal-200 hover:bg-teal-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-700">
+                      <Users className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-semibold text-muted-foreground">{t('الموعد القادم', 'Next appointment')}</span>
+                      <span className="block truncate text-sm font-semibold">{nextBooking.student?.name || nextBooking.title || t('طالب', 'Student')}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {new Date(bookingTimestamp(nextBooking)).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </span>
+                    <Arrow className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {workQueue.length === 0 && !nextLesson && !nextBooking && (
+              <p className="rounded-xl bg-emerald-50/70 px-3 py-4 text-sm text-emerald-800" role="status">
+                {t('لا توجد مهام أو مواعيد قادمة تحتاج متابعة الآن.', 'No pending work or upcoming events right now.')}
+              </p>
+            )}
+          </>
+        )}
+      </section>}
 
       {/* ─── الإحصائيات الرئيسية (2×2 على الهاتف) ────── */}
       <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" data-testid="stats-grid">
@@ -326,42 +563,8 @@ export default function TeacherDashboard() {
         </Card>
       )}
 
-      {/* ─── خطوات البدء (تظهر فقط حتى يكتمل الإعداد) ─── */}
-      {onboarding && !onboarding.all_done && Array.isArray(onboarding.steps) && onboarding.steps.length > 0 && (
-        <SectionCard
-          icon={Sparkles}
-          title={t('خطواتك الأولى', 'Getting started')}
-          description={t('أكمل هذه الخطوات لتجهيز منصتك لطلابك.', 'Complete these steps to get your platform ready for students.')}
-          badge={<span className="shrink-0 rounded-full bg-teal-50 px-2.5 py-0.5 text-xs font-semibold text-teal-700">{onboarding.completed} / {onboarding.total}</span>}
-          defaultOpen
-          forceOpen={isDesktop}
-        >
-          <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${onboarding.total ? Math.round((onboarding.completed / onboarding.total) * 100) : 0}%` }} />
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {onboarding.steps.map((s: any) => {
-              const meta = ONBOARDING_META[s.key];
-              if (!meta) return null;
-              const Icon = meta.icon;
-              return (
-                <a
-                  key={s.key}
-                  href={meta.href}
-                  className={cn('flex items-center gap-3 rounded-xl border p-3 transition', s.done ? 'border-slate-100 bg-slate-50/50' : 'border-teal-100 bg-white hover:bg-teal-50/40')}
-                  aria-label={s.done ? `${t(meta.ar, meta.en)} — ${t('تم', 'Done')}` : t(meta.ar, meta.en)}
-                >
-                  <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', s.done ? 'bg-emerald-50' : 'bg-teal-500/10')}>
-                    {s.done ? <Check className="h-4 w-4 text-emerald-600" /> : <Icon className="h-4 w-4 text-teal-600" />}
-                  </span>
-                  <span className={cn('flex-1 text-sm font-medium', s.done ? 'text-gray-400 line-through' : 'text-gray-700')}>{t(meta.ar, meta.en)}</span>
-                  {!s.done && <Arrow className="h-4 w-4 shrink-0 text-teal-500" />}
-                </a>
-              );
-            })}
-          </div>
-        </SectionCard>
-      )}
+      {/* ─── دليل الإعداد (يظهر للحسابات الجديدة حتى يكتمل) ─── */}
+      <SetupGuide />
 
       {/* ─── استخدام خطتك (مصدر واحد موحد) ──────────── */}
       <SectionCard
@@ -370,6 +573,18 @@ export default function TeacherDashboard() {
         description={t('الاستخدام مقابل حدود خطتك الحالية', 'Usage vs your current plan limits')}
         forceOpen={isDesktop}
       >
+        {/* تنبيه الاقتراب من امتلاء مساحة التخزين — مع المساحة المتبقية */}
+        {usage?.storage && !usage.storage.unlimited && (usage.storage.pct ?? 0) >= 80 && (
+          <div className={cn('mb-4 flex items-center gap-2.5 rounded-2xl border px-4 py-3 text-sm', (usage.storage.pct ?? 0) >= 90 ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-800')}>
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="font-semibold">
+              {(usage.storage.pct ?? 0) >= 90
+                ? t('اقتربت جداً من حد التخزين', 'You are very close to your storage limit')
+                : t('اقتربت من حد التخزين', 'You are approaching your storage limit')}
+              {' — '}{t('المساحة المتبقية', 'Remaining storage')}: {fmtNum('storage', usage.storage.remaining ?? 0)}
+            </span>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
           {upUsage.map((it) => {
             const e = usage?.[it.key];
@@ -386,6 +601,11 @@ export default function TeacherDashboard() {
                   {!e.unlimited && <div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-teal-500')} style={{ width: `${pct}%` }} />}
                 </div>
                 <p className={cn('mt-1.5 text-xs', pct >= 90 && !e.unlimited ? 'text-rose-600' : 'text-gray-400')}>{state}{!e.unlimited && pct > 0 ? ` · ${Math.round(pct)}%` : ''}</p>
+                {it.key === 'storage' && !e.unlimited && (
+                  <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-gray-500">
+                    <HardDrive className="h-3 w-3 text-gray-400" />{t('المتبقي', 'Remaining')}: {fmtNum('storage', e.remaining ?? 0)}
+                  </p>
+                )}
               </div>
             );
           })}
@@ -396,10 +616,10 @@ export default function TeacherDashboard() {
           <h3 className="mb-3 flex items-center gap-2 text-sm font-bold"><Film className="h-4 w-4 text-teal-600" />{t('الوسائط والملفات', 'Media & files')}</h3>
           <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             {[
-              { label: t('الفيديوهات', 'Videos'), value: `${usage?.videos?.used ?? 0} / ${usage?.videos?.unlimited ? '∞' : (usage?.videos?.limit ?? 0)}` },
-              { label: t('جلسات البث', 'Live sessions'), value: `${usage?.live_sessions?.used ?? 0} / ${usage?.live_sessions?.unlimited ? '∞' : (usage?.live_sessions?.limit ?? 0)}` },
-              { label: t('الملفات', 'Files'), value: `${usage?.files?.used ?? 0} / ${usage?.files?.unlimited ? '∞' : (usage?.files?.limit ?? 0)}` },
-              { label: t('ملفات PDF', 'PDFs'), value: `${usage?.pdfs?.used ?? 0} / ${usage?.pdfs?.unlimited ? '∞' : (usage?.pdfs?.limit ?? 0)}` },
+              { label: t('الفيديوهات', 'Videos'), value: usageUnknown ? '—' : `${usage?.videos?.used ?? 0} / ${usage?.videos?.unlimited ? '∞' : (usage?.videos?.limit ?? 0)}` },
+              { label: t('جلسات البث', 'Live sessions'), value: usageUnknown ? '—' : `${usage?.live_sessions?.used ?? 0} / ${usage?.live_sessions?.unlimited ? '∞' : (usage?.live_sessions?.limit ?? 0)}` },
+              { label: t('الملفات', 'Files'), value: usageUnknown ? '—' : `${usage?.files?.used ?? 0} / ${usage?.files?.unlimited ? '∞' : (usage?.files?.limit ?? 0)}` },
+              { label: t('ملفات PDF', 'PDFs'), value: usageUnknown ? '—' : `${usage?.pdfs?.used ?? 0} / ${usage?.pdfs?.unlimited ? '∞' : (usage?.pdfs?.limit ?? 0)}` },
             ].map((m, i) => (
               <div key={i} className="rounded-xl border border-slate-100 px-4 py-3">
                 <p className="text-xs font-semibold text-gray-500">{m.label}</p>
@@ -410,55 +630,11 @@ export default function TeacherDashboard() {
         </div>
       </SectionCard>
 
-      {/* ─── القادم: دروس + مواعيد ──────────────────── */}
-      <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-        <SectionCard icon={CalendarClock} title={t('الدروس القادمة', 'Upcoming lessons')} forceOpen={isDesktop}>
-          {lessons.length === 0 ? (
-            <div className="space-y-2 py-4 text-center">
-              <p className="text-sm text-gray-400">{t('لا توجد دروس مجدولة', 'No scheduled lessons')}</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {lessons.slice(0, 3).map((l, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50"><Clock className="h-4 w-4 text-teal-600" /></span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{l.title}</p>
-                    <p className="truncate text-xs text-gray-400">{l.scheduled_at ? new Date(l.scheduled_at).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard icon={CalendarClock} title={t('المواعيد القادمة', 'Upcoming appointments')} forceOpen={isDesktop}>
-          {upcomingBookings.length === 0 ? (
-            <div className="py-4 text-center">
-              <p className="text-sm text-gray-400">{t('لا توجد مواعيد قادمة', 'No upcoming appointments')}</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {upcomingBookings.map((b, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-50"><Users className="h-4 w-4 text-violet-600" /></div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{b.student?.name || b.title || t('طالب', 'Student')}</p>
-                    <p className="truncate text-xs text-gray-400">{b.date ? new Date(b.date + (b.time ? 'T' + b.time : '')).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''}</p>
-                  </div>
-                  <Badge className={cn('shrink-0 border-0', b.status === 'confirmed' ? 'bg-emerald-50 text-emerald-600' : b.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-500')}>
-                    {b.status === 'confirmed' ? t('مؤكد', 'Confirmed') : b.status === 'pending' ? t('معلق', 'Pending') : b.status}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-      </div>
-
       {/* ─── الأداء ──────────────────────────────────── */}
       <SectionCard icon={Activity} title={t('الأداء', 'Performance')} forceOpen={isDesktop}>
-        {!hasData ? (
+        {analyticsUnknown ? (
+          <p className="py-4 text-center text-sm font-semibold text-amber-700">{t('تعذر تحميل بيانات الأداء', 'Performance data could not be loaded')}</p>
+        ) : !hasData ? (
           <p className="py-4 text-center text-sm text-gray-400">{t('لا توجد بيانات كافية بعد — أضف اختبارات وفيديوهات لطلابك', 'Not enough data yet — add exams and videos for your students')}</p>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">

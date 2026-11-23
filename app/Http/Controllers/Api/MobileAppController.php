@@ -8,8 +8,10 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Lesson;
 use App\Models\TenantUser;
+use App\Models\VideoContent;
 use App\Services\StudentAppService;
 use App\Services\VideoProtectionService;
+use App\Services\VideoWatchPositionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -27,6 +29,7 @@ class MobileAppController extends Controller
     public function __construct(
         private readonly StudentAppService $app,
         private readonly VideoProtectionService $protection,
+        private readonly VideoWatchPositionService $positions,
     ) {}
 
     /**
@@ -327,9 +330,13 @@ class MobileAppController extends Controller
             ];
 
             if ($content->video && $user) {
-                $payload['video'] = $content->video->provider === 'bunny'
+                $videoPayload = $content->video->provider === 'bunny'
                     ? $this->protection->providerPlaybackPayload($content->video, $user)
                     : $this->protection->playbackPayload($content->video, $user);
+                // موضع الاستكمال للطالب نفسه (نفس سلوك الويب) — يُهمَل إن انتهى
+                // الفيديو أو تغيّرت مدته بعد إعادة الرفع.
+                $videoPayload['resume'] = $this->positions->read($content->video, $user);
+                $payload['video'] = $videoPayload;
             } elseif ($content->video) {
                 $payload['video'] = [
                     'type' => 'external',
@@ -371,6 +378,45 @@ class MobileAppController extends Controller
             ],
             'contents' => $contents,
         ]);
+    }
+
+    /**
+     * POST /api/v1/mobile/video-position — حفظ موضع مشاهدة الفيديو للطالب
+     * الحالي (استكمال بين الأجهزة). نفس قواعد الوصول المستخدمة في التشغيل،
+     * ولا يمسّ احتساب دقائق المشاهدة أو الإكمال أو جلسات التشغيل المحمية.
+     */
+    public function saveVideoPosition(Request $request): JsonResponse
+    {
+        $tenant = $this->ensureStudentContext($request);
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'video_id' => 'required|uuid',
+            'position_seconds' => 'required|numeric|min:0|max:86400',
+            'duration_seconds' => 'nullable|numeric|min:0|max:86400',
+        ]);
+
+        $video = VideoContent::where('id', $validated['video_id'])
+            ->where('tenant_id', $tenant->id)
+            ->first();
+
+        if (! $video) {
+            return response()->json(['message' => 'Video not found.'], 404);
+        }
+
+        if (! $this->protection->canAccess($video, $user)) {
+            return response()->json(['message' => 'No access to this video.'], 403);
+        }
+
+        $saved = $this->positions->save(
+            $video,
+            $user,
+            (int) floor((float) $validated['position_seconds']),
+            isset($validated['duration_seconds']) ? (int) floor((float) $validated['duration_seconds']) : null,
+        );
+
+        // فشل الحفظ المتوقّع لا يعطّل التشغيل — نُبلّغ بحالة صريحة.
+        return response()->json(['ok' => $saved !== null, 'position' => $saved]);
     }
 
     /**

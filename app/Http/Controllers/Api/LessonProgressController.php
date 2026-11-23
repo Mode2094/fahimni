@@ -66,6 +66,20 @@ class LessonProgressController extends Controller
             ->where('status', 'completed')
             ->exists();
 
+        // لا نمسح موضع مشاهدة الفيديو (metadata.video_positions) عند تحديث
+        // الحالة/الدقائق من عميل لا يعرف عنه — منعاً لضياع الاستكمال.
+        $existingMeta = LessonProgress::withoutTenant()
+            ->where('enrollment_id', $enrollmentId)
+            ->where('lesson_id', $lessonId)
+            ->value('metadata') ?? [];
+        $incomingMeta = $validated['metadata'] ?? [];
+        if (! is_array($existingMeta)) {
+            $existingMeta = [];
+        }
+        if (! array_key_exists('video_positions', $incomingMeta) && isset($existingMeta['video_positions'])) {
+            $incomingMeta['video_positions'] = $existingMeta['video_positions'];
+        }
+
         $progress = LessonProgress::updateOrCreate(
             [
                 'enrollment_id' => $enrollmentId,
@@ -78,7 +92,7 @@ class LessonProgressController extends Controller
                 'status' => $status,
                 'watch_time_seconds' => $validated['watch_time_seconds'] ?? 0,
                 'completed_at' => $status === 'completed' && ! $wasCompleted ? now() : null,
-                'metadata' => $validated['metadata'] ?? [],
+                'metadata' => $incomingMeta,
             ]
         );
 

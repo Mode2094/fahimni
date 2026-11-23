@@ -33,6 +33,7 @@ class User extends Authenticatable
     protected $casts = [
         'is_super_admin' => 'boolean',
         'is_active' => 'boolean',
+        'auth_version' => 'integer',
         'email_verified_at' => 'datetime',
         'last_login_at' => 'datetime',
         'phone' => 'encrypted',

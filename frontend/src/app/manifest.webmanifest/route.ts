@@ -31,7 +31,7 @@ const PLATFORM_MANIFEST = {
   name: SITE_NAME,
   short_name: BRAND_NAME_SHORT,
   description: 'منصة تعليمية متكاملة للمعلمين: دورات، طلاب، امتحانات وبث مباشر.',
-  start_url: '/',
+  start_url: '/app',
   scope: '/',
   id: '/',
   display: 'standalone',
@@ -46,6 +46,54 @@ const PLATFORM_MANIFEST = {
     { src: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
   ],
 } as const;
+
+/**
+ * One installable platform app, three identities. When the requesting page is a
+ * signed-in student area we serve the student identity (name, theme, shortcuts)
+ * so "فهمني للطلاب" is what lands on the home screen — while sharing the SAME
+ * `id`/`scope` as the platform manifest, so a device never ends up with two
+ * colliding Fahimni apps. Teacher storefronts keep their own tenant manifest.
+ */
+const STUDENT_PATHS =
+  /^\/(?:app|my-learning|my-notes|exams|results|certificates|leaderboard|messages|notifications|announcements|my-bookings|profile|community|course|exam|live|book|checkout)(?:\/|$)/;
+
+const STUDENT_MANIFEST = {
+  name: 'فهمني للطلاب — Fahimni Students',
+  short_name: 'فهمني للطلاب',
+  description: 'تطبيق فهمني للطلاب: كورساتك ودروسك وواجباتك واختباراتك — بواجهة مصمّمة للهاتف.',
+  start_url: '/app',
+  scope: '/',
+  id: '/',
+  display: 'standalone',
+  orientation: 'portrait',
+  background_color: '#ffffff',
+  theme_color: '#0d9488',
+  lang: 'ar',
+  dir: 'rtl',
+  categories: ['education'],
+  prefer_related_applications: false,
+  icons: [
+    { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    { src: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+  ],
+  shortcuts: [
+    { name: 'كورساتي', short_name: 'كورساتي', url: '/my-learning' },
+    { name: 'الاختبارات', short_name: 'الاختبارات', url: '/exams' },
+    { name: 'الرسائل', short_name: 'الرسائل', url: '/messages' },
+    { name: 'الإشعارات', short_name: 'الإشعارات', url: '/notifications' },
+  ],
+} as const;
+
+/** Pathname of the page that requested the manifest (Referer), or ''. */
+function refererPath(referer: string): string {
+  try {
+    return new URL(referer).pathname;
+  } catch {
+    return referer.startsWith('/') ? referer.split(/[?#]/)[0] : '';
+  }
+}
 
 type SitePayload = {
   slug?: string;
@@ -101,6 +149,15 @@ const MANIFEST_HEADERS = {
 export async function GET(request: Request) {
   const referer = request.headers.get('referer') || '';
   const host = (request.headers.get('host') || '').split(':')[0]?.toLowerCase() || '';
+
+  // 0) Student app: any student area installs "فهمني للطلاب" (same app id as
+  //    the platform, so the two identities never collide on one device).
+  const path = refererPath(referer);
+  if (path && STUDENT_PATHS.test(path)) {
+    return new NextResponse(JSON.stringify(STUDENT_MANIFEST), {
+      headers: MANIFEST_HEADERS,
+    });
+  }
 
   let site: SitePayload | null = null;
 

@@ -25,7 +25,11 @@ import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
 import VideoUploadQueue from '@/components/media/video-upload-queue';
 import CourseGroupsManager from '@/components/course/course-groups';
-import { getDeviceId } from '@/lib/device';
+import { DuplicateDialog, type DuplicateKind } from '@/components/content/duplicate-dialog';
+import { uploadVideoDirect } from '@/lib/tus-upload';
+import { stableIdempotencyKey } from '@/lib/video-upload-queue';
+import { buildLearnUrl } from '@/lib/course-preview';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -62,6 +66,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  const [dup, setDup] = useState<{ kind: DuplicateKind; id: string; title: string } | null>(null);
 
   const [secOpen, setSecOpen] = useState(false);
   const [secTarget, setSecTarget] = useState<any>(null);
@@ -149,11 +155,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(secTarget ? t('تم تحديث القسم', 'Section updated') : t('تم إضافة القسم', 'Section added'));
       setSecOpen(false); setSecTarget(null); setSecTitle(''); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ القسم', 'Could not save the section'))); }
   };
   const removeSection = async (sid: string) => {
     if (!window.confirm(t('هل أنت متأكد من حذف هذا القسم؟ سيتم حذف جميع دروسه ومحتواها.', 'Delete this section? All its lessons and content will be removed.'))) return;
-    try { const res = await fetch(`${API}/sections/${sid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch { toast.error('Failed'); }
+    try { const res = await fetch(`${API}/sections/${sid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف القسم', 'Could not delete the section'))); }
   };
   const moveSection = async (s: any, dir: number) => {
     const idx = sections.findIndex((x) => x.id === s.id);
@@ -163,7 +169,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       await fetch(`${API}/sections/${s.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: other.sort_order }) });
       await fetch(`${API}/sections/${other.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: s.sort_order }) });
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر نقل القسم', 'Could not move the section'))); }
   };
 
   // ─── Lessons ───────────────────────────────────
@@ -195,11 +201,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(lesTarget ? t('تم تحديث الدرس', 'Lesson updated') : t('تم إضافة الدرس', 'Lesson added'));
       setLesOpen(false); setLesTarget(null); setLes({ ...EMPTY_LESSON }); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الدرس', 'Could not save the lesson'))); }
   };
   const removeLesson = async (lid: string) => {
     if (!window.confirm(t('هل أنت متأكد من حذف هذا الدرس؟', 'Delete this lesson?'))) return;
-    try { const res = await fetch(`${API}/lessons/${lid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch { toast.error('Failed'); }
+    try { const res = await fetch(`${API}/lessons/${lid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الدرس', 'Could not delete the lesson'))); }
   };
   const moveLesson = async (l: any, dir: number) => {
     const sec = sections.find((s) => s.id === l.section_id);
@@ -211,7 +217,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       await fetch(`${API}/lessons/${l.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: other.sort_order }) });
       await fetch(`${API}/lessons/${other.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: l.sort_order }) });
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر نقل الدرس', 'Could not move the lesson'))); }
   };
   const reorderLessons = async (sectionId: string, lessonIds: string[]) => {
     try {
@@ -284,11 +290,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const body: any = { content_type: contentType, title: les.title, sort_order: lesContents.length + 1, content_data };
       if (!contentTarget) body.lesson_id = lesTarget.id;
       const res = await fetch(`${API}/lesson-contents${contentTarget ? `/${contentTarget.id}` : ''}`, { method: contentTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ المحتوى', 'Could not save the content')); return; }
       toast.success(contentTarget ? t('تم تحديث المحتوى', 'Content updated') : t('تمت إضافة المحتوى', 'Content added'));
       resetContentForm();
       loadLesContents(lesTarget.id);
-    } catch { toast.error('Failed'); } finally { setContentSaving(false); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ المحتوى', 'Could not save the content'))); } finally { setContentSaving(false); }
   };
   const removeContent = async (cid: string) => {
     if (!window.confirm(t('هل تريد حذف هذا المحتوى؟', 'Delete this content?'))) return;
@@ -297,7 +303,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(t('تم حذف المحتوى', 'Content removed'));
       loadLesContents(lesTarget.id);
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف المحتوى', 'Could not delete the content'))); }
   };
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
@@ -334,9 +340,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           body: JSON.stringify({ section_id: lesSection, title: lessonTitle, is_free_preview: les.is_free_preview }),
         });
         const ld = await lr.json().catch(() => null);
-        if (!lr.ok) { toast.error(ld?.message || 'Failed'); return; }
+        if (!lr.ok) { toast.error(ld?.message || t('تعذر إنشاء الدرس', 'Could not create the lesson')); return; }
         lessonId = ld.lesson?.id || ld.id;
-        if (!lessonId) { toast.error('Failed'); return; }
+        if (!lessonId) { toast.error(t('تعذر إنشاء الدرس', 'Could not create the lesson')); return; }
         toast.success(t('تم إنشاء الدرس', 'Lesson created'));
       }
 
@@ -346,28 +352,30 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({ title: lessonTitle, lesson_id: lessonId, provider: 'google_meet', meeting_url: liveMeetUrl.trim(), record_enabled: true }),
       });
       const d = await res.json().catch(() => null);
-      if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d?.message || t('تعذر إنشاء حصة البث', 'Could not create the live session')); return; }
       toast.success(t('تم إنشاء حصة البث المباشر داخل الدرس', 'Live session created inside the lesson'));
       setLiveOpen(false);
       setLesOpen(false); setLesTarget(null); setLes({ ...EMPTY_LESSON });
       load();
-    } catch { toast.error('Failed'); } finally { setLiveBusy(false); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إنشاء حصة البث', 'Could not create the live session'))); } finally { setLiveBusy(false); }
   };
   const onVideoSelected = async (e: any) => {
     const file = e.target.files?.[0];
     if (!file || videoUploading) return;
-    // مفتاح عملية واحد لكل ملف: كل الطلبات (تذكرة + رفع + retry)
-    // تحمل نفس المفتاح → حتى لو تكرر الطلب لن يتكرر الفيديو في Bunny.
-    const uploadKey = crypto.randomUUID();
+    // مفتاح حتمي مشتق من الملف نفسه: نفس الملف = نفس المفتاح → لا تكرار
+    // ولا احتساب مساحة مرتين، وإن أعيد الاختيار يمكن استئناف الرفع.
+    const uploadKey = stableIdempotencyKey(file);
+    const tid = localStorage.getItem('tenant_id') || '';
     setVideoUploading(true);
     setVideoUploadProgress(0);
     setVideoUploadError('');
     setVideoUploadName(file.name);
     try {
-      // 1) تذكرة رفع مباشر من Media Engine (تحقق الخطة + حجز المساحة).
-      const res = await fetch(`${API}/videos/upload-ticket`, {
+      // 1) تذكرة رفع مباشر قابل للاستئناف (TUS) — تحقق الخطة + حجز المساحة
+      //    + توقيع على السيرفر (مفتاح Bunny لا يخرج للمتصفح أبداً).
+      const res = await fetch(`${API}/teacher/media/resumable-ticket`, {
         method: 'POST',
-        headers: { ...headers(), 'Content-Type': 'application/json' },
+        headers: headers(),
         body: JSON.stringify({ lesson_id: lesTarget.id, file_size: file.size, title: file.name.replace(/\.[^.]+$/, ''), original_filename: file.name, mime_type: file.type || 'video/mp4', idempotency_key: uploadKey }),
       });
       const d = await res.json().catch(() => null);
@@ -377,33 +385,38 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         return;
       }
 
-      // 2) رفع الملف عبر خادمنا (مفتاح Bunny لا يخرج للمتصفح أبداً) —
-      //    شريط التقدم كامل عبر XHR.
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('lesson_id', lesTarget.id);
-      fd.append('title', file.name.replace(/\.[^.]+$/, ''));
-      fd.append('asset_id', d?.upload?.asset_id || '');
-      fd.append('idempotency_key', uploadKey);
+      const upload = d?.upload || {};
+
+      // 2) رفع الملف مباشرة إلى Bunny من المتصفح — الفيديو لا يمر عبر خادمنا.
       await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API}/videos/upload`);
-        const hdrs: Record<string, string> = { ...headers(), 'X-Device-Id': getDeviceId() };
-        Object.entries(hdrs).forEach(([k, v]) => { if (k.toLowerCase() !== 'content-type') xhr.setRequestHeader(k, v); });
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setVideoUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else {
-            let msg = `HTTP ${xhr.status}`;
-            try { const j = JSON.parse(xhr.responseText); if (j?.message) msg = j.message; } catch { /* */ }
-            reject(new Error(`HTTP ${xhr.status}${msg ? `: ${msg}` : ''}`));
-          }
-        };
-        xhr.onerror = () => reject(new Error('network'));
-        xhr.send(fd);
+        uploadVideoDirect(
+          file,
+          {
+            endpoint: upload.endpoint,
+            signature: upload.signature,
+            expires: upload.expires,
+            library_id: upload.library_id,
+            video_guid: upload.video_guid,
+          },
+          {
+            onProgress: (p) => setVideoUploadProgress(p),
+            onSuccess: () => resolve(),
+            onError: (m) => reject(new Error(m || 'upload failed')),
+          },
+          { resume: Boolean(upload.reused) },
+        ).catch(reject);
       });
+
+      // 3) ربط الأصل بالدرس. الفيديو يبقى «قيد المعالجة» حتى يؤكد المزوّد.
+      const cr = await fetch(`${API}/teacher/media/resumable-complete`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ asset_id: upload.asset_id, lesson_id: lesTarget.id }),
+      });
+      if (!cr.ok) {
+        const cd = await cr.json().catch(() => null);
+        throw new Error(cd?.message || t('فشل إتمام الرفع', 'Failed to complete upload'));
+      }
 
       setVideoUploadProgress(100);
       toast.success(t('تم رفع الفيديو بنجاح — قيد المعالجة الآن', 'Video uploaded — processing now'));
@@ -435,10 +448,10 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       fd.append('lesson_id', lesTarget.id);
       const res = await fetch(`${API}/upload`, { method: 'POST', headers: { 'X-Tenant-Id': localStorage.getItem('tenant_id') || '', Accept: 'application/json' }, body: fd });
       const d = await res.json().catch(() => null);
-      if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d?.message || t('تعذر رفع الملف', 'Could not upload the file')); return; }
       toast.success(t('تم رفع الملف', 'File uploaded'));
       loadLesContents(lesTarget.id);
-    } catch { toast.error('Failed'); } finally { setUploading(false); e.target.value = ''; }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر رفع الملف', 'Could not upload the file'))); } finally { setUploading(false); e.target.value = ''; }
   };
   const formatBytes = (b: number) => {
     if (!b) return '';
@@ -479,15 +492,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({ course_id: id, section_id: sid, title: t('اختبار الوحدة', 'Unit exam'), duration_minutes: 30, pass_mark_percent: 50, max_attempts: 3, shuffle_questions: true, is_published: false }),
       });
       const d = await res.json();
-      if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d?.message || t('تعذر إنشاء الاختبار', 'Could not create the exam')); return; }
       toast.success(t('تم إنشاء الاختبار — أضف أسئلته', 'Exam created — add its questions'));
       load();
       setViewerExam(d.exam || d);
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إنشاء الاختبار', 'Could not create the exam'))); }
   };
   const removeExam = async (eid: string) => {
     if (!window.confirm(t('هل أنت متأكد من حذف هذا الاختبار؟', 'Delete this exam?'))) return;
-    try { const res = await fetch(`${API}/exams/${eid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch { toast.error('Failed'); }
+    try { const res = await fetch(`${API}/exams/${eid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الاختبار', 'Could not delete the exam'))); }
   };
 
   // ─── Assignments ───────────────────────────────
@@ -509,10 +522,10 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const fd = new FormData();
       fd.append('file', file);
       const res = await fetch(`${API}/assignment-upload`, { method: 'POST', headers: { 'X-Tenant-Id': localStorage.getItem('tenant_id') || '' }, body: fd });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Upload failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر رفع ملف الواجب', 'Could not upload the assignment file')); return; }
       const d = await res.json();
       setAssign((a: any) => ({ ...a, file_url: d.url, file_name: d.name }));
-    } catch { toast.error('Upload failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر رفع ملف الواجب', 'Could not upload the assignment file'))); }
     setAssignUploading(false);
   };
   const saveAssign = async () => {
@@ -525,14 +538,14 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         file_url: assign.file_url || null, file_name: assign.file_name || null,
       };
       const res = await fetch(`${API}/assignments${assignTarget ? `/${assignTarget.id}` : ''}`, { method: assignTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ الواجب', 'Could not save the assignment')); return; }
       toast.success(assignTarget ? t('تم تحديث الواجب', 'Assignment updated') : t('تم إنشاء الواجب', 'Assignment created'));
       setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الواجب', 'Could not save the assignment'))); }
   };
   const removeAssign = async (aid: string) => {
     if (!window.confirm(t('هل أنت متأكد من حذف هذا الواجب وجميع تسليماته؟', 'Delete this assignment and all its submissions?'))) return;
-    try { const res = await fetch(`${API}/assignments/${aid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); if (viewSubm === aid) setViewSubm(null); load(); } catch { toast.error('Failed'); }
+    try { const res = await fetch(`${API}/assignments/${aid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); if (viewSubm === aid) setViewSubm(null); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الواجب', 'Could not delete the assignment'))); }
   };
   const toggleAssignPublish = async (a: any) => {
     try {
@@ -540,7 +553,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(a.is_published ? t('تم الإيقاف', 'Unpublished') : t('تم النشر', 'Published'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تغيير حالة نشر الواجب', 'Could not change the assignment publish state'))); }
   };
   const gradeSubmission = async (a: any, s: any) => {
     const grade = gradeVals[s.id];
@@ -551,7 +564,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(t('تم التصحيح', 'Graded'));
       setGradeVals((g) => ({ ...g, [s.id]: '' })); setGradeCmts((g) => ({ ...g, [s.id]: '' })); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الدرجة', 'Could not save the grade'))); }
     setGradingId(null);
   };
   const addComment = async (s: any) => {
@@ -562,7 +575,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const res = await fetch(`${API}/submissions/${s.id}/comments`, { method: 'POST', headers: headers(), body: JSON.stringify({ comment: text }) });
       if (!res.ok) throw new Error();
       setCommentVals((c) => ({ ...c, [s.id]: '' })); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إضافة التعليق', 'Could not add the comment'))); }
     setCommentingId(null);
   };
   const fmtDue = (iso: string | null) => {
@@ -628,11 +641,16 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <Button variant="outline" className="gap-2 rounded-full" onClick={() => setGroupsOpen(true)} title={t('مجموعات الطلاب داخل الكورس', 'In-course student groups')}>
             <Users className="h-4 w-4" />{t('مجموعات الطلاب', 'Student groups')}
           </Button>
-          <a href={`/course/${id}/learn`} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full"><Eye className="h-4 w-4" />{t('معاينة', 'Preview')}</Button></a>
+          {course && (
+            <Button variant="outline" className="gap-2 rounded-full" onClick={() => setDup({ kind: 'course', id, title: course.title || '' })} title={t('إنشاء نسخة مسودة من الكورس كاملاً', 'Create a draft copy of the whole course')}>
+              <Copy className="h-4 w-4" />{t('إنشاء نسخة', 'Duplicate course')}
+            </Button>
+          )}
+          <a href={buildLearnUrl(id, { preview: true })} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full" title={t('اعرض الكورس والدروس كما يراها الطالب (بما فيها المسودات)', 'View the course and lessons exactly as a student sees them (drafts included)')}><Eye className="h-4 w-4" />{t('معاينة كطالب', 'Preview as student')}</Button></a>
           {course && (
             <Button variant={course.is_published ? 'outline' : 'default'} className="gap-2 rounded-full" onClick={() => {
               fetch(`${API}/courses/${id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ is_published: !course.is_published }) })
-                .then((r) => r.json()).then(() => { load(); toast.success(course.is_published ? t('أُلغي النشر', 'Unpublished') : t('نُشر الكورس', 'Published')); }).catch(() => toast.error('Failed'));
+                .then((r) => r.json()).then(() => { load(); toast.success(course.is_published ? t('أُلغي النشر', 'Unpublished') : t('نُشر الكورس', 'Published')); }).catch(() => toast.error(t('تعذر تغيير حالة نشر الكورس', 'Could not change the course publish state')));
             }}>
               <CheckCircle2 className="h-4 w-4" />{course.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')}
             </Button>
@@ -715,6 +733,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                                   ) : <span>{t('لم يحدد موعد بعد', 'No schedule set yet')}</span>}
                                 </p>
                               </div>
+                              <a href={buildLearnUrl(id, { preview: true, lessonId: l.id })} target="_blank" rel="noreferrer" aria-label={t('معاينة الحصة كطالب', 'Preview session as student')} title={t('معاينة الحصة كطالب', 'Preview session as student')}>
+                                <Button size="sm" variant="ghost" className="rounded-full text-xs text-rose-700"><Eye className="h-3.5 w-3.5" /></Button>
+                              </a>
                               <a href="/teacher/live"><Button size="sm" className="gap-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white"><Radio className="h-3.5 w-3.5" />{t('إدارة الحصة', 'Manage session')}</Button></a>
                               <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
@@ -748,6 +769,10 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <Button size="sm" className="gap-1 rounded-full text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={() => openLesEdit(l)}>
                             {hasContent ? <><Pencil className="h-3.5 w-3.5" />{t('إدارة المحتوى', 'Manage content')}</> : <><Plus className="h-3.5 w-3.5" />{t('إضافة محتوى', 'Add content')}</>}
                           </Button>
+                          <a href={buildLearnUrl(id, { preview: true, lessonId: l.id })} target="_blank" rel="noreferrer" aria-label={t('معاينة الدرس كطالب', 'Preview lesson as student')} title={t('معاينة الدرس كطالب', 'Preview lesson as student')}>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700"><Eye className="h-3.5 w-3.5" /></Button>
+                          </a>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => setDup({ kind: 'lesson', id: l.id, title: l.title })} aria-label={t('إنشاء نسخة من الدرس', 'Duplicate lesson')} title={t('إنشاء نسخة من الدرس', 'Duplicate lesson')}><Copy className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -770,6 +795,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         <Badge className={e.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{e.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>
                         <div className="flex items-center gap-1">
                           <Button size="sm" className="gap-1 rounded-full bg-violet-600 hover:bg-violet-700 text-white" onClick={() => openExamViewer(e)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-violet-700" onClick={() => setDup({ kind: 'exam', id: e.id, title: e.title })} aria-label={t('إنشاء نسخة من الاختبار', 'Duplicate exam')} title={t('إنشاء نسخة من الاختبار', 'Duplicate exam')}><Copy className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeExam(e.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       </div>
@@ -831,7 +857,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
       {/* ─── حوار الدرس ─────────────────────────── */}
       <Dialog open={lesOpen} onOpenChange={(v) => { setLesOpen(v); if (!v) { setLesTarget(null); setLesSection(''); setLes({ ...EMPTY_LESSON }); setLesContents([]); resetContentForm(); } }} className="max-w-2xl">
-        <DialogContent><DialogHeader><DialogTitle>{lesTarget ? t('تعديل الدرس', 'Edit lesson') : t('درس جديد', 'New lesson')}</DialogTitle></DialogHeader>
+        <DialogContent><DialogHeader><div className="flex items-center justify-between gap-3"><DialogTitle>{lesTarget ? t('تعديل الدرس', 'Edit lesson') : t('درس جديد', 'New lesson')}</DialogTitle>{lesTarget && <a href={buildLearnUrl(id, { preview: true, lessonId: lesTarget.id })} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:underline shrink-0"><Eye className="h-3.5 w-3.5" />{t('معاينة كطالب', 'Preview as student')}</a>}</div></DialogHeader>
           <div className="space-y-4">
             {!lesTarget && (
               <div className="space-y-2">
@@ -1026,7 +1052,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
               if (!assign.title.trim()) { toast.error(t('أدخل العنوان', 'Enter title')); return; }
               const body = { ...assign, section_id: assignTarget ? assignTarget.section_id : lesSection || undefined };
               const res = await fetch(`${API}/assignments${assignTarget ? `/${assignTarget.id}` : ''}`, { method: assignTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-              if (!res.ok) { toast.error('Failed'); return; }
+              if (!res.ok) { toast.error(t('تعذر حفظ الواجب', 'Could not save the assignment')); return; }
               toast.success(t('تم الحفظ', 'Saved')); setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); load();
             }}>{t('حفظ', 'Save')}</Button>
           </DialogFooter>
@@ -1078,6 +1104,16 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       />
 
       <CourseGroupsManager open={groupsOpen} onOpenChange={setGroupsOpen} courseId={id} />
+
+      {/* ─── حوار «إنشاء نسخة» (كورس/درس/اختبار) ─── */}
+      <DuplicateDialog
+        open={!!dup}
+        onOpenChange={(v) => { if (!v) setDup(null); }}
+        kind={dup?.kind || 'course'}
+        id={dup?.id || null}
+        originalTitle={dup?.title || ''}
+        onDuplicated={load}
+      />
     </div>
   );
 }

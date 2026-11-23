@@ -29,7 +29,23 @@ class WebSessionAuthTest extends TenantTestCase
         $cookie = $response->getCookie($name);
         $this->assertNotNull($cookie, 'Expected the session cookie '.$name.' to be set.');
 
-        return $name.'='.$cookie->getValue();
+        // The plaintext session id the server stored (the Set-Cookie value may
+        // be encrypted by the api group's EncryptCookies middleware); replay it
+        // through withCookie() so the test client encrypts it correctly.
+        return (string) $this->app['session']->getId();
+    }
+
+    /**
+     * Issue a request as a fresh browser would, carrying the session cookie.
+     */
+    private function asCookie(string $cookie, array $extraHeaders = [])
+    {
+        $this->flushSession();
+        $this->app['auth']->forgetGuards();
+
+        return $this->withCredentials()
+            ->withCookie((string) config('session.cookie'), $cookie)
+            ->withHeaders(array_merge(['Origin' => self::STATE_ORIGIN, 'Accept' => 'application/json'], $extraHeaders));
     }
 
     private function makeWebUser(string $password = 'password-123'): User
@@ -67,7 +83,7 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $user->email);
@@ -107,11 +123,8 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders([
-            'Cookie' => $cookie,
-            'Origin' => self::STATE_ORIGIN,
-            'X-Tenant-Id' => $tenant->id,
-        ])->getJson('/api/v1/dashboard')->assertOk();
+        $this->asCookie($cookie, ['X-Tenant-Id' => $tenant->id])
+            ->getJson('/api/v1/dashboard')->assertOk();
     }
 
     public function test_logout_destroys_the_session(): void
@@ -125,17 +138,12 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->postJson('/api/v1/auth/logout')
             ->assertOk();
 
-        // Simulate a new browser request: reset the cached session + guards.
-        $this->flushSession();
-        $this->app['auth']->forgetGuards();
-
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
-            ->getJson('/api/v1/auth/me')
-            ->assertStatus(401);
+        // Simulate a new browser request with the now-dead cookie.
+        $this->asCookie($cookie)->getJson('/api/v1/auth/me')->assertStatus(401);
     }
 
     public function test_bearer_login_still_works_for_api_clients(): void
@@ -179,7 +187,7 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($login);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->postJson('/api/v1/auth/2fa/confirm', ['code' => TOTP::code('JBSWY3DPEHPK3PXP')])
             ->assertOk()
             ->assertJsonPath('user.email', $user->email)
@@ -203,7 +211,7 @@ class WebSessionAuthTest extends TenantTestCase
 
         $cookie = $this->sessionCookie($response);
 
-        $this->withHeaders(['Cookie' => $cookie, 'Origin' => self::STATE_ORIGIN])
+        $this->asCookie($cookie)
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $email);

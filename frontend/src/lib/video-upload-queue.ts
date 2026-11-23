@@ -20,9 +20,18 @@ export type QueueItem = {
   assetId?: string;
   /** Lesson chosen for this file (existing or created). */
   lessonId?: string;
+  /**
+   * Deterministic idempotency key derived from the file itself (name+size+mtime).
+   * Re-adding the same file after a reload gets the same key, so the server
+   * reuses the same video and TUS can resume instead of creating a duplicate.
+   */
+  key?: string;
   /** The browser File to send. Kept on the item so a retry re-sends the bytes. */
   file?: File;
 };
+
+/** How many videos upload at once — bounded to protect the browser + connection. */
+export const MAX_PARALLEL = 3;
 
 export type QueueState = {
   items: QueueItem[];
@@ -42,6 +51,22 @@ export type AddOptions = {
 
 const isVideoFile = (f: { name: string; type?: string }) =>
   /\.(mp4|webm|mov|mkv|avi|m4v)$/i.test(f.name) || (f.type || '').startsWith('video/');
+
+/**
+ * A stable key for a file: same name, size and mtime ⇒ same key. It never
+ * changes across retries or reloads, so the same file maps to one video.
+ */
+export function stableIdempotencyKey(f: { name: string; size: number; lastModified?: number }): string {
+  const raw = `${f.name}|${f.size}|${f.lastModified ?? 0}`;
+  // Small, dependency-free hash (FNV-1a) — good enough to dedupe a burst of
+  // files from one teacher's device, not a security primitive.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `vq-${(h >>> 0).toString(16)}`;
+}
 
 /**
  * Add files to the queue. Oversized/non-video files are rejected, and — when we
@@ -76,6 +101,7 @@ export function addFiles(state: QueueState, files: File[], opts: AddOptions): Qu
       size: file.size,
       status: 'pending',
       progress: 0,
+      key: stableIdempotencyKey(file),
       file,
     });
     used += 1;
@@ -102,6 +128,16 @@ export function markDone(state: QueueState, id: string, lessonId?: string, asset
 
 export function markFailed(state: QueueState, id: string, error: string): QueueState {
   return patch(state, id, { status: 'failed', error });
+}
+
+/** Remember the server-side asset id as soon as the ticket returns it. */
+export function markAsset(state: QueueState, id: string, assetId: string): QueueState {
+  return patch(state, id, { assetId });
+}
+
+/** Cancel an item in any active state (the caller aborts a live upload). */
+export function markCanceled(state: QueueState, id: string): QueueState {
+  return patch(state, id, { status: 'canceled' });
 }
 
 /** Cancel only not-yet-started items; a partial upload is left to finish/fail. */
@@ -140,6 +176,24 @@ export function retryOne(state: QueueState, id: string): QueueState {
 /** The next item that should start, or null when nothing is pending. */
 export function nextPending(state: QueueState): QueueItem | null {
   return state.items.find((i) => i.status === 'pending') ?? null;
+}
+
+/** Up to `limit` pending items, so several videos can upload in parallel. */
+export function nextPendingBatch(state: QueueState, limit: number): QueueItem[] {
+  if (limit <= 0) return [];
+  return state.items.filter((i) => i.status === 'pending').slice(0, limit);
+}
+
+/**
+ * Overall batch progress: the mean of each unfinished/finished item's own
+ * progress, ignoring canceled ones (they are no longer part of the batch).
+ */
+export function overallProgress(state: QueueState): { percent: number; settled: number; total: number } {
+  const counted = state.items.filter((i) => i.status !== 'canceled');
+  if (counted.length === 0) return { percent: 0, settled: 0, total: 0 };
+  const sum = counted.reduce((acc, i) => acc + (i.status === 'done' ? 100 : i.progress), 0);
+  const settled = counted.filter((i) => i.status === 'done' || i.status === 'failed').length;
+  return { percent: Math.round(sum / counted.length), settled, total: counted.length };
 }
 
 export function counts(state: QueueState) {

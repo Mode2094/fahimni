@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,13 +15,14 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Users, Loader2, MonitorSmartphone, RotateCcw, Settings2, Search, Mail, Calendar,
   BookOpen, Award, TrendingUp, XCircle, CheckCircle2, UserX, Clock, Smartphone, Star,
-  Coins, Trophy, Activity as ActivityIcon, History,
+  Coins, Trophy, Activity as ActivityIcon, History, Ticket,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-export default function StudentsPage() {
+function StudentsPageInner() {
   const { check } = useAuth();
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -61,9 +63,21 @@ export default function StudentsPage() {
       const res = await fetch(`${API}/teacher/students/${s.id}`, { headers: headers() });
       if (!res.ok) throw new Error();
       setProfile((await res.json()).student);
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحميل ملف الطالب', 'Could not load the student profile'))); }
     setProfileLoading(false);
   };
+
+  // انتقال مباشر من «متابعة الطلاب»: /students?student=<id> يفتح ملف الطالب.
+  const searchParams = useSearchParams();
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    const target = searchParams.get('student');
+    if (!target || deepLinked.current || students.length === 0) return;
+    deepLinked.current = true;
+    const found = students.find((x) => x.id === target);
+    if (found) void openProfile(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, searchParams]);
 
   const saveLimit = async () => {
     if (!limitTarget) return;
@@ -73,7 +87,7 @@ export default function StudentsPage() {
       if (!res.ok) throw new Error();
       toast.success(t(`تم منح ${limitTarget.name} الدخول من ${limitVal} أجهزة`, `Granted ${limitTarget.name} ${limitVal} device(s)`));
       setLimitTarget(null); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ حد الأجهزة', 'Could not save the device limit'))); }
     setBusyId('');
   };
 
@@ -85,7 +99,7 @@ export default function StudentsPage() {
       toast.success(t(`تم إعادة تعيين أجهزة ${s.name} — يمكنه الدخول من جهاز جديد الآن`, `Devices reset for ${s.name} — they can log in from a new device now`));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
     setBusyId('');
   };
 
@@ -98,7 +112,7 @@ export default function StudentsPage() {
       toast.success(t('تمت إزالة الصلاحية — عاد للحد الافتراضي', 'Override removed — back to default'));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة الصلاحية', 'Could not remove the override'))); }
     setBusyId('');
   };
 
@@ -173,7 +187,18 @@ export default function StudentsPage() {
 
       {loading ? <TableSkeleton rows={6} cols={4} /> :
         filtered.length === 0 ? (
-          <EmptyState icon={search ? UserX : Users} title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')} />
+          <EmptyState
+            icon={search ? UserX : Users}
+            title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')}
+            description={!search ? t('شارك رابط منصتك، أو أنشئ بطاقة تسجيل برمز QR ليظهر طلابك هنا.', 'Share your platform link, or create a QR registration card to see your students here.') : undefined}
+            action={!search ? (
+              <a href="/teacher/cards">
+                <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                  <Ticket className="h-4 w-4" /> {t('أنشئ بطاقة تسجيل', 'Create a registration card')}
+                </Button>
+              </a>
+            ) : undefined}
+          />
         ) : (
           <div className="grid gap-4">
             {filtered.map((s) => (
@@ -346,5 +371,15 @@ export default function StudentsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function StudentsPage() {
+  // `useSearchParams` requires a Suspense boundary in this Next version; the
+  // fallback keeps the shell from flashing while the params resolve.
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl p-6"><TableSkeleton rows={6} cols={4} /></div>}>
+      <StudentsPageInner />
+    </Suspense>
   );
 }

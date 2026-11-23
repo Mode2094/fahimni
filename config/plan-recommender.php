@@ -34,8 +34,8 @@ return [
             'derive_from' => 'students_limit',
             'options' => [
                 ['key' => 'less_than_50', 'label' => ['ar' => 'حتى 50', 'en' => 'Up to 50'], 'requirements' => ['students_limit' => 50]],
-                ['key' => 'up_to_200', 'label' => ['ar' => 'حتى 200', 'en' => 'Up to 200'], 'requirements' => ['students_limit' => 200]],
-                ['key' => 'more_than_200', 'label' => ['ar' => 'أكثر من 200', 'en' => 'More than 200'], 'requirements' => ['students_limit' => 'unlimited']],
+                ['key' => 'up_to_250', 'label' => ['ar' => 'حتى 250', 'en' => 'Up to 250'], 'requirements' => ['students_limit' => 250]],
+                ['key' => 'up_to_1000', 'label' => ['ar' => 'حتى 1000', 'en' => 'Up to 1000'], 'requirements' => ['students_limit' => 1000]],
             ],
         ],
 
@@ -44,9 +44,9 @@ return [
             'question' => ['ar' => 'كم سعة تخزين للملفات والفيديوهات تحتاج؟', 'en' => 'How much storage do you need?'],
             'derive_from' => 'storage_limit_mb',
             'options' => [
-                ['key' => 'small_5', 'label' => ['ar' => 'حتى 5 جيجا', 'en' => 'Up to 5 GB'], 'requirements' => ['storage_limit_mb' => 5120]],
-                ['key' => 'medium_20', 'label' => ['ar' => 'حتى 20 جيجا', 'en' => 'Up to 20 GB'], 'requirements' => ['storage_limit_mb' => 20480]],
-                ['key' => 'large_100', 'label' => ['ar' => 'حتى 100 جيجا', 'en' => 'Up to 100 GB'], 'requirements' => ['storage_limit_mb' => 102400]],
+                ['key' => 'small_700', 'label' => ['ar' => 'حتى 700 جيجا', 'en' => 'Up to 700 GB'], 'requirements' => ['storage_limit_mb' => 716800]],
+                ['key' => 'medium_1_5tb', 'label' => ['ar' => 'حتى 1.5 تيرا', 'en' => 'Up to 1.5 TB'], 'requirements' => ['storage_limit_mb' => 1572864]],
+                ['key' => 'large_3tb', 'label' => ['ar' => 'حتى 3 تيرا', 'en' => 'Up to 3 TB'], 'requirements' => ['storage_limit_mb' => 3145728]],
             ],
         ],
 
@@ -76,9 +76,9 @@ return [
             'question' => ['ar' => 'كم كورساً تخطط لإنشائها؟', 'en' => 'How many courses do you plan to create?'],
             'derive_from' => 'courses_limit',
             'options' => [
-                ['key' => 'few', 'label' => ['ar' => 'حتى 5 كورسات', 'en' => 'Up to 5 courses'], 'requirements' => ['courses_limit' => 5]],
-                ['key' => 'many', 'label' => ['ar' => 'حتى 20 كورساً', 'en' => 'Up to 20 courses'], 'requirements' => ['courses_limit' => 20]],
-                ['key' => 'many_more', 'label' => ['ar' => 'أكثر من 20 كورساً', 'en' => 'More than 20 courses'], 'requirements' => ['courses_limit' => 'unlimited']],
+                ['key' => 'few', 'label' => ['ar' => 'حتى 3 كورسات', 'en' => 'Up to 3 courses'], 'requirements' => ['courses_limit' => 3]],
+                ['key' => 'many', 'label' => ['ar' => 'حتى 7 كورسات', 'en' => 'Up to 7 courses'], 'requirements' => ['courses_limit' => 7]],
+                ['key' => 'many_more', 'label' => ['ar' => 'حتى 20 كورساً', 'en' => 'Up to 20 courses'], 'requirements' => ['courses_limit' => 20]],
             ],
         ],
 
@@ -87,8 +87,8 @@ return [
             'question' => ['ar' => 'شو ميزانيتك الشهرية تقريباً؟', 'en' => 'What is your monthly budget roughly?'],
             'derive_from' => 'monthly_price',
             'options' => [
-                ['key' => 'cheap', 'label' => ['ar' => 'حتى 50 دينار', 'en' => 'Up to 50 JOD'], 'requirements' => ['monthly_price' => 49.99]],
-                ['key' => 'balanced', 'label' => ['ar' => 'حتى 100 دينار', 'en' => 'Up to 100 JOD'], 'requirements' => ['monthly_price' => 99.99]],
+                ['key' => 'cheap', 'label' => ['ar' => 'حتى 29 دولاراً', 'en' => 'Up to 29 USD'], 'requirements' => ['monthly_price' => 29.99]],
+                ['key' => 'balanced', 'label' => ['ar' => 'حتى 59 دولاراً', 'en' => 'Up to 59 USD'], 'requirements' => ['monthly_price' => 59.99]],
                 ['key' => 'premium', 'label' => ['ar' => 'أريد الأفضل مهما كان السعر', 'en' => 'The best, price is not an issue'], 'requirements' => []],
             ],
         ],

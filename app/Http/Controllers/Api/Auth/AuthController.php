@@ -14,18 +14,22 @@ use App\Models\TenantSetting;
 use App\Models\TenantUser;
 use App\Models\User;
 use App\Plans\TeacherTrialProgram;
+use App\Rules\ValidPhoneNumber;
 use App\Services\StudentGamificationService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
 use App\Support\DevicePolicy;
 use App\Support\MailDelivery;
 use App\Support\MathCaptcha;
+use App\Support\PhoneNumber;
 use App\Support\TOTP;
+use App\Support\WebSessionAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -60,12 +64,16 @@ class AuthController extends Controller
             'password' => 'required|string|min:8|confirmed',
             'locale' => 'sometimes|string|in:ar,en',
             'role' => 'sometimes|string|in:Student,Teacher',
-            'phone' => 'sometimes|nullable|string|max:20',
+            // Teachers must supply a phone; students may leave it empty.
+            'phone' => ['required_if:role,Teacher', 'nullable', 'string', 'max:25', new ValidPhoneNumber],
         ]);
 
         // Normalize the email so accounts can never be registered with
         // case-variants of an existing address (impersonation vectors).
         $email = strtolower(trim($validated['email']));
+
+        // One canonical phone format (E.164). Null for students who omit it.
+        $phone = PhoneNumber::toE164($request->input('phone'));
 
         // A previously deleted account keeps its address reserved. Never
         // silently re-provision it — that would hand a stranger control of a
@@ -82,7 +90,7 @@ class AuthController extends Controller
             'id' => UuidV7::generate(),
             'name' => $request->name,
             'email' => $email,
-            'phone' => $request->input('phone'),
+            'phone' => $phone,
             'password' => Hash::make($request->password),
             'locale' => $request->locale ?? 'ar',
             'is_active' => true,
@@ -210,8 +218,7 @@ class AuthController extends Controller
         // Web (cookie session) registration: sign the user in server-side and
         // never hand a bearer token to the browser.
         if ($request->hasSession()) {
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
             AuditLogger::log($request, 'auth.register', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
@@ -236,6 +243,87 @@ class AuthController extends Controller
             'tenant_id' => $tenantId,
             'trial_started' => $trialGranted,
         ], 201);
+    }
+
+    /**
+     * Complete a teacher account created through Google — or an older teacher
+     * account that is still missing a phone number. Captures the mandatory
+     * name + phone exactly once, then provisions the workspace and the free
+     * trial only if they do not already exist.
+     *
+     * Idempotent by construction: a second call can never create a duplicate
+     * account, tenant, membership, or trial. Students/admins are never
+     * provisioned a teacher workspace here.
+     */
+    public function completeProfile(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => ['required', 'string', 'max:25', new ValidPhoneNumber],
+        ]);
+
+        $phone = PhoneNumber::toE164((string) $request->input('phone'));
+
+        if ($phone === null) {
+            return response()->json(['message' => 'رقم هاتف غير صالح.'], 422);
+        }
+
+        $name = trim((string) $request->input('name'));
+        $user->update(['name' => $name, 'phone' => $phone]);
+
+        $tenantId = $user->tenantPivots()->first()?->tenant_id;
+        $trialStarted = false;
+
+        // A teacher who never got a workspace (Google sign-up without a phone)
+        // gets it now — exactly once. Existing teachers keep everything.
+        if ($user->hasRole('Teacher') && ! $tenantId) {
+            $tenant = DB::transaction(function () use ($user, $name) {
+                $tenant = app(TenantSlugService::class)->createTenant([
+                    'id' => UuidV7::generate(),
+                    'name' => $name.' '.__('Platform'),
+                    'type' => 'tutor',
+                    'email' => $user->email,
+                    'owner_id' => $user->id,
+                ], $name);
+
+                TenantSetting::create([
+                    'id' => UuidV7::generate(),
+                    'tenant_id' => $tenant->id,
+                    'academy_name' => $name,
+                ]);
+
+                TenantUser::create([
+                    'tenant_id' => $tenant->id,
+                    'user_id' => $user->id,
+                    'role' => 'teacher',
+                    'status' => 'active',
+                    'joined_at' => now(),
+                ]);
+
+                return $tenant;
+            });
+
+            $tenantId = $tenant->id;
+
+            // The central trial program governs the free period: the master
+            // switch and the seat counter are respected, exactly like
+            // register/login. Only granted once — there is no tenant before.
+            $trialStarted = app(TeacherTrialProgram::class)
+                ->grantTrial($user, $tenant->id, 'google', true) !== null;
+        }
+
+        AuditLogger::log($request, 'auth.profile_completed', 'user', $user->id, [
+            'tenant_id' => $tenantId,
+            'trial_started' => $trialStarted,
+        ]);
+
+        return response()->json([
+            'user' => new UserResource($user->fresh('tenants')),
+            'tenant_id' => $tenantId,
+            'trial_started' => $trialStarted,
+        ]);
     }
 
     public function login(LoginRequest $request): JsonResponse
@@ -304,8 +392,7 @@ class AuthController extends Controller
         $tenantId = $this->applyLoginSideEffects($request, $user);
 
         if ($sessionMode) {
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
             AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
@@ -422,8 +509,7 @@ class AuthController extends Controller
 
         if (is_array($sessionPending)) {
             $request->session()->forget('auth.2fa_pending');
-            Auth::guard('web')->login($user);
-            $request->session()->regenerate();
+            WebSessionAuth::login($request, $user);
 
             AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id, ['mode' => 'session']);
 
@@ -665,7 +751,10 @@ class AuthController extends Controller
                 ])->save();
 
                 // A reset means the credential may have been compromised:
-                // revoke every bearer token so stolen sessions die instantly.
+                // revoke every bearer token and every web session so stolen
+                // credentials die instantly (EnsureAccountActive compares the
+                // session marker against the bumped version).
+                $user->increment('auth_version');
                 $user->tokens()->delete();
 
                 $loginPath = $user->loginPath();

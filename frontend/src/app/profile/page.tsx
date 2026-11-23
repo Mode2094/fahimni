@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '@/store/locale';
+import AppCard from '@/components/pwa/app-card';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -201,6 +202,8 @@ export default function ProfilePage() {
               )}
             </CardContent></Card>
           </div>
+
+          <AppCard />
 
           <Card className="border-0 shadow-sm"><CardContent className="p-5">
             <h3 className="font-semibold mb-3 flex items-center gap-2"><Trophy className="h-4 w-4 text-violet-500" />{t('أحدث الإنجازات', 'Latest achievements')}</h3>

@@ -17,12 +17,14 @@ class VideoContent extends Model
         'title', 'description', 'thumbnail_url', 'duration',
         'status', 'file_size_bytes', 'config',
         'storage_path', 'original_name', 'mime_type', 'is_uploaded',
+        'is_shared_reference',
     ];
 
     protected $casts = [
         'duration' => 'integer',
         'file_size_bytes' => 'integer',
         'config' => 'array',
+        'is_shared_reference' => 'boolean',
     ];
 
     public function lessonContent(): BelongsTo
