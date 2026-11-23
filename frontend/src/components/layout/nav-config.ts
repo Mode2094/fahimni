@@ -115,6 +115,7 @@ export const TEACHER_NAV: NavGroup[] = [
     items: [
       { href: '/blog', icon: Newspaper, ar: 'المدونة', en: 'Blog', gate: 'blog_enabled' },
       { href: '/community', icon: MessagesSquare, ar: 'المجتمع', en: 'Community', gate: 'community_enabled', match: ['/community'] },
+      { href: '/messages', icon: MessagesSquare, ar: 'الرسائل', en: 'Messages', badge: 'messages' },
       { href: '/announcements', icon: Megaphone, ar: 'الإعلانات', en: 'Announcements' },
       { href: '/teacher/notifications', icon: BellRing, ar: 'إشعارات الإدارة', en: 'Platform Notifications', badge: 'adminNotifications' },
       { href: '/teacher/assistant', icon: Bot, ar: 'اسألني عن المنصة', en: 'Ask about the platform' },
@@ -170,13 +171,12 @@ export const STUDENT_NAV: NavGroup[] = [
   },
 ];
 
-/** Bottom navigation (mobile) for students — the 5 most frequent destinations. */
+/** Primary mobile destinations; secondary student links live in the More drawer. */
 export const STUDENT_BOTTOM_NAV: NavItem[] = [
   { href: '/my-learning', icon: Home, ar: 'الرئيسية', en: 'Home', match: ['/course'] },
   { href: '/exams', icon: ClipboardList, ar: 'الاختبارات', en: 'Exams', match: ['/exam'] },
-  { href: '/community', icon: MessagesSquare, ar: 'المجتمع', en: 'Community' },
-  { href: '/notifications', icon: Bell, ar: 'الإشعارات', en: 'Alerts' },
-  { href: '/profile', icon: UserCircle2, ar: 'ملفي', en: 'Profile' },
+  { href: '/messages', icon: MessagesSquare, ar: 'الرسائل', en: 'Messages', badge: 'messages' },
+  { href: '/my-bookings', icon: CalendarCheck, ar: 'المواعيد', en: 'Bookings', gate: 'appointments_enabled' },
 ];
 
 /* ── Route classification (used by the route-aware shell) ── */
@@ -187,7 +187,7 @@ const STUDENT_ROUTES: { exact?: string[]; prefix?: string[] } = {
 };
 
 const TEACHER_ROUTES: { exact?: string[]; prefix?: string[] } = {
-  exact: ['/students', '/analytics', '/blog'],
+  exact: ['/students', '/analytics', '/blog', '/messages'],
   prefix: ['/teacher', '/courses'],
 };
 
@@ -203,6 +203,43 @@ export function isTeacherRoute(path: string): boolean {
 
 export function isAdminRoute(path: string): boolean {
   return path.startsWith('/admin');
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\/+$/, '') || '/';
+}
+
+function matchesNavItem(path: string, item: NavItem): boolean {
+  const normalized = normalizePath(path);
+  if (normalized === item.href) return true;
+  return [item.href, ...(item.match ?? [])].some((prefix) =>
+    prefix !== '/' && normalized.startsWith(prefix + '/'),
+  );
+}
+
+/** True when the current student destination is available from the More drawer. */
+export function isMoreNavRoute(path: string, primaryItems: NavItem[]): boolean {
+  return !primaryItems.some((item) => matchesNavItem(path, item));
+}
+
+/** Filter navigation by its localized label, section title, or route. */
+export function filterNavGroups(groups: NavGroup[], query: string, locale: Locale): NavGroup[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase(locale);
+  if (!normalizedQuery) return groups;
+
+  return groups.flatMap((group) => {
+    const groupMatches = (locale === 'ar' ? group.title?.ar : group.title?.en)
+      ?.toLocaleLowerCase(locale)
+      .includes(normalizedQuery);
+    const items = groupMatches
+      ? group.items
+      : group.items.filter((item) =>
+          [item.ar, item.en, item.href]
+            .some((value) => value.toLocaleLowerCase(locale).includes(normalizedQuery)),
+        );
+
+    return items.length > 0 ? [{ ...group, items }] : [];
+  });
 }
 
 /** Auth-only / public pages that get the slim public header + footer. */
