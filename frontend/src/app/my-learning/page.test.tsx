@@ -85,15 +85,28 @@ describe('Student dashboard (my-learning)', () => {
     expect(await screen.findByText('لم تسجل في أي كورس بعد')).toBeInTheDocument();
   });
 
-  it('falls back to the empty state (never hangs) when the API fails', async () => {
+  it('shows an honest error with a retry (never a fake empty state or 0s) when the API fails', async () => {
     (enrollments.myCourses as any).mockRejectedValue(new Error('boom'));
     (dashboardApi.studentLessons as any).mockRejectedValue(new Error('boom'));
     (favoritesApi.list as any).mockRejectedValue(new Error('boom'));
 
     const { container } = render(<MyLearningPage />);
 
-    expect(await screen.findByText('لم تسجل في أي كورس بعد')).toBeInTheDocument();
+    expect(await screen.findByTestId('my-learning-load-error')).toBeInTheDocument();
+    expect(screen.getByText('تعذر تحميل بيانات كورساتك')).toBeInTheDocument();
+    // The misleading "no enrollments" empty state must NOT be shown.
+    expect(screen.queryByText('لم تسجل في أي كورس بعد')).toBeNull();
+    // The hero stats are unknown, not "0" / "0%".
+    expect(screen.queryByText('0%')).toBeNull();
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(3);
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
+
+    // Retry issues the requests again and recovers once the API is back.
+    (enrollments.myCourses as any).mockResolvedValue(COURSES);
+    (dashboardApi.studentLessons as any).mockResolvedValue([]);
+    (favoritesApi.list as any).mockResolvedValue([]);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'إعادة المحاولة' }));
+    expect(await screen.findByText('كورس الفيزياء')).toBeInTheDocument();
   });
 
   it('redeems a registration card code and confirms success', async () => {

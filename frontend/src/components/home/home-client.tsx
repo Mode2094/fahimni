@@ -254,11 +254,18 @@ export default function HomeClient() {
         </div>
       </div>
 
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:start-2 focus:top-2 focus:z-[60] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:font-semibold focus:text-teal-950 focus:shadow-lg"
+      >
+        {t('تخطَّ إلى المحتوى الرئيسي', 'Skip to main content')}
+      </a>
+
       {/* ─── Header ─────────────────────────────────────── */}
       <header className="sticky top-0 z-50 glass-light border-b border-teal-100/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-6">
           <div className="flex items-center gap-2.5 shrink-0">
-            <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+            <img src={resolveLogoUrl(settings.logo_url)} alt="" className="h-9 w-9 rounded-xl object-cover shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
             <span className="text-lg font-bold text-teal-950">{settings.platform_name || t('منصة فهمني', 'Fahimni')}</span>
           </div>
           <nav className="hidden md:flex items-center gap-1 flex-1">
@@ -276,12 +283,19 @@ export default function HomeClient() {
                 {t('ابدأ الآن', 'Start Now')}
             </Link>
           </div>
-          <button className="md:hidden ms-auto text-teal-950 flex h-11 w-11 items-center justify-center" onClick={() => setMenuOpen(!menuOpen)}>
-            {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          <button
+            type="button"
+            className="md:hidden ms-auto text-teal-950 flex h-11 w-11 items-center justify-center"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label={menuOpen ? t('إغلاق القائمة', 'Close menu') : t('فتح القائمة', 'Open menu')}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav"
+          >
+            {menuOpen ? <X className="h-6 w-6" aria-hidden="true" /> : <Menu className="h-6 w-6" aria-hidden="true" />}
           </button>
         </div>
         {menuOpen && (
-          <div className="md:hidden border-t border-teal-100/60 bg-white/90 backdrop-blur-xl p-4 space-y-1">
+          <div id="mobile-nav" className="md:hidden border-t border-teal-100/60 bg-white/90 backdrop-blur-xl p-4 space-y-1">
             {navLinks.map(l => (
               <button key={l.id} onClick={() => scrollTo(l.id)} className="block w-full text-start px-3 py-3 rounded-lg text-sm text-teal-950/80 hover:bg-teal-500/10">{l.label}</button>
             ))}
@@ -293,6 +307,7 @@ export default function HomeClient() {
         )}
       </header>
 
+      <main id="main">
       {/* ─── Hero ─────────────────────────────────────── */}
       <section ref={heroRef} className="relative overflow-hidden">
         <div className="absolute inset-0 animate-gradient" style={{ background: 'linear-gradient(130deg, #0f2e2b 0%, #115e54 30%, #0d9488 55%, #115e54 80%, #0f2e2b 100%)' }}>
@@ -384,7 +399,7 @@ export default function HomeClient() {
                       <GraduationCap className="h-5 w-5 text-white" />
                     </span>
                     {[LayoutGrid, BookOpen, Users, CreditCard, BarChart3, Video].map((I, i) => (
-                      <span key={i} className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${i === 0 ? 'bg-teal-500/20 text-teal-200' : 'text-white/40'}`}>
+                      <span key={i} className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${i === 0 ? 'bg-teal-500/20 text-teal-200' : 'text-white/60'}`}>
                         <I className="h-4 w-4" />
                       </span>
                     ))}
@@ -482,7 +497,7 @@ export default function HomeClient() {
           <div className="text-center max-w-2xl mx-auto mb-14">
             <h2 className="text-3xl sm:text-4xl font-bold">{t('المميزات', 'Features')}</h2>
             <p className="text-gray-500 mt-3 text-lg">{t('كل ما تحتاجه في منصة واحدة', 'Everything you need in one platform')}</p>
-            <p className="text-gray-400 mt-1">{t('صممنا المنصة لتوفر عليك الوقت وتضاعف إيراداتك', 'Built to save you time and double your revenue')}</p>
+            <p className="text-gray-500 mt-1">{t('صممنا المنصة لتوفر عليك الوقت وتضاعف إيراداتك', 'Built to save you time and double your revenue')}</p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {MAIN_FEATURES.map((f, i) => (
@@ -508,7 +523,7 @@ export default function HomeClient() {
 
           {/* CTA مكرر بعد المميزات */}
           <div className="mt-12 text-center">
-            <p className="text-sm text-gray-400 mb-4">{t('ابدأ خلال دقائق — كل ما تحتاجه في مكان واحد', 'Start in minutes — everything you need in one place')}</p>
+            <p className="text-sm text-gray-500 mb-4">{t('ابدأ خلال دقائق — كل ما تحتاجه في مكان واحد', 'Start in minutes — everything you need in one place')}</p>
             <Link href="/register/teacher">
               <button className="inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.02] cta-shine" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                 {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
@@ -644,7 +659,7 @@ export default function HomeClient() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-bold text-sm">{t('درس: أساسيات الجبر — الجزء الأول', 'Lesson: Algebra basics — Part 1')}</p>
-                      <p className="text-[10px] text-gray-400">{t('فيديو عالي الجودة · 12:30 دقيقة', 'HD video · 12:30 min')}</p>
+                      <p className="text-[10px] text-gray-500">{t('فيديو عالي الجودة · 12:30 دقيقة', 'HD video · 12:30 min')}</p>
                     </div>
                     {playback < 100 && (
                       <button onClick={() => setPlaying(!playing)} className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-500/10 text-teal-700 transition-colors hover:bg-teal-500/20" aria-label={playing ? t('إيقاف', 'Pause') : t('تشغيل', 'Play')}>
@@ -654,7 +669,7 @@ export default function HomeClient() {
                   </div>
 
                   <div>
-                    <div className="flex justify-between text-[11px] text-gray-400 mb-1.5">
+                    <div className="flex justify-between text-[11px] text-gray-500 mb-1.5">
                       <span>{t('تقدم الدرس', 'Lesson progress')}</span>
                       <span className="font-bold text-teal-700">{Math.floor(playback)}%</span>
                     </div>
@@ -668,7 +683,7 @@ export default function HomeClient() {
                       <CheckCircle className="h-4 w-4 shrink-0" />{t('اكتمل الدرس! +10 نقاط — انتقل للاختبار', 'Lesson complete! +10 points — move to the quiz')}
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-400 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على الشاشة للتشغيل والإيقاف', 'Click the screen to play / pause')}</p>
+                    <p className="text-xs text-gray-500 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على الشاشة للتشغيل والإيقاف', 'Click the screen to play / pause')}</p>
                   )}
                 </div>
               )}
@@ -681,7 +696,7 @@ export default function HomeClient() {
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10"><ClipboardList className="h-5 w-5 text-violet-600" /></span>
                       <div>
                         <p className="font-bold text-sm">{t('اختبار سريع', 'Quick quiz')}</p>
-                        <p className="text-[10px] text-gray-400">{t('سؤال 1 من 3', 'Question 1 of 3')}</p>
+                        <p className="text-[10px] text-gray-500">{t('سؤال 1 من 3', 'Question 1 of 3')}</p>
                       </div>
                     </div>
                     <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-600">
@@ -742,7 +757,7 @@ export default function HomeClient() {
                       </div>
                     )}
                     {quizState === 'idle' && (
-                      <p className="text-xs text-gray-400 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على إجابة — التصحيح فوري', 'Click an answer — instant grading')}</p>
+                      <p className="text-xs text-gray-500 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على إجابة — التصحيح فوري', 'Click an answer — instant grading')}</p>
                     )}
                     {quizState === 'right' && (
                       <button onClick={() => setJourneyStep(2)} className="inline-flex items-center gap-2 mt-3 rounded-full bg-teal-600 text-white px-5 py-2.5 text-sm font-bold shadow-brand transition-all hover:scale-[1.03]">
@@ -762,7 +777,7 @@ export default function HomeClient() {
                         <Award className="h-10 w-10 text-amber-500" />
                       </div>
                       <h3 className="text-xl font-bold text-teal-950 mb-2">{t('شهادتك بانتظارك', 'Your certificate awaits')}</h3>
-                      <p className="text-sm text-gray-400 max-w-xs mx-auto mb-7">
+                      <p className="text-sm text-gray-500 max-w-xs mx-auto mb-7">
                         {t('أكملت الدرس والاختبار — الآن تصدر شهادتك الموثقة تلقائياً برمز QR', 'You finished the lesson and quiz — your verified certificate is issued automatically with a QR code')}
                       </p>
                       <button
@@ -780,14 +795,14 @@ export default function HomeClient() {
                           <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #0d9488 1px, transparent 0)', backgroundSize: '16px 16px' }} />
                           <div className="relative">
                             <GraduationCap className="mx-auto h-10 w-10 text-amber-500 mb-2" />
-                            <p className="text-[10px] font-black tracking-[0.25em] text-gray-400 uppercase">{t('شهادة إتمام', 'Certificate of completion')}</p>
+                            <p className="text-[10px] font-black tracking-[0.25em] text-gray-500 uppercase">{t('شهادة إتمام', 'Certificate of completion')}</p>
                             <h4 className="text-2xl font-black text-teal-950 mt-2">{t('بنجاح', 'Successfully')}</h4>
-                            <p className="text-xs text-gray-400 mt-3">{t('تشهد هذه الشهادة بأن', 'This certifies that')}</p>
+                            <p className="text-xs text-gray-500 mt-3">{t('تشهد هذه الشهادة بأن', 'This certifies that')}</p>
                             <p className="text-2xl font-black text-amber-600 mt-1 min-h-[2.5rem]">{typedName}<span className="type-caret inline-block w-1 h-6 bg-amber-500 align-middle ms-1 rounded" /></p>
-                            <p className="text-xs text-gray-400 mt-2">{t('أتم بنجاح دورة: أساسيات الجبر', 'has completed the course: Algebra basics')}</p>
+                            <p className="text-xs text-gray-500 mt-2">{t('أتم بنجاح دورة: أساسيات الجبر', 'has completed the course: Algebra basics')}</p>
                             <div className="flex items-center justify-between mt-6">
                               <div className="text-start">
-                                <p className="text-[10px] text-gray-400">{t('المعلمة', 'Teacher')}</p>
+                                <p className="text-[10px] text-gray-500">{t('المعلمة', 'Teacher')}</p>
                                 <p className="text-sm font-bold text-slate-700">أ. محمد</p>
                               </div>
                               <div className="relative">
@@ -797,14 +812,14 @@ export default function HomeClient() {
                                 <span className="absolute inset-0 rounded-full border-2 border-dashed border-amber-300 stamp-in" style={{ animationDelay: '0.12s' }} />
                               </div>
                               <div className="text-end">
-                                <p className="text-[10px] text-gray-400">{t('التاريخ', 'Date')}</p>
+                                <p className="text-[10px] text-gray-500">{t('التاريخ', 'Date')}</p>
                                 <p className="text-sm font-bold text-slate-700">{new Date().toLocaleDateString(locale === 'ar' ? 'ar-EG' : 'en-US')}</p>
                               </div>
                             </div>
                             <div className="mx-auto mt-4 flex h-12 w-12 items-center justify-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50/50">
                               <QrCode className="h-6 w-6 text-slate-300" />
                             </div>
-                            <p className="text-[10px] text-gray-400 mt-1.5">{t('موثقة برمز QR — تحقق فوري', 'Verified with QR — instant check')}</p>
+                            <p className="text-[10px] text-gray-500 mt-1.5">{t('موثقة برمز QR — تحقق فوري', 'Verified with QR — instant check')}</p>
                           </div>
                         </div>
                       </div>
@@ -836,7 +851,7 @@ export default function HomeClient() {
 
         {/* CTA مكرر بعد الرحلة */}
         <div className="mt-10 text-center">
-          <p className="text-sm text-gray-400 mb-4">{t('هكذا يتعلم طلابك — هكذا تكسب أنت', 'This is how your students learn — and how you earn')}</p>
+          <p className="text-sm text-gray-500 mb-4">{t('هكذا يتعلم طلابك — هكذا تكسب أنت', 'This is how your students learn — and how you earn')}</p>
           <Link href="/register/teacher">
             <button className="inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.02] cta-shine" style={{ background: 'linear-gradient(135deg, #d97706, #f59e0b)' }}>
               {t('أنشئ منصتك الآن', 'Create your platform now')} {locale === 'ar' ? '←' : '→'}
@@ -874,7 +889,7 @@ export default function HomeClient() {
                     className="w-full h-2.5 rounded-full appearance-none cursor-pointer"
                     style={{ background: 'linear-gradient(90deg, #0d9488, #14b8a6)', accentColor: '#0d9488' }}
                   />
-                  <div className="flex justify-between text-[10px] text-gray-400 mt-1.5"><span>5</span><span>250</span><span>500</span></div>
+                  <div className="flex justify-between text-[10px] text-gray-500 mt-1.5"><span>5</span><span>250</span><span>500</span></div>
                 </div>
 
                 <div>
@@ -890,7 +905,7 @@ export default function HomeClient() {
                     className="w-full h-2.5 rounded-full appearance-none cursor-pointer"
                     style={{ background: 'linear-gradient(90deg, #d97706, #f59e0b)', accentColor: '#d97706' }}
                   />
-                  <div className="flex justify-between text-[10px] text-gray-400 mt-1.5"><span>5</span><span>100</span><span>200</span></div>
+                  <div className="flex justify-between text-[10px] text-gray-500 mt-1.5"><span>5</span><span>100</span><span>200</span></div>
                 </div>
               </div>
             </div>
@@ -907,7 +922,7 @@ export default function HomeClient() {
 
               <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 opacity-90">
                 <div>
-                  <p className="text-sm text-gray-400">{t('رسوم المنصات الأخرى', 'Other platforms\' fees')} <span className="line-through">(20-30%)</span></p>
+                  <p className="text-sm text-gray-500">{t('رسوم المنصات الأخرى', 'Other platforms\' fees')} <span className="line-through">(20-30%)</span></p>
                   <p className="text-3xl font-black text-slate-300 mt-1 line-through">{formatPrice(calcCompetitorFee)}</p>
                 </div>
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100"><Ban className="h-6 w-6 text-slate-400" /></span>
@@ -932,11 +947,11 @@ export default function HomeClient() {
                 </div>
               </div>
 
-              <p className="text-xs text-gray-400 text-center">
+              <p className="text-xs text-gray-500 text-center">
                 {t('لو كنت على منصة تأخذ 20% عمولة، كنت ستخسر', 'On a platform taking a 20% commission, you would lose')} <b className="text-teal-700">{formatPrice(calcSave)}</b> {t('سنوياً — معنا يبقى لك كل شيء', 'per year — with us everything stays yours')}
               </p>
 
-              <p className="text-[11px] leading-relaxed text-gray-400 text-center">
+              <p className="text-[11px] leading-relaxed text-gray-500 text-center">
                 {t(
                   'الأرقام تقديرية لأغراض التوضيح وليست أرباحًا مضمونة، وقد لا تشمل رسوم بوابة الدفع وتكاليف الاشتراك.',
                   'Figures are illustrative estimates, not guaranteed earnings, and may exclude payment-gateway fees and subscription costs.',
@@ -971,7 +986,7 @@ export default function HomeClient() {
                 <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100"><X className="h-5 w-5 text-slate-400" /></span>
                 <div>
                   <h3 className="font-bold text-slate-500">{t('بدون المنصة', 'Without the platform')}</h3>
-                  <p className="text-[11px] text-gray-400">{t('الطريقة اليدوية', 'The manual way')}</p>
+                  <p className="text-[11px] text-gray-500">{t('الطريقة اليدوية', 'The manual way')}</p>
                 </div>
               </div>
               <ul className="space-y-3.5">
@@ -1000,7 +1015,7 @@ export default function HomeClient() {
                   <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: 'rgba(94,234,212,0.15)', border: '1px solid rgba(94,234,212,0.3)' }}><CheckCircle className="h-5 w-5 text-teal-300" /></span>
                   <div>
                     <h3 className="font-bold text-white">{t('مع المنصة', 'With the platform')}</h3>
-                    <p className="text-[11px] text-white/50">{t('كل شيء تلقائي', 'Everything automated')}</p>
+                    <p className="text-[11px] text-white/70">{t('كل شيء تلقائي', 'Everything automated')}</p>
                   </div>
                 </div>
                 <ul className="relative space-y-3.5">
@@ -1177,7 +1192,7 @@ export default function HomeClient() {
                       );
                     })}
                     {!allExpanded && enabledCount(p.features) > 8 && (
-                      <p className="text-xs text-gray-400 mt-1">+ {enabledCount(p.features) - 8} {t('ميزة أخرى', 'more features')}</p>
+                      <p className="text-xs text-gray-500 mt-1">+ {enabledCount(p.features) - 8} {t('ميزة أخرى', 'more features')}</p>
                     )}
                   </div>
                   <Link
@@ -1323,7 +1338,7 @@ export default function HomeClient() {
                   <button type="submit" className="w-full rounded-full py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.01] cta-shine" style={{ background: 'linear-gradient(135deg, #25d366, #128c7e)' }}>
                     <WhatsAppIcon className="h-4 w-4 inline me-1.5" />{t('يتواصل معي خبير', 'An expert will contact me')}
                   </button>
-                  <p className="text-center text-[11px] text-gray-400">{t('بياناتك لا تُشارك مع أي طرف ثالث', 'Your data is never shared with third parties')}</p>
+                  <p className="text-center text-[11px] text-gray-500">{t('بياناتك لا تُشارك مع أي طرف ثالث', 'Your data is never shared with third parties')}</p>
                 </form>
               </div>
             </div>
@@ -1335,34 +1350,35 @@ export default function HomeClient() {
       <div id="quran-teachers">
         <QuranTeacherBanner />
       </div>
+      </main>
 
       {/* ─── Footer ─────────────────────────────────────── */}
       <footer className="border-t border-teal-900" style={{ background: '#0f2e2b' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 grid sm:grid-cols-2 lg:grid-cols-4 gap-10">
           <div>
             <div className="flex items-center gap-2.5 mb-4">
-              <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/20" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+              <img src={resolveLogoUrl(settings.logo_url)} alt="" className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/20" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
               <span className="text-lg font-bold text-white">{settings.platform_name || t('منصة فهمني', 'Fahimni')}</span>
             </div>
-            <p className="text-white/50 text-sm leading-relaxed">{t('منصة تعليمية متكاملة تساعد المعلمين على بناء علامتهم التجارية وزيادة إيراداتهم.', 'An all-in-one platform helping teachers build their brand and grow revenue.')}</p>
+            <p className="text-white/70 text-sm leading-relaxed">{t('منصة تعليمية متكاملة تساعد المعلمين على بناء علامتهم التجارية وزيادة إيراداتهم.', 'An all-in-one platform helping teachers build their brand and grow revenue.')}</p>
           </div>
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('المنصة', 'Platform')}</h4>
+            <h3 className="text-white font-semibold mb-4">{t('المنصة', 'Platform')}</h3>
             <ul className="space-y-2.5 text-sm">
-              <li><button onClick={() => scrollTo('features')} className="text-white/50 hover:text-white transition-colors">{t('المميزات', 'Features')}</button></li>
-              <li><button onClick={() => scrollTo('pricing')} className="text-white/50 hover:text-white transition-colors">{t('الأسعار', 'Pricing')}</button></li>
+              <li><button onClick={() => scrollTo('features')} className="text-white/70 hover:text-white transition-colors">{t('المميزات', 'Features')}</button></li>
+              <li><button onClick={() => scrollTo('pricing')} className="text-white/70 hover:text-white transition-colors">{t('الأسعار', 'Pricing')}</button></li>
             </ul>
           </div>
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('حسابك', 'Your Account')}</h4>
+            <h3 className="text-white font-semibold mb-4">{t('حسابك', 'Your Account')}</h3>
             <ul className="space-y-2.5 text-sm">
-              <li><Link href="/register/teacher" className="text-white/50 hover:text-white transition-colors">{t('إنشاء حساب معلم', 'Create Teacher Account')}</Link></li>
-              <li><Link href="/teacher/login" className="text-white/50 hover:text-white transition-colors">{t('دخول المعلمين', 'Teacher Login')}</Link></li>
+              <li><Link href="/register/teacher" className="text-white/70 hover:text-white transition-colors">{t('إنشاء حساب معلم', 'Create Teacher Account')}</Link></li>
+              <li><Link href="/teacher/login" className="text-white/70 hover:text-white transition-colors">{t('دخول المعلمين', 'Teacher Login')}</Link></li>
             </ul>
           </div>
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('تواصل معنا', 'Contact Us')}</h4>
-            <ul className="space-y-2.5 text-sm text-white/50">
+            <h3 className="text-white font-semibold mb-4">{t('تواصل معنا', 'Contact Us')}</h3>
+            <ul className="space-y-2.5 text-sm text-white/70">
               <li className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-400" />{t('دعم فني 24/7', '24/7 Support')}</li>
               <li className="flex items-center gap-2"><Clock className="h-4 w-4 text-teal-300" />{t('رد خلال ساعة', 'Reply within an hour')}</li>
               <li className="flex items-center gap-2"><span className="text-teal-300">@</span>support@fahimni.me</li>
@@ -1370,7 +1386,7 @@ export default function HomeClient() {
           </div>
         </div>
           <div className="border-t border-white/10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-xs text-white/40">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-xs text-white/60">
             <span>© 2026 {settings.platform_name || 'منصة فهمني'} · {t('جميع الحقوق محفوظة', 'All rights reserved')}</span>
             <div className="flex gap-4">
               <a href="/privacy" className="hover:text-white/70">{t('سياسة الخصوصية', 'Privacy Policy')}</a>

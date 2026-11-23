@@ -89,6 +89,22 @@ describe('Landing page (home-client)', () => {
     expect(screen.getAllByRole('button', { name: 'See how the platform works' }).length).toBeGreaterThan(0);
   });
 
+  it('exposes a main landmark, a labelled menu toggle and a skip link (WCAG)', () => {
+    stubPlans();
+    render(<HomeClient />);
+
+    // Exactly one <main> landmark wraps the page content.
+    expect(screen.getAllByRole('main').length).toBe(1);
+
+    // The mobile menu button has an accessible name and reports its state.
+    const toggle = screen.getByRole('button', { name: 'فتح القائمة' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', 'mobile-nav');
+
+    // Keyboard users can jump straight to the content.
+    expect(screen.getByRole('link', { name: 'تخطَّ إلى المحتوى الرئيسي' })).toHaveAttribute('href', '#main');
+  });
+
   it('shows the profit calculator estimate on first render (50 × 25 = 1250, no scroll needed)', async () => {
     stubPlans();
     render(<HomeClient />);
