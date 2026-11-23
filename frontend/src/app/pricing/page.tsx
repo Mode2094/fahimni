@@ -4,19 +4,19 @@ import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 
 const COMPARISON: { name: string; who: string; use: string }[] = [
   {
-    name: 'خطة البداية',
-    who: 'للمعلم الذي يبدأ: كورسات قليلة وطلاب معدودون.',
-    use: 'جرّب بنية المنصة بسعر بسيط، أضف أول كورس وشارك رابطه مع طلابك.',
+    name: 'الإنطلاقة',
+    who: 'للمعلم الذي يبدأ: كورسات وطلاب بأعداد محدودة.',
+    use: 'أطلق أول كورس لك بسعر بسيط، مع حماية الفيديوهات ومعظم أدوات التدريس.',
   },
   {
-    name: 'الخطة الاحترافية',
-    who: 'للمعلم النشط الذي يبني دورات عدة ويزيد طلابه.',
-    use: 'حدود أعلى للتخزين والطلاب والفيديوهات، مع كل أدوات التدريس الأساسية.',
+    name: 'المحترف',
+    who: 'للمعلم النشط الذي يبني عدة دورات ويزيد طلابه.',
+    use: 'مساحة وحدود أعلى، مع كل أدوات التدريس الأساسية وحماية الفيديوهات.',
   },
   {
-    name: 'الخطة الشاملة',
-    who: 'للأكاديمية الناضجة التي تحتاج أكبر المساحات وأقوى الأدوات.',
-    use: 'أقصى الحدود والدعم الكامل، لتشغيل منصة تخدم مئات الطلاب بثقة.',
+    name: 'المتقدم',
+    who: 'للأكاديمية النامية التي تحتاج أكبر المساحات وأقوى الأدوات.',
+    use: 'أقصى الحدود والدعم المخصص، لتشغيل منصة تخدم مئات الطلاب بثقة.',
   },
 ];
 
@@ -38,7 +38,12 @@ export default function PricingPage() {
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-12">
         <section aria-labelledby="compare-heading" className="mb-14">
           <h2 id="compare-heading" className="text-2xl font-bold text-gray-900 text-center">أي خطة تناسبك؟</h2>
-          <p className="text-gray-500 text-center mt-2 mb-8">الحدود الدقيقة للطلاب والتخزين والفيديوهات تظهر في البطاقات أعلاه — إليك دليلك السريع:</p>
+          <p className="text-gray-500 text-center mt-2 mb-3">الحدود الدقيقة للطلاب والتخزين والفيديوهات تظهر في البطاقات أعلاه — إليك دليلك السريع:</p>
+          <p className="text-center mb-8">
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800">
+              🛡️ حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط
+            </span>
+          </p>
           <div className="grid md:grid-cols-3 gap-4">
             {COMPARISON.map((c) => (
               <div key={c.name} className="rounded-2xl border border-gray-200 p-5">

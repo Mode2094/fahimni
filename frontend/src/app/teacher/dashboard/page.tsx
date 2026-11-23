@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dashboard-kit';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight, HardDrive, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -370,6 +370,18 @@ export default function TeacherDashboard() {
         description={t('الاستخدام مقابل حدود خطتك الحالية', 'Usage vs your current plan limits')}
         forceOpen={isDesktop}
       >
+        {/* تنبيه الاقتراب من امتلاء مساحة التخزين — مع المساحة المتبقية */}
+        {usage?.storage && !usage.storage.unlimited && (usage.storage.pct ?? 0) >= 80 && (
+          <div className={cn('mb-4 flex items-center gap-2.5 rounded-2xl border px-4 py-3 text-sm', (usage.storage.pct ?? 0) >= 90 ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-800')}>
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="font-semibold">
+              {(usage.storage.pct ?? 0) >= 90
+                ? t('اقتربت جداً من حد التخزين', 'You are very close to your storage limit')
+                : t('اقتربت من حد التخزين', 'You are approaching your storage limit')}
+              {' — '}{t('المساحة المتبقية', 'Remaining storage')}: {fmtNum('storage', usage.storage.remaining ?? 0)}
+            </span>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
           {upUsage.map((it) => {
             const e = usage?.[it.key];
@@ -386,6 +398,11 @@ export default function TeacherDashboard() {
                   {!e.unlimited && <div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-teal-500')} style={{ width: `${pct}%` }} />}
                 </div>
                 <p className={cn('mt-1.5 text-xs', pct >= 90 && !e.unlimited ? 'text-rose-600' : 'text-gray-400')}>{state}{!e.unlimited && pct > 0 ? ` · ${Math.round(pct)}%` : ''}</p>
+                {it.key === 'storage' && !e.unlimited && (
+                  <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-gray-500">
+                    <HardDrive className="h-3 w-3 text-gray-400" />{t('المتبقي', 'Remaining')}: {fmtNum('storage', e.remaining ?? 0)}
+                  </p>
+                )}
               </div>
             );
           })}

@@ -42,33 +42,34 @@ class PlanRecommenderTest extends TenantTestCase
     }
 
     /**
-     * الثلاثي الكنسي — نفس أرقام SubscriptionPlanSeeder (Starter / Pro / Enterprise).
+     * الثلاثي الكنسي — أرقام الخطط المعتمدة (الانطلاقة / المحترف / المتقدم):
+     * 29/59/89 دولاراً · 700GB/1.5TB/3TB · 50/250/1000 طالباً · 3/7/20 كورساً.
      *
      * @return array<string, SubscriptionPlan>
      */
     private function canonicalPlans(): array
     {
         return [
-            'starter' => $this->makePlan('Starter', 49.99, [
+            'starter' => $this->makePlan('Starter', 29.00, [
                 'students_limit' => '50',
-                'courses_limit' => '5',
-                'storage_limit_mb' => '5120',
+                'courses_limit' => '3',
+                'storage_limit_mb' => '716800',
                 'live_sessions_limit' => '5',
                 'live_stream_enabled' => 'false',
                 'teachers_limit' => '1',
             ]),
-            'pro' => $this->makePlan('Professional', 99.99, [
-                'students_limit' => '200',
-                'courses_limit' => '20',
-                'storage_limit_mb' => '20480',
+            'pro' => $this->makePlan('Professional', 59.00, [
+                'students_limit' => '250',
+                'courses_limit' => '7',
+                'storage_limit_mb' => '1572864',
                 'live_sessions_limit' => '50',
                 'live_stream_enabled' => 'true',
                 'teachers_limit' => '3',
             ]),
-            'ent' => $this->makePlan('Enterprise', 199.99, [
-                'students_limit' => 'unlimited',
-                'courses_limit' => 'unlimited',
-                'storage_limit_mb' => '102400',
+            'ent' => $this->makePlan('Enterprise', 89.00, [
+                'students_limit' => '1000',
+                'courses_limit' => '20',
+                'storage_limit_mb' => '3145728',
                 'live_sessions_limit' => 'unlimited',
                 'live_stream_enabled' => 'true',
                 'teachers_limit' => 'unlimited',
@@ -133,17 +134,18 @@ class PlanRecommenderTest extends TenantTestCase
         $this->canonicalPlans();
         $questions = $this->questionsPayload();
 
-        $this->assertRequirementsMatch($questions, 'storage', 'storage_limit_mb', [5120, 20480, 102400]);
-        $this->assertRequirementsMatch($questions, 'students_count', 'students_limit', [50, 200, 'unlimited']);
+        $this->assertRequirementsMatch($questions, 'storage', 'storage_limit_mb', [716800, 1572864, 3145728]);
+        $this->assertRequirementsMatch($questions, 'students_count', 'students_limit', [50, 250, 1000]);
         $this->assertRequirementsMatch($questions, 'team', 'teachers_limit', [1, 3, 'unlimited']);
-        $this->assertRequirementsMatch($questions, 'courses', 'courses_limit', [5, 20, 'unlimited']);
-        $this->assertRequirementsMatch($questions, 'budget', 'monthly_price', [49.99, 99.99, 199.99]);
+        $this->assertRequirementsMatch($questions, 'courses', 'courses_limit', [3, 7, 20]);
+        $this->assertRequirementsMatch($questions, 'budget', 'monthly_price', [29.00, 59.00, 89.00]);
 
-        // تسميات السعة تُعرض بالجيجا الواقعية نفسها الموجودة في الخطط.
+        // تسميات السعة تُعرض بوحدتها الواقعية (جيجا/تيرا) نفسها الموجودة في الخطط.
         $storageOptions = collect($questions)->firstWhere('key', 'storage')['options'];
-        $this->assertSame('حتى 5 جيجا', $storageOptions[0]['label']['ar']);
-        $this->assertSame('Up to 5 GB', $storageOptions[0]['label']['en']);
-        $this->assertSame('Up to 100 GB', $storageOptions[2]['label']['en']);
+        $this->assertSame('حتى 700 جيجا', $storageOptions[0]['label']['ar']);
+        $this->assertSame('Up to 700 GB', $storageOptions[0]['label']['en']);
+        $this->assertSame('Up to 1.5 TB', $storageOptions[1]['label']['en']);
+        $this->assertSame('Up to 3 TB', $storageOptions[2]['label']['en']);
     }
 
     public function test_questions_follow_plan_edits_by_admin(): void
@@ -180,10 +182,10 @@ class PlanRecommenderTest extends TenantTestCase
 
         $res = $this->recommend($this->answersFor($questions, [
             'students_count' => 50,
-            'storage' => 5120,
+            'storage' => 716800,
             'live_stream' => 'no',
             'team' => 1,
-            'courses' => 5,
+            'courses' => 3,
             'budget' => 'premium',
         ]));
 
@@ -196,11 +198,11 @@ class PlanRecommenderTest extends TenantTestCase
         $questions = $this->questionsPayload();
 
         $res = $this->recommend($this->answersFor($questions, [
-            'students_count' => 'unlimited',
-            'storage' => 102400,
+            'students_count' => 1000,
+            'storage' => 3145728,
             'live_stream' => 'essential',
             'team' => 'unlimited',
-            'courses' => 'unlimited',
+            'courses' => 20,
             'budget' => 'premium',
         ]));
 
@@ -227,7 +229,7 @@ class PlanRecommenderTest extends TenantTestCase
             'storage' => 102400,
             'live_stream' => 'no',
             'team' => 1,
-            'courses' => 5,
+            'courses' => 3,
             'budget' => 'premium',
         ]));
 
@@ -294,7 +296,7 @@ class PlanRecommenderTest extends TenantTestCase
 
         $res = $this->recommend($this->answersFor($questions, [
             'students_count' => 100,
-            'storage' => 102400,
+            'storage' => 716800,
             'live_stream' => 'sometimes',
             'team' => 3,
             'courses' => 20,
@@ -316,12 +318,12 @@ class PlanRecommenderTest extends TenantTestCase
             ->pluck('name')->all();
 
         $res = $this->recommend($this->answersFor($questions, [
-            'students_count' => 200,
-            'storage' => 20480,
+            'students_count' => 250,
+            'storage' => 1572864,
             'live_stream' => 'sometimes',
             'team' => 3,
-            'courses' => 20,
-            'budget' => 99.99,
+            'courses' => 7,
+            'budget' => 59.00,
         ]));
 
         $proposed = collect([$res['recommended'], ...($res['alternatives'] ?? [])])->pluck('name')->unique()->all();
@@ -350,7 +352,7 @@ class PlanRecommenderTest extends TenantTestCase
             'storage' => 5120,
             'live_stream' => 'no',
             'team' => 1,
-            'courses' => 5,
+            'courses' => 3,
             'budget' => 'premium',
         ]));
 

@@ -498,6 +498,14 @@ export default function HomeClient() {
             ))}
           </div>
 
+          {/* حماية الفيديوهات التعليمية — مشمولة في جميع الخطط */}
+          <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-6 py-5 text-center sm:flex-row sm:justify-center">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
+              <ShieldCheck className="h-5 w-5 text-emerald-600" />
+            </div>
+            <p className="text-base font-bold text-emerald-900">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
+          </div>
+
           {/* CTA مكرر بعد المميزات */}
           <div className="mt-12 text-center">
             <p className="text-sm text-gray-400 mb-4">{t('ابدأ خلال دقائق — كل ما تحتاجه في مكان واحد', 'Start in minutes — everything you need in one place')}</p>
@@ -1042,6 +1050,27 @@ export default function HomeClient() {
               </span>
             ))}
           </div>
+
+          {/* ─── حماية الفيديوهات — مضمّنة في كل الخطط ─── */}
+          <div className="mx-auto mb-6 flex max-w-3xl flex-col items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-5 py-4 text-center sm:flex-row sm:justify-center sm:gap-3">
+            <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" />
+            <p className="text-sm font-bold text-emerald-900">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
+          </div>
+
+          {/* ─── أبرز ما تمنحه الخطط — بلا ازدحام ─── */}
+          {minMonthly !== null && (
+            <div className="mx-auto mb-10 flex max-w-3xl flex-wrap items-center justify-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-white px-3.5 py-2 text-xs font-bold text-teal-800 shadow-sm">
+                <BadgeCheck className="h-3.5 w-3.5 text-teal-600" />{t(`${formatPrice(minMonthly)} بدايةً`, `From ${formatPrice(minMonthly)}`)}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-sm">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />{t('فيديوهات محمية', 'Protected videos')}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-white px-3.5 py-2 text-xs font-bold text-violet-800 shadow-sm">
+                <Video className="h-3.5 w-3.5 text-violet-600" />{t('عدد فيديوهات بلا حد عددي ضمن المساحة', 'No numeric video limit within your storage')}
+              </span>
+            </div>
+          )}
 
           {/* ─── Billing cycle toggle ─────────────────── */}
           <div className="flex justify-center mb-10">
