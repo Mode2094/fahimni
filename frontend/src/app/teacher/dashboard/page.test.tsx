@@ -121,6 +121,48 @@ describe('Teacher Dashboard', () => {
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
   });
 
+  it('never shows a fake zero when the stats endpoints fail — it says so and retries', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+
+    const { container } = render(<TeacherDashboard />);
+
+    // Honest failure notice + a working retry affordance.
+    expect(await screen.findByTestId('dashboard-load-error')).toBeInTheDocument();
+    expect(screen.getByText(/تعذر تحميل بعض البيانات/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'إعادة المحاولة' })).toBeInTheDocument();
+
+    // The four headline stats are unknown, not 0.
+    const grid = screen.getByTestId('stats-grid');
+    expect(grid.textContent).not.toMatch(/\d/);
+    expect(grid.textContent).toContain('—');
+
+    // Performance is explicitly unavailable, not "0%".
+    expect(screen.getByText('تعذر تحميل بيانات الأداء')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('0%');
+
+    // Reload on retry — the button re-issues the requests.
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const before = fetchMock.mock.calls.length;
+    await userEvent.setup().click(screen.getByRole('button', { name: 'إعادة المحاولة' }));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('falls back to the last known numbers when a later refresh fails', async () => {
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+    const first = render(<TeacherDashboard />);
+    expect(await screen.findByText('27')).toBeInTheDocument();
+    first.unmount();
+
+    // The endpoints go down on the next visit: the dashboard shows the cached
+    // numbers and marks them as last-known instead of resetting them to 0.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+    render(<TeacherDashboard />);
+
+    expect(await screen.findByText(/آخر قيمة معروفة/)).toBeInTheDocument();
+    expect(screen.getByText('27')).toBeInTheDocument();
+    expect(screen.getByText('64%')).toBeInTheDocument();
+  });
+
   it('replaced the always-empty media tiles with real file usage', async () => {
     vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
 

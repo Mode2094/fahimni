@@ -14,6 +14,7 @@ import { Eye, EyeOff, ArrowLeft, BookOpen, Trophy, Award, Sparkles, Loader2 } fr
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import PlatformLogo from '@/components/brand/platform-logo';
 
@@ -28,6 +29,8 @@ function StudentLoginPageInner() {
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [captchaId, setCaptchaId] = useState('');
+  // The math CAPTCHA id is single-use server-side; remounting mints a fresh one.
+  const [captchaKey, setCaptchaKey] = useState(0);
   const router = useRouter();
   const search = useSearchParams();
   const tenantSlug = search.get('tenant_slug') || '';
@@ -92,6 +95,7 @@ function StudentLoginPageInner() {
       await finishLogin();
     } catch (error: any) {
       setErr(error?.response?.data?.message || error?.message || (locale === 'ar' ? 'فشل الدخول' : 'Login failed'));
+      setCaptchaKey((k) => k + 1);
     }
     setLoad(false);
   };
@@ -171,10 +175,34 @@ function StudentLoginPageInner() {
                 <span className="text-sm text-gray-600">{locale === 'ar' ? 'تذكرني' : 'Remember me'}</span>
               </label>
             </div>
-            {err && <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-600">{err}</div>}
+            <Captcha key={captchaKey} value={captchaAnswer} onChange={setCaptchaAnswer} onId={setCaptchaId} locale={locale} />
+            {err && <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-600" role="alert">{err}</div>}
             <Button type="submit" disabled={load} className="w-full h-12 text-base rounded-xl shadow-lg shadow-teal-500/20 text-white" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
-              {load ? <Loader2 className="h-5 w-5 animate-spin" /> : (locale === 'ar' ? 'تسجيل دخول الطالب' : 'Student Sign In')}
+              {load ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : (locale === 'ar' ? 'تسجيل دخول الطالب' : 'Student Sign In')}
             </Button>
+            {need2fa && (
+              <div className="space-y-3 rounded-xl border border-teal-100 bg-teal-50/60 p-4">
+                <Label htmlFor="student-2fa">{locale === 'ar' ? 'رمز التحقق بخطوتين' : 'Two-factor code'}</Label>
+                <Input
+                  id="student-2fa"
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="000000"
+                  className="text-center tracking-widest"
+                />
+                <Button
+                  type="button"
+                  onClick={confirm2fa}
+                  disabled={load || twoFactorCode.length < 6}
+                  className="w-full"
+                >
+                  {locale === 'ar' ? 'تأكيد الرمز' : 'Verify code'}
+                </Button>
+              </div>
+            )}
           </form>
           <div className="text-center space-y-2">
             <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href="/register/student" className="text-teal-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>

@@ -69,7 +69,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
           tenantFaqLd(site),
         ]}
       />
-      <TeacherLanding params={params} />
+      <TeacherLanding params={params} initialSite={site} initialCourses={courses} />
     </>
   );
 }

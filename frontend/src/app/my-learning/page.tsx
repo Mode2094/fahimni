@@ -12,7 +12,7 @@ import { CardSkeleton } from '@/components/ui/skeleton';
 import {
   BookOpen, CreditCard, Loader2, GraduationCap, CheckCircle, CalendarDays, Video,
   Clock, ExternalLink, Heart, Ticket, ArrowLeft, X, Sparkles, PlayCircle,
-  TrendingUp, Award, CalendarClock, Hourglass,
+  TrendingUp, Award, CalendarClock, Hourglass, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { enrollments as enrollmentsApi, dashboardApi, favoritesApi, cardsApi, tenants } from '@/services/endpoints';
@@ -28,18 +28,36 @@ export default function MyLearningPage() {
   const [redeeming, setRedeeming] = useState(false);
   const [redeemed, setRedeemed] = useState(false);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  // The enrollments source failing must never look like "no courses" / a fake 0:
+  // we surface it and let the student retry.
+  const [loadError, setLoadError] = useState(false);
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setLoadError(false);
+    let enrollFailed = false;
+    const guard = (p: Promise<any[]>, onFail: () => void) =>
+      p.catch(() => { onFail(); return [] as any[]; });
+
     Promise.all([
-      enrollmentsApi.myCourses().catch(() => [] as any[]),
-      dashboardApi.studentLessons().catch(() => [] as any[]),
-      favoritesApi.list().catch(() => [] as any[]),
-    ]).then(([enrolled, lessonList, favList]) => {
-      setEnrollments(enrolled.map((e: any) => ({ id: e.course_id || e.id, title: e.course?.title || t('كورس', 'Course'), progress: Number(e.progress_percent) || 0, status: e.status || 'active' })));
-      setLessons(lessonList || []);
-      setFavorites(new Set((favList || []).map((f: any) => f.id)));
-    }).finally(() => setLoading(false));
+      guard(enrollmentsApi.myCourses(), () => { enrollFailed = true; }),
+      guard(dashboardApi.studentLessons(), () => {}),
+      guard(favoritesApi.list(), () => {}),
+    ])
+      .then(([enrolled, lessonList, favList]) => {
+        setEnrollments(enrolled.map((e: any) => ({ id: e.course_id || e.id, title: e.course?.title || t('كورس', 'Course'), progress: Number(e.progress_percent) || 0, status: e.status || 'active' })));
+        setLessons(lessonList || []);
+        setFavorites(new Set((favList || []).map((f: any) => f.id)));
+      })
+      .finally(() => {
+        setLoadError(enrollFailed);
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const refresh = () => {
@@ -103,7 +121,7 @@ export default function MyLearningPage() {
               {greeting}، {user?.name?.split(' ')[0] || t('طالبنا العزيز', 'Dear student')}
             </span>
             <h1 className="text-2xl sm:text-3xl font-bold text-white leading-snug">{t('رحلتك التعليمية', 'Your learning journey')}</h1>
-            <p className="text-white/65 text-sm sm:text-base mt-1.5 max-w-lg">
+            <p className="text-white/80 text-sm sm:text-base mt-1.5 max-w-lg">
               {t('تابع كورساتك، استكمل دروسك، وحقق أهدافك — التقدم يحفظ تلقائياً.', 'Track your courses, continue your lessons and reach your goals — progress is saved automatically.')}
             </p>
             <div className="flex flex-wrap gap-2.5 mt-5">
@@ -113,14 +131,14 @@ export default function MyLearningPage() {
           </div>
           <div className="grid grid-cols-3 gap-2.5 min-w-[240px]">
             {[
-              { icon: BookOpen, label: t('نشط', 'Active'), value: active },
-              { icon: CheckCircle, label: t('مكتمل', 'Done'), value: completed },
-              { icon: TrendingUp, label: t('متوسط التقدم', 'Avg'), value: `${avgProgress}%` },
+              { icon: BookOpen, label: t('نشط', 'Active'), value: loadError ? '—' : active },
+              { icon: CheckCircle, label: t('مكتمل', 'Done'), value: loadError ? '—' : completed },
+              { icon: TrendingUp, label: t('متوسط التقدم', 'Avg'), value: loadError ? '—' : `${avgProgress}%` },
             ].map((s, i) => (
               <div key={i} className="glass rounded-2xl px-4 py-3 text-center">
                 <s.icon className="mx-auto h-5 w-5 text-teal-200 mb-1.5" />
                 <div className="text-xl font-black text-white">{s.value}</div>
-                <div className="text-[10px] text-white/60 mt-0.5">{s.label}</div>
+                <div className="text-[10px] text-white/75 mt-0.5">{s.label}</div>
               </div>
             ))}
           </div>
@@ -137,13 +155,13 @@ export default function MyLearningPage() {
               </div>
               <div>
                 <h2 className="font-bold text-white text-lg">{t('سجل في كورس ببطاقة تسجيل', 'Enroll with a registration card')}</h2>
-                <p className="text-white/55 text-sm mt-1">{t('أدخل رمز البطاقة الذي حصلت عليه من معلمك — تسجيل فوري بدون أي تعبئة', 'Enter the card code from your teacher — instant enrollment, no forms')}</p>
+                <p className="text-white/70 text-sm mt-1">{t('أدخل رمز البطاقة الذي حصلت عليه من معلمك — تسجيل فوري بدون أي تعبئة', 'Enter the card code from your teacher — instant enrollment, no forms')}</p>
               </div>
             </div>
             {redeemed ? (
               <div className="w-full sm:w-auto pop-in flex items-center justify-between gap-3 rounded-2xl bg-emerald-500/15 border border-emerald-400/25 px-4 py-3 text-emerald-300 text-sm">
                 <span className="flex items-center gap-2"><CheckCircle className="h-5 w-5 shrink-0" />{t('تم التسجيل بنجاح — افتح كورسك الآن', 'Enrolled — open your course now')}</span>
-                <button onClick={() => setRedeemed(false)} aria-label={t('إغلاق', 'Close')} className="text-white/50 hover:text-white transition-colors"><X className="h-4 w-4" /></button>
+                <button onClick={() => setRedeemed(false)} aria-label={t('إغلاق', 'Close')} className="text-white/65 hover:text-white transition-colors"><X className="h-4 w-4" /></button>
               </div>
             ) : (
               <div className="flex flex-col sm:flex-row gap-2.5 w-full sm:w-auto sm:min-w-[380px]">
@@ -226,6 +244,24 @@ export default function MyLearningPage() {
 
         {loading ? (
           <CardSkeleton />
+        ) : loadError ? (
+          <Card className="border-0 shadow-sm" data-testid="my-learning-load-error">
+            <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
+              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-amber-50 border border-amber-100">
+                <AlertTriangle className="h-9 w-9 text-amber-500" />
+              </div>
+              <div>
+                <p className="text-xl font-bold">{t('تعذر تحميل بيانات كورساتك', 'Could not load your courses')}</p>
+                <p className="text-gray-500 text-sm mt-2 max-w-sm">
+                  {t('تحقق من اتصالك بالإنترنت ثم حاول مرة أخرى — لا نعرض أرقاماً غير مؤكدة.', 'Check your connection and try again — we never show unconfirmed numbers.')}
+                </p>
+              </div>
+              <Button onClick={load} variant="outline" className="gap-2 rounded-full">
+                <RefreshCw className="h-4 w-4" />
+                {t('إعادة المحاولة', 'Retry')}
+              </Button>
+            </CardContent>
+          </Card>
         ) : enrollments.length === 0 ? (
           <Card className="border-0 shadow-sm overflow-hidden">
             <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
@@ -234,7 +270,7 @@ export default function MyLearningPage() {
               </div>
               <div>
                 <p className="text-xl font-bold">{t('لم تسجل في أي كورس بعد', 'No enrollments yet')}</p>
-                <p className="text-gray-400 text-sm mt-2 max-w-sm">
+                <p className="text-gray-500 text-sm mt-2 max-w-sm">
                   {t('احصل على بطاقة تسجيل من معلمك وأدخل رمزها أعلاه ليظهر كورسك هنا فوراً', 'Get an enrollment card from your teacher and enter its code above to start learning')}
                 </p>
               </div>
@@ -266,7 +302,7 @@ export default function MyLearningPage() {
                             <Badge className="bg-teal-100 text-teal-700 border-0 rounded-full shrink-0">{t('نشط', 'Active')}</Badge>
                           )}
                         </div>
-                        <p className="text-[11px] text-gray-400 mt-1.5">{c.progress === 0 ? t('ابدأ أول درس الآن', 'Start your first lesson now') : t('تابع من حيث توقفت', 'Continue where you left off')}</p>
+                        <p className="text-[11px] text-gray-500 mt-1.5">{c.progress === 0 ? t('ابدأ أول درس الآن', 'Start your first lesson now') : t('تابع من حيث توقفت', 'Continue where you left off')}</p>
                       </div>
                     </div>
                   </Card>
@@ -277,7 +313,7 @@ export default function MyLearningPage() {
                   title={t('مفضلة', 'Favorite')}
                   aria-label={favorites.has(c.id) ? t('إزالة من المفضلة', 'Remove from favorites') : t('إضافة للمفضلة', 'Add to favorites')}
                 >
-                  <Heart className={`h-4 w-4 ${favorites.has(c.id) ? 'fill-rose-500 text-rose-500' : 'text-gray-400'}`} />
+                  <Heart className={`h-4 w-4 ${favorites.has(c.id) ? 'fill-rose-500 text-rose-500' : 'text-gray-500'}`} />
                 </button>
               </div>
             ))}
