@@ -134,6 +134,7 @@ Route::prefix('v1')->group(function () {
             Route::get('courses', [MobileAppController::class, 'courses']);
             Route::get('courses/{course}', [MobileAppController::class, 'course']);
             Route::get('lessons/{lesson}', [MobileAppController::class, 'lesson']);
+            Route::post('video-position', [MobileAppController::class, 'saveVideoPosition'])->middleware('throttle:position');
             Route::get('announcements', [MobileAppController::class, 'announcements']);
         });
     });
@@ -176,6 +177,9 @@ Route::prefix('v1')->group(function () {
 
         // Protected video playback (auth only — students may not have tenant context)
         Route::get('videos/{video}/playback', [VideoStreamController::class, 'playback'])->middleware('throttle:playback');
+        // حفظ موضع المشاهدة للاستكمال بين الأجهزة (نفس سلسلة الوصول؛ لا يمسّ
+        // احتساب الدقائق ولا جلسات التشغيل المحمية).
+        Route::post('videos/{video}/position', [VideoStreamController::class, 'savePosition'])->middleware('throttle:position');
 
         // ─── Student Profile & Gamification (auth only) ──
         Route::prefix('student')->group(function () {
