@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loader2, CheckCircle2, ClipboardList, FileCheck2, Clock, X, Sparkles, HelpCircle, ExternalLink, Plus, Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-question';
 import { DuplicateDialog } from '@/components/content/duplicate-dialog';
 
@@ -186,11 +187,11 @@ export default function TeacherExamsPage() {
         method: 'POST', headers: headers(), body: JSON.stringify({ answers }),
       });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر حفظ التصحيح', 'Could not save the grades')); return; }
       toast.success(t('تم حفظ التصحيح وإشعار الطالب', 'Grades saved and the student was notified'));
       setSelected(null);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ التصحيح', 'Could not save the grades'))); }
     setSaving(false);
   };
 
