@@ -51,8 +51,13 @@ export default function AdminSubscriptionsPanel() {
   const [plans, setPlans] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [requestId, setRequestId] = useState('');
 
   const headers = () => ({ 'Content-Type': 'application/json', Accept: 'application/json' });
+
+  // Stable per-extend-dialog id: a retry/double submit can never add the days
+  // twice, because the server treats a repeated request_id as a no-op.
+  const newRequestId = () => (globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
   const load = async () => {
     const q = new URLSearchParams();
@@ -80,13 +85,39 @@ export default function AdminSubscriptionsPanel() {
     try {
       const res = await fetch(`${API}${path}`, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); return; }
       toast.success(msg);
       setTarget(null); setDialog(null);
       load();
     } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
     setSaving(false);
   };
+
+  // Extension is its own call so the success message can state the HONEST
+  // new access date returned by the server (and detect an idempotent retry).
+  const extend = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/admin/subscriptions/${target.id}/extend`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ days: Number(days), request_id: requestId || undefined }),
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.message || t('تعذر تمديد الاشتراك', 'Could not extend the subscription')); return; }
+      const end = d.access_ends_at ? new Date(d.access_ends_at).toLocaleDateString() : '';
+      toast.success(d.already_applied
+        ? t('تم تطبيق هذا التمديد مسبقًا', 'This extension was already applied')
+        : t(`تم تمديد وصول المعلم وتفعيل حسابه حتى ${end}`, `Teacher access extended and account activated until ${end}`));
+      setTarget(null); setDialog(null);
+      load();
+    } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
+    setSaving(false);
+  };
+
+  const isAdminExtended = (s: any) => !!s?.admin_ends_at && new Date(s.admin_ends_at).getTime() > Date.now();
+
+  const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : '—');
 
   const statCards = [
     { label: t('إجمالي الاشتراكات', 'Total'), value: stats?.total ?? 0 },
@@ -152,9 +183,18 @@ export default function AdminSubscriptionsPanel() {
                       {s.trial_ends_at && <span> · {t('نهاية التجربة', 'Trial ends')}: {s.trial_ends_at.split('T')[0]}</span>}
                     </p>
                   </div>
-                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${meta[1]}`}>{meta[0]}</span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${meta[1]}`}>{meta[0]}</span>
+                    {isAdminExtended(s) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700"
+                        title={t('وصول ممنوح إداريًا بغض النظر عن حالة الدفع', 'Access granted administratively, independent of payment status')}>
+                        <CalendarPlus className="h-3 w-3" />
+                        {t('وصول إداري حتى', 'Admin access until')} {fmtDate(s.admin_ends_at)}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex gap-1.5">
-                    <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => { setTarget(s); setDays('30'); setDialog('extend'); }}>
+                    <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => { setTarget(s); setDays('30'); setRequestId(newRequestId()); setDialog('extend'); }}>
                       <CalendarPlus className="h-3.5 w-3.5" /> {t('تمديد', 'Extend')}
                     </Button>
                     <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => { setTarget(s); setPlanId(s.plan_id || ''); setDialog('plan'); }}>
@@ -181,7 +221,10 @@ export default function AdminSubscriptionsPanel() {
             <div className="space-y-4">
               <p className="text-sm text-gray-500">{target.tenant?.name} — {target.plan?.name}</p>
               {dialog === 'extend' && (
-                <div className="space-y-2"><Label>{t('عدد الأيام', 'Days')}</Label><Input type="number" min={1} value={days} onChange={(e) => setDays(e.target.value)} className="h-11" /></div>
+                <div className="space-y-3">
+                  <div className="space-y-2"><Label>{t('عدد الأيام', 'Days')}</Label><Input type="number" min={1} value={days} onChange={(e) => setDays(e.target.value)} className="h-11" /></div>
+                  <p className="text-xs text-gray-500">{t('يمنح هذا التمديد وصولًا فوريًا لاستخدام المنصة حتى التاريخ الجديد، دون أي عملية دفع لدى Freemius ودون تغيير حالة الفوترة.', 'This extension grants immediate platform access until the new date — with no Freemius charge and no change to the billing state.')}</p>
+                </div>
               )}
               {dialog === 'plan' && (
                 <div className="space-y-2"><Label>{t('الخطة', 'Plan')}</Label>
@@ -203,7 +246,7 @@ export default function AdminSubscriptionsPanel() {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setTarget(null); setDialog(null); }}>{t('إلغاء', 'Cancel')}</Button>
             <Button disabled={saving} className="gap-2" onClick={() => {
-              if (dialog === 'extend') doAction(`/admin/subscriptions/${target.id}/extend`, { days: Number(days) }, t('تم تمديد الاشتراك', 'Subscription extended'));
+              if (dialog === 'extend') extend();
               if (dialog === 'plan') doAction(`/admin/subscriptions/${target.id}/plan`, { plan_id: planId }, t('تم تغيير الخطة', 'Plan changed'));
               if (dialog === 'status') doAction(`/admin/subscriptions/${target.id}/status`, { status: statusVal }, t('تم تحديث الحالة', 'Status updated'));
             }}>

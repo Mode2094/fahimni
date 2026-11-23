@@ -13,6 +13,7 @@ use App\Models\Enrollment;
 use App\Models\ErrorLog;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
+use App\Models\FsEntitlement;
 use App\Models\Invoice;
 use App\Models\Payment;
 use App\Models\StudentPoint;
@@ -28,6 +29,7 @@ use App\Models\TrialGrant;
 use App\Models\User;
 use App\Models\UserDevice;
 use App\Plans\PlanEngine;
+use App\Plans\SubscriptionState;
 use App\Plans\TeacherTrialProgram;
 use App\Rules\ValidPhoneNumber;
 use App\Services\EnrollmentService;
@@ -37,6 +39,7 @@ use App\Support\AuditLogger;
 use App\Support\PhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -94,17 +97,224 @@ class AdminController extends Controller
         return response()->json(['message' => 'Subscription status updated.', 'subscription' => $sub->load(['tenant', 'plan'])]);
     }
 
+    /**
+     * Super Admin subscription extension.
+     *
+     * This is the ONE place that grants access administratively. It writes the
+     * dedicated `admin_ends_at` field, which the access resolver honors
+     * independently of any payment/billing state — so the teacher can use the
+     * platform immediately, whatever Freemius (or an old webhook) reports. It
+     * never fakes a paid invoice or a Freemius renewal.
+     *
+     * Idempotent: a `request_id` (stable per dialog) makes a retry/double
+     * submit a no-op; a short cooldown covers retries without one.
+     */
     public function subscriptionExtend(Request $request, string $id): JsonResponse
     {
-        $sub = TenantSubscription::withoutTenant()->findOrFail($id);
-        $request->validate(['days' => 'required|integer|min:1|max:3650']);
-
-        $sub->update([
-            'ends_at' => $sub->ends_at && $sub->ends_at->gt(now()) ? $sub->ends_at->addDays($request->integer('days')) : now()->addDays($request->integer('days')),
-            'status' => 'active',
+        $validated = $request->validate([
+            'days' => 'required|integer|min:1|max:3650',
+            'request_id' => 'nullable|string|max:80',
+            'reason' => 'nullable|string|max:500',
         ]);
 
-        return response()->json(['message' => 'Subscription extended.', 'subscription' => $sub->load(['tenant', 'plan'])]);
+        $days = (int) $validated['days'];
+        $requestId = $validated['request_id'] ?? null;
+        $reason = $validated['reason'] ?? null;
+        $admin = $request->user();
+
+        $result = DB::transaction(function () use ($id, $days, $requestId, $reason, $admin, $request) {
+            // Row lock: concurrent double-clicks serialise instead of racing.
+            $sub = TenantSubscription::withoutTenant()->lockForUpdate()->findOrFail($id);
+            $tenantId = $sub->tenant_id;
+
+            $metadata = $sub->metadata ?? [];
+            $grants = array_values((array) ($metadata['admin_grants'] ?? []));
+
+            // Idempotency #1: an identical request_id was already applied.
+            if ($requestId !== null) {
+                foreach ($grants as $grant) {
+                    if (($grant['request_id'] ?? null) === $requestId) {
+                        return ['sub' => $sub, 'already_applied' => true, 'ends_at' => $sub->admin_ends_at];
+                    }
+                }
+            }
+
+            // Idempotency #2 (no request_id): an identical extension by the
+            // same admin within a few seconds is a retry, not a new grant.
+            $lastGrant = $grants !== [] ? $grants[array_key_last($grants)] : null;
+            if ($requestId === null && is_array($lastGrant)
+                && (int) ($lastGrant['days'] ?? 0) === $days
+                && ($lastGrant['by'] ?? null) === $admin?->id
+                && isset($lastGrant['at'])) {
+                $seconds = now()->timestamp - Carbon::parse($lastGrant['at'])->timestamp;
+                if ($seconds >= 0 && $seconds < 10) {
+                    return ['sub' => $sub, 'already_applied' => true, 'ends_at' => $sub->admin_ends_at];
+                }
+            }
+
+            // Base = the tenant's CURRENT effective access end, so an in-term
+            // extension keeps every remaining day and an expired workspace
+            // starts from today. An admin grant already recorded also counts.
+            $base = $this->currentAccessEnd($tenantId) ?? now();
+            $base = Carbon::instance($base);
+            if ($base->lt(now())) {
+                $base = now();
+            }
+            $newEnd = $base->copy()->addDays($days);
+
+            $previousAdminEnd = $sub->admin_ends_at?->toIso8601String();
+
+            $grants[] = [
+                'request_id' => $requestId,
+                'days' => $days,
+                'by' => $admin?->id,
+                'by_name' => $admin?->name,
+                'at' => now()->toIso8601String(),
+                'previous_ends_at' => $previousAdminEnd,
+                'new_ends_at' => $newEnd->toIso8601String(),
+                'reason' => $reason,
+            ];
+
+            $metadata['admin_ends_at'] = $newEnd->toIso8601String();
+            $metadata['admin_grants'] = $grants;
+
+            // Access is driven by `admin_ends_at`; the payment status is left
+            // truthful (never flipped to a fake "active"). `ends_at` is
+            // mirrored too so the admin lists show the real access end — it is
+            // display-only and a Freemius re-sync may overwrite it.
+            $sub->update([
+                'admin_ends_at' => $newEnd,
+                'ends_at' => $sub->ends_at && $sub->ends_at->gt($newEnd) ? $sub->ends_at : $newEnd,
+                'metadata' => $metadata,
+            ]);
+
+            // Immediate effect for an already-connected teacher.
+            PlanEngine::bumpVersion();
+
+            AuditLogger::log($request, 'admin.subscription_extended', 'tenant_subscription', $sub->id, [
+                'tenant_id' => $tenantId,
+                'days' => $days,
+                'previous_admin_ends_at' => $previousAdminEnd,
+                'new_admin_ends_at' => $newEnd->toIso8601String(),
+                'request_id' => $requestId,
+                'reason' => $reason,
+            ]);
+
+            return ['sub' => $sub->fresh(), 'already_applied' => false, 'ends_at' => $newEnd];
+        });
+
+        /** @var TenantSubscription $sub */
+        $sub = $result['sub'];
+
+        return response()->json([
+            'message' => $result['already_applied']
+                ? 'This extension was already applied.'
+                : 'Subscription extended — the teacher can use the platform immediately.',
+            'already_applied' => $result['already_applied'],
+            'access_ends_at' => $result['ends_at']?->toIso8601String(),
+            'subscription' => $sub->loadMissing('tenant', 'plan'),
+            'access' => $this->accessInfo($sub->tenant_id),
+        ]);
+    }
+
+    /**
+     * The tenant's current effective access end (max of every source that can
+     * grant access): an admin grant, an active Freemius entitlement's
+     * expiration, and any still-running legacy subscription. Null when nothing
+     * is granted.
+     */
+    private function currentAccessEnd(string $tenantId): ?Carbon
+    {
+        /** @var list<\DateTimeInterface> $ends */
+        $ends = [];
+
+        foreach (TenantSubscription::withoutTenant()->where('tenant_id', $tenantId)
+            ->whereNotNull('admin_ends_at')->get() as $row) {
+            if ($row->admin_ends_at) {
+                $ends[] = $row->admin_ends_at;
+            }
+        }
+
+        $entitlement = FsEntitlement::where('tenant_id', $tenantId)
+            ->whereNotNull('plan_id')
+            ->latest('synced_at')
+            ->get()
+            ->first(fn (FsEntitlement $e) => $e->isActive());
+
+        if ($entitlement && $entitlement->expiration) {
+            $ends[] = $entitlement->expiration;
+        }
+
+        $legacy = TenantSubscription::withoutTenant()->where('tenant_id', $tenantId)
+            ->whereIn('status', ['active', 'trialing'])
+            ->where(function ($q) {
+                $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
+            })
+            ->whereNull('fs_license_id')
+            ->get();
+
+        foreach ($legacy as $row) {
+            $end = $row->status === 'trialing' ? $row->trial_ends_at : $row->ends_at;
+            if ($end) {
+                $ends[] = $end;
+            }
+        }
+
+        if ($ends === []) {
+            return null;
+        }
+
+        $max = null;
+        foreach ($ends as $end) {
+            $candidate = Carbon::instance($end);
+            if ($max === null || $candidate->gt($max)) {
+                $max = $candidate;
+            }
+        }
+
+        return $max;
+    }
+
+    /**
+     * Compact, honest access summary for the admin UI: separates the real
+     * payment state from the effective access state and surfaces any
+     * administrative grant (who/when/how many days).
+     *
+     * @return array<string, mixed>
+     */
+    private function accessInfo(string $tenantId): array
+    {
+        $state = SubscriptionState::make()->resolve($tenantId);
+
+        $adminRow = TenantSubscription::withoutTenant()
+            ->where('tenant_id', $tenantId)
+            ->whereNotNull('admin_ends_at')
+            ->orderByDesc('admin_ends_at')
+            ->first();
+
+        $endsAt = $state['ends_at'];
+        $daysLeft = null;
+        if ($endsAt instanceof \DateTimeInterface) {
+            $daysLeft = (int) max(0, (int) ceil(($endsAt->getTimestamp() - now()->getTimestamp()) / 86400));
+        }
+
+        $grants = array_values((array) (($adminRow->metadata ?? [])['admin_grants'] ?? []));
+        $lastGrant = $grants !== [] ? $grants[array_key_last($grants)] : null;
+
+        $adminActive = (bool) ($adminRow && $adminRow->admin_ends_at && $adminRow->admin_ends_at->isFuture());
+
+        return [
+            'access_active' => $state['source'] !== SubscriptionState::SOURCE_NONE,
+            'access_source' => $state['source'],
+            'access_ends_at' => $endsAt instanceof \DateTimeInterface ? $endsAt->format(\DateTimeInterface::ATOM) : null,
+            'days_left' => $daysLeft,
+            'subscription_id' => $state['subscription_id'],
+            'admin_extension' => $adminActive,
+            'admin_ends_at' => $adminRow?->admin_ends_at?->toIso8601String(),
+            'admin_granted_at' => is_array($lastGrant) ? ($lastGrant['at'] ?? null) : null,
+            'admin_granted_by' => is_array($lastGrant) ? ($lastGrant['by_name'] ?? null) : null,
+            'admin_grant_days' => is_array($lastGrant) ? ($lastGrant['days'] ?? null) : null,
+        ];
     }
 
     public function subscriptionPlan(Request $request, string $id): JsonResponse
@@ -134,7 +344,9 @@ class AdminController extends Controller
         $base = User::role('Teacher')
             ->with([
                 'tenantPivots.tenant.settings',
-                'tenantPivots.tenant.subscriptions' => fn ($q) => $q->latest('starts_at')->limit(1),
+                // All rows (newest first) so `subscription` shows the latest
+                // while `admin_extension` can see a grant on any row.
+                'tenantPivots.tenant.subscriptions' => fn ($q) => $q->latest('starts_at'),
             ]);
 
         if ($request->filled('is_active')) {
@@ -417,6 +629,7 @@ class AdminController extends Controller
         return response()->json([
             'teacher' => $this->teacherPayload($user),
             'tenant' => $tenant ? new TenantResource($tenant->load('settings', 'subscriptions.plan')) : null,
+            'access' => $this->accessInfo($tenantId),
             'stats' => [
                 'courses' => $courses->count(),
                 'students' => $students->count(),
@@ -527,8 +740,14 @@ class AdminController extends Controller
                 'billing_cycle' => $subscription->billing_cycle,
                 'trial_ends_at' => $subscription->trial_ends_at?->toIso8601String(),
                 'ends_at' => $subscription->ends_at?->toIso8601String(),
+                'admin_ends_at' => $subscription->admin_ends_at?->toIso8601String(),
             ] : null,
             'has_subscription' => (bool) $subscription,
+            // Cheap list-level flag derived from the eager-loaded rows (no
+            // extra queries): does an administrative grant currently apply?
+            'admin_extension' => (bool) ($tenant?->subscriptions?->contains(
+                fn (TenantSubscription $s) => (bool) ($s->admin_ends_at && $s->admin_ends_at->isFuture())
+            ) ?? false),
         ];
     }
 

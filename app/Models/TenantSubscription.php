@@ -18,6 +18,7 @@ class TenantSubscription extends Model
         'starts_at', 'ends_at', 'trial_ends_at', 'cancelled_at',
         'auto_renew', 'metadata',
         'fs_license_id', 'fs_subscription_id', 'fs_pricing_id', 'billing_source',
+        'admin_ends_at',
     ];
 
     protected $casts = [
@@ -25,6 +26,7 @@ class TenantSubscription extends Model
         'ends_at' => 'datetime',
         'trial_ends_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'admin_ends_at' => 'datetime',
         'auto_renew' => 'boolean',
         'metadata' => 'array',
     ];

@@ -250,6 +250,7 @@ export function ConfirmDialogHost() {
           </Button>
           <Button
             data-autofocus
+            data-testid="confirm-action"
             type="button"
             variant={danger ? 'destructive' : 'default'}
             disabled={inputDisabled}

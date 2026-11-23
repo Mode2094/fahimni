@@ -17,7 +17,7 @@ import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
   Wallet, TrendingUp, ClipboardList, FileText, Percent, Layers, Timer, Award, Star, Play,
-  ExternalLink, Copy, Phone, MessageCircle,
+  ExternalLink, Copy, Phone, MessageCircle, CalendarPlus, History,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -41,6 +41,11 @@ export default function AdminTeachersPanel() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [extendOpen, setExtendOpen] = useState(false);
+  const [extendDays, setExtendDays] = useState('30');
+  const [extendRequestId, setExtendRequestId] = useState('');
+  const [extending, setExtending] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const headers = () => ({ Accept: 'application/json' });
 
@@ -150,6 +155,70 @@ export default function AdminTeachersPanel() {
       await navigator.clipboard.writeText(text);
       toast.success(msg);
     } catch { toast.error(t('تعذر النسخ', 'Cannot copy')); }
+  };
+
+  // ── Subscription extension (Super Admin only) ──────────────────────────
+  const isAdminExtended = (s: any) => !!s?.admin_ends_at && new Date(s.admin_ends_at).getTime() > Date.now();
+  const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : '—');
+
+  const accessSourceLabel = (src?: string) => {
+    if (src === 'freemius') return t('اشتراك مدفوع (Freemius)', 'Paid (Freemius)');
+    if (src === 'legacy') return t('اشتراك محلي', 'Local subscription');
+    if (src === 'admin') return t('تمديد إداري', 'Admin extension');
+    return t('لا يوجد وصول', 'No access');
+  };
+
+  const paymentStatusLabel = (status?: string) => {
+    const map: Record<string, string> = {
+      active: t('نشط', 'Active'), trialing: t('تجربة', 'Trial'), expired: t('منتهي', 'Expired'),
+      canceled: t('ملغى', 'Canceled'), pending: t('قيد الدفع', 'Pending'),
+    };
+    return status ? (map[status] || status) : t('لا يوجد', 'None');
+  };
+
+  const newRequestId = () => (globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
+  // The row the admin acts on: the newest one that exists (access is resolved
+  // across ALL rows server-side, so any row is a valid target).
+  const extendTargetSub = () => detailSubscriptions().find((s: any) => s?.id) || null;
+
+  const openExtend = () => {
+    if (!extendTargetSub()) { toast.error(t('لا يوجد اشتراك لتمديده', 'No subscription to extend')); return; }
+    setExtendDays('30');
+    setExtendRequestId(newRequestId());
+    setExtendOpen(true);
+  };
+
+  const extend = async () => {
+    const days = Number(extendDays);
+    if (!Number.isFinite(days) || days < 1) { toast.error(t('أدخل عدد أيام صحيح', 'Enter a valid number of days')); return; }
+    const sub = extendTargetSub();
+    if (!sub) { toast.error(t('لا يوجد اشتراك لتمديده', 'No subscription to extend')); return; }
+
+    if (!(await confirmDialog({
+      description: t(
+        `تمديد وصول هذا المعلم ${days} يومًا دون أي عملية دفع، وتفعيل حسابه فورًا؟`,
+        `Extend this teacher's access by ${days} days with no charge and activate the account immediately?`,
+      ),
+    }))) return;
+
+    setExtending(true);
+    try {
+      const res = await fetch(`${API}/admin/subscriptions/${sub.id}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers() },
+        body: JSON.stringify({ days, request_id: extendRequestId || undefined }),
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.message || t('تعذر تمديد الاشتراك', 'Could not extend the subscription')); return; }
+      const end = d.access_ends_at ? new Date(d.access_ends_at).toLocaleDateString() : '';
+      toast.success(d.already_applied
+        ? t('تم تطبيق هذا التمديد مسبقًا', 'This extension was already applied')
+        : t(`تم تمديد وصول المعلم حتى ${end} وفُعّل حسابه فورًا`, `Teacher access extended until ${end} and the account is active now`));
+      setExtendOpen(false);
+      if (detail?.teacher?.id) await openDetail({ id: detail.teacher.id });
+    } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
+    finally { setExtending(false); }
   };
 
   return (
@@ -290,6 +359,32 @@ export default function AdminTeachersPanel() {
         </DialogContent>
       </Dialog>
 
+      {/* Extend-access dialog */}
+      <Dialog open={extendOpen} onOpenChange={(o) => !extending && setExtendOpen(o)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t('تمديد وصول المعلم', 'Extend teacher access')}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label>{t('عدد الأيام', 'Days')}</Label>
+              <Input type="number" min={1} value={extendDays} onChange={(e) => setExtendDays(e.target.value)} className="h-11" data-testid="extend-days" />
+            </div>
+            <p className="text-xs text-gray-500">
+              {t(
+                'يمنح هذا التمديد وصولًا فوريًا لاستخدام المنصة حتى التاريخ الجديد، دون أي عملية دفع لدى Freemius ودون تغيير حالة الفوترة. تبقى المدة المدفوعة المتبقية كما هي ويُضاف التمديد بعدها.',
+                'This extension grants immediate platform access until the new date — with no Freemius charge and no change to the billing state. Any remaining paid period is preserved and the extension is added after it.',
+              )}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={extending} onClick={() => setExtendOpen(false)}>{t('إلغاء', 'Cancel')}</Button>
+            <Button disabled={extending} className="gap-2" data-testid="extend-confirm" onClick={extend}>
+              {extending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
+              {t('تمديد', 'Extend')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Teacher details dialog */}
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent className="max-w-5xl max-h-[85vh] flex flex-col">
@@ -426,44 +521,110 @@ export default function AdminTeachersPanel() {
                         </div>
                       </div>
                     )}
-                    <div className="p-4 rounded-xl border bg-gradient-to-br from-teal-50/60 to-white">
-                      <div className="flex items-center gap-2 mb-3">
+                    <div className="p-4 rounded-xl border bg-gradient-to-br from-teal-50/60 to-white space-y-3">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Crown className="h-4 w-4 text-amber-500" />
-                        <div className="text-sm font-semibold">{t('اشتراك المعلم', 'Teacher subscription')}</div>
-                        <div className="ms-auto">{detailSubscriptions()[0] ? subBadge(detailSubscriptions()[0]) : subBadge(null)}</div>
-                      </div>
-                      {detailSubscriptions().length === 0 ? (
-                        <p className="text-sm text-gray-400">{t('لا يوجد اشتراك لهذا المعلم', 'No subscription for this teacher')}</p>
-                      ) : (
-                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                          {detailSubscriptions().map((s: any, i: number) => (
-                            <div key={s.id || i} className="p-3 rounded-xl bg-white border text-sm">
-                              <div className="text-xs text-gray-400 mb-1">{t('الخطة', 'Plan')}</div>
-                              <div className="font-bold flex items-center gap-1.5">
-                                <Crown className="h-3.5 w-3.5 text-amber-500" />
-                                {s.plan_name || s.plan?.name || t('—', '—')}
-                                {s.plan?.monthly_price ? <span className="text-xs font-normal text-gray-500" dir="ltr">({s.plan.monthly_price} {s.plan.currency}/م)</span> : null}
-                              </div>
-                              <div className="text-[11px] text-gray-400 mt-1">
-                                {t('الدورة', 'Billing')}: {s.billing_cycle === 'yearly' ? t('سنوي', 'Yearly') : t('شهري', 'Monthly')} · {t('تجديد تلقائي', 'Auto-renew')}: {s.auto_renew ? t('نعم', 'Yes') : t('لا', 'No')}
-                              </div>
-                              <div className="grid grid-cols-2 gap-2 mt-2 text-[11px]">
-                                <div>
-                                  <div className="text-gray-400">{t('البداية', 'Start')}</div>
-                                  <b className="font-medium">{s.starts_at ? new Date(s.starts_at).toLocaleDateString() : '—'}</b>
-                                </div>
-                                <div>
-                                  <div className="text-gray-400">{t('الانتهاء', 'End')}</div>
-                                  <b className="font-medium">{s.ends_at ? new Date(s.ends_at).toLocaleDateString() : '—'}</b>
-                                </div>
-                                <div>
-                                  <div className="text-gray-400">{t('نهاية التجربة', 'Trial end')}</div>
-                                  <b className="font-medium">{s.trial_ends_at ? new Date(s.trial_ends_at).toLocaleDateString() : '—'}</b>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                        <div className="text-sm font-semibold">{t('اشتراك المعلم والوصول', 'Teacher subscription & access')}</div>
+                        <div className="ms-auto flex items-center gap-2">
+                          {detailSubscriptions()[0] ? subBadge(detailSubscriptions()[0]) : subBadge(null)}
+                          {detail.tenant && (
+                            <Button size="sm" className="gap-1.5 rounded-full" data-testid="extend-access" onClick={openExtend}>
+                              <CalendarPlus className="h-3.5 w-3.5" /> {t('تمديد الوصول', 'Extend access')}
+                            </Button>
+                          )}
                         </div>
+                      </div>
+
+                      {/* Real access state — deliberately separated from payment. */}
+                      {detail.tenant && (
+                        <div className="grid sm:grid-cols-3 gap-3">
+                          <div className="p-3 rounded-xl bg-white border text-sm">
+                            <div className="text-xs text-gray-400">{t('حالة الوصول', 'Access')}</div>
+                            <div className="font-bold mt-0.5 flex items-center gap-1" data-testid="access-status">
+                              {detail.access?.access_active
+                                ? <><CheckCircle2 className="h-4 w-4 text-emerald-500" /> {t('مفعّل', 'Active')}</>
+                                : <><Ban className="h-4 w-4 text-rose-500" /> {t('غير مفعّل', 'Inactive')}</>}
+                            </div>
+                            <div className="text-[11px] text-gray-400 mt-1">{t('المصدر', 'Source')}: {accessSourceLabel(detail.access?.access_source)}</div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-white border text-sm">
+                            <div className="text-xs text-gray-400">{t('انتهاء الوصول', 'Access ends')}</div>
+                            <div className="font-bold mt-0.5" dir="ltr">{fmtDate(detail.access?.access_ends_at)}</div>
+                            <div className="text-[11px] text-gray-400 mt-1">{t('الأيام المتبقية', 'Days left')}: {detail.access?.days_left ?? '—'}</div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-white border text-sm">
+                            <div className="text-xs text-gray-400">{t('حالة الدفع', 'Payment')}</div>
+                            <div className="font-bold mt-0.5">{paymentStatusLabel(detailSubscriptions()[0]?.status)}</div>
+                            <div className="text-[11px] text-gray-400 mt-1">{t('حالة الفوترة الفعلية لدى المزوّد', 'Real billing state with the provider')}</div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Administrative grant — clearly labelled and auditable. */}
+                      {detail.access?.admin_extension && (
+                        <div className="flex items-start gap-2 p-3 rounded-xl bg-teal-50 border border-teal-100 text-sm" data-testid="admin-access-banner">
+                          <CalendarPlus className="h-4 w-4 text-teal-600 mt-0.5 shrink-0" />
+                          <div>
+                            <div className="font-semibold text-teal-800">{t('وصول ممنوح إداريًا (بغض النظر عن حالة الدفع)', 'Access granted administratively (independent of payment)')}</div>
+                            <div className="text-[11px] text-teal-700 mt-0.5">
+                              {t('حتى', 'Until')} <b dir="ltr">{fmtDate(detail.access?.admin_ends_at)}</b>
+                              {detail.access?.admin_grant_days ? <> · {t('المدة', 'Duration')}: {detail.access.admin_grant_days} {t('يوم', 'days')}</> : null}
+                              {detail.access?.admin_granted_by ? <> · {t('بواسطة', 'By')}: {detail.access.admin_granted_by}</> : null}
+                              {detail.access?.admin_granted_at ? <> · {fmtDate(detail.access.admin_granted_at)}</> : null}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {detailSubscriptions().length > 0 ? (
+                        <div>
+                          <button type="button" onClick={() => setShowHistory(v => !v)}
+                            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-teal-600">
+                            <History className="h-3.5 w-3.5" />
+                            {showHistory
+                              ? t('إخفاء سجل الاشتراكات', 'Hide subscription history')
+                              : t(`عرض سجل الاشتراكات (${detailSubscriptions().length})`, `Show subscription history (${detailSubscriptions().length})`)}
+                          </button>
+                          {showHistory && (
+                            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+                              {detailSubscriptions().map((s: any, i: number) => (
+                                <div key={s.id || i} className={`p-3 rounded-xl border text-sm ${isAdminExtended(s) ? 'bg-teal-50/50 border-teal-200' : 'bg-white'}`}>
+                                  <div className="text-xs text-gray-400 mb-1">{t('الخطة', 'Plan')}</div>
+                                  <div className="font-bold flex items-center gap-1.5">
+                                    <Crown className="h-3.5 w-3.5 text-amber-500" />
+                                    {s.plan_name || s.plan?.name || t('—', '—')}
+                                    {s.plan?.monthly_price ? <span className="text-xs font-normal text-gray-500" dir="ltr">({s.plan.monthly_price} {s.plan.currency}/م)</span> : null}
+                                  </div>
+                                  <div className="text-[11px] text-gray-400 mt-1">
+                                    {t('الدورة', 'Billing')}: {s.billing_cycle === 'yearly' ? t('سنوي', 'Yearly') : t('شهري', 'Monthly')} · {t('تجديد تلقائي', 'Auto-renew')}: {s.auto_renew ? t('نعم', 'Yes') : t('لا', 'No')}
+                                  </div>
+                                  <div className="text-[11px] text-gray-400 mt-1">{t('حالة الدفع', 'Payment')}: {paymentStatusLabel(s.status)}</div>
+                                  <div className="grid grid-cols-2 gap-2 mt-2 text-[11px]">
+                                    <div>
+                                      <div className="text-gray-400">{t('البداية', 'Start')}</div>
+                                      <b className="font-medium">{fmtDate(s.starts_at)}</b>
+                                    </div>
+                                    <div>
+                                      <div className="text-gray-400">{t('الانتهاء', 'End')}</div>
+                                      <b className="font-medium">{fmtDate(s.ends_at)}</b>
+                                    </div>
+                                    <div>
+                                      <div className="text-gray-400">{t('نهاية التجربة', 'Trial end')}</div>
+                                      <b className="font-medium">{fmtDate(s.trial_ends_at)}</b>
+                                    </div>
+                                  </div>
+                                  {isAdminExtended(s) && (
+                                    <div className="text-[11px] text-teal-700 mt-1 font-medium">
+                                      {t('وصول إداري حتى', 'Admin access until')} {fmtDate(s.admin_ends_at)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-400">{t('لا يوجد اشتراك لهذا المعلم', 'No subscription for this teacher')}</p>
                       )}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
