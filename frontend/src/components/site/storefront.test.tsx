@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { CourseCard, ActivationPanel, SectionHeading, StatStrip } from './storefront';
+import { CourseCard, BundleCard, ActivationPanel, SectionHeading, StatStrip } from './storefront';
 import { useLocale } from '@/store/locale';
 
 const base = {
@@ -123,6 +123,48 @@ describe('ActivationPanel — simple, mobile-first, clear errors', () => {
     render(<ActivationPanel loggedIn {...props} successMessage="تم التسجيل في الكورس" />);
     expect(screen.getByRole('status')).toHaveTextContent('تم التسجيل في الكورس');
     expect(screen.getByRole('link', { name: /كورساتي/ })).toHaveAttribute('href', '/my-learning');
+  });
+});
+
+describe('BundleCard — real data only', () => {
+  const BUNDLE = {
+    id: 'b-1',
+    title: 'حزمة الفصل الأول',
+    short_description: 'ثلاثة كورسات معًا',
+    price: 0,
+    currency: 'JOD',
+    courses_count: 3,
+    courses: [
+      { id: 'c-1', title: 'عربي' },
+      { id: 'c-2', title: 'رياضيات' },
+      { id: 'c-3', title: 'علوم' },
+    ],
+  };
+
+  it('lists the real member courses and the real count', () => {
+    render(<BundleCard bundle={BUNDLE} slug="trial-teacher" {...base} />);
+    expect(screen.getByText('حزمة الفصل الأول')).toBeInTheDocument();
+    expect(screen.getByText('عربي')).toBeInTheDocument();
+    expect(screen.getByText(/3\s*كورسات في الحزمة/)).toBeInTheDocument();
+  });
+
+  it('shows a price badge only when a price is set', () => {
+    const { rerender } = render(<BundleCard bundle={BUNDLE} slug="s" {...base} />);
+    expect(screen.queryByTestId('bundle-price')).toBeNull();
+
+    rerender(<BundleCard bundle={{ ...BUNDLE, price: 45 }} slug="s" {...base} />);
+    expect(screen.getByTestId('bundle-price')).toHaveTextContent('45 JOD');
+  });
+
+  it('points at the teacher catalogue when there is no WhatsApp number', () => {
+    render(<BundleCard bundle={BUNDLE} slug="trial-teacher" {...base} />);
+    expect(screen.getByRole('link')).toHaveAttribute('href', '/t/trial-teacher/courses');
+    expect(screen.getByText('تواصل مع المعلم للتسجيل')).toBeInTheDocument();
+  });
+
+  it('offers a wa.me link when the bundle carries a WhatsApp number', () => {
+    render(<BundleCard bundle={{ ...BUNDLE, whatsapp: '+962 79 000 0000' }} slug="s" {...base} />);
+    expect(screen.getByRole('link')).toHaveAttribute('href', 'https://wa.me/962790000000');
   });
 });
 

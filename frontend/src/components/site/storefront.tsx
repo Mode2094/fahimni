@@ -221,9 +221,121 @@ export function CourseCard({
   );
 }
 
-/* ─── Stats strip (real numbers only) ─────────────────────────────── */
+/**
+ * A teacher-defined course bundle on the public catalogue. Honest by design:
+ * it shows the real member courses and the teacher's price only when one is set.
+ * Bundles are enrolled by the teacher (a bundle seats the student in each member
+ * course), so the call to action points at the teacher's WhatsApp when available
+ * and otherwise at the course catalogue — never at a checkout we do not have.
+ */
+export function BundleCard({
+  bundle, slug, primary, accent, radius, headingFont, whatsapp,
+}: {
+  bundle: any;
+  slug: string;
+  primary: string;
+  accent: string;
+  radius: string;
+  headingFont: string;
+  whatsapp?: string | null;
+}) {
+  const { locale } = useLocale();
+  const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
-function parseStat(raw: any): { prefix: string; num: number; suffix: string } {
+  const image = bundle?.thumbnail_url || null;
+  const hasPrice = Number(bundle?.price) > 0;
+  const count = Number(bundle?.courses_count) || (bundle?.courses?.length ?? 0);
+  const members: any[] = Array.isArray(bundle?.courses) ? bundle.courses : [];
+  const waNumber = String(bundle?.whatsapp || whatsapp || '').replace(/[^\d]/g, '');
+
+  return (
+    <article
+      data-testid="bundle-card"
+      className="group flex h-full flex-col overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+    >
+      <div
+        className="relative flex h-32 items-center justify-center overflow-hidden sm:h-36"
+        style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}
+      >
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image} alt="" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+        ) : (
+          <Layers className="h-12 w-12 opacity-50 transition-transform duration-500 group-hover:scale-110" style={{ color: primary }} />
+        )}
+        <span
+          className="absolute top-3 start-3 inline-flex items-center gap-1 rounded-full bg-white/90 px-3 py-1 text-[11px] font-bold shadow"
+          style={{ color: primary }}
+        >
+          <Layers className="h-3 w-3" />
+          {t('حزمة', 'Bundle')}
+        </span>
+        {hasPrice && (
+          <span
+            data-testid="bundle-price"
+            className="absolute top-3 end-3 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold text-white shadow-lg"
+            style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}
+          >
+            <Tag className="h-3 w-3" />
+            {bundle.price} {bundle.currency}
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col p-5">
+        <h3 className="font-bold leading-snug" style={{ fontFamily: headingFont }}>{bundle.title}</h3>
+        {(bundle.short_description || bundle.description) && (
+          <p className="mt-1.5 line-clamp-2 text-sm text-slate-500">
+            {bundle.short_description || bundle.description}
+          </p>
+        )}
+
+        <div className="mt-3 flex items-center gap-1 text-xs text-slate-500">
+          <BookOpen className="h-3.5 w-3.5" style={{ color: primary }} />
+          {count} {t('كورسات في الحزمة', 'courses in this bundle')}
+        </div>
+
+        {members.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {members.slice(0, 4).map((c) => (
+              <li key={c.id} className="flex items-center gap-1.5 text-xs text-slate-600">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: accent }} />
+                <span className="truncate">{c.title}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="mt-4 flex-1" />
+
+        {waNumber ? (
+          <a href={`https://wa.me/${waNumber}`} target="_blank" rel="noopener noreferrer" className="block">
+            <Button
+              className="min-h-[44px] w-full gap-2 text-white shadow-lg"
+              style={{ background: `linear-gradient(135deg, ${primary}, ${accent})`, borderRadius: radius }}
+            >
+              <MessageCircle className="h-4 w-4" />
+              {t('سجّل في الحزمة عبر واتساب', 'Enroll via WhatsApp')}
+            </Button>
+          </a>
+        ) : (
+          <Link href={`/t/${slug}/courses`} className="block">
+            <Button
+              variant="outline"
+              className="min-h-[44px] w-full gap-1.5"
+              style={{ borderRadius: radius }}
+            >
+              {t('تواصل مع المعلم للتسجيل', 'Contact the teacher to enroll')}
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+        )}
+      </div>
+    </article>
+  );
+}
+
+/* ─── Stats strip (real numbers only) ─────────────────────────────── */function parseStat(raw: any): { prefix: string; num: number; suffix: string } {
   const str = String(raw ?? '');
   const m = str.match(/^([^\d]*)([\d.,]+)(.*)$/);
   if (!m) return { prefix: '', num: 0, suffix: '' };
