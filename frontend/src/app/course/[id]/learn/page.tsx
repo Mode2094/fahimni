@@ -7,8 +7,9 @@ import { useFocus } from '@/store/focus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import ProtectedVideoPlayer from '@/components/video/protected-video-player';
+import ProtectedFileViewer from '@/components/file/protected-file-viewer';
 import LessonNotesQuestions from '@/components/lesson/lesson-notes-questions';
-import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio } from 'lucide-react';
+import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { saveLessonProgress } from '@/lib/lesson-progress';
@@ -139,7 +140,6 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const [content, setContent] = useState<any>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
-  const [fileBusy, setFileBusy] = useState(false);
   const [viewTab, setViewTab] = useState<'lessons' | 'assignments' | 'exams'>('lessons');
   const [exams, setExams] = useState<any[]>([]);
   const [examsLoading, setExamsLoading] = useState(false);
@@ -374,27 +374,6 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   // Only a self-hosted stream/provider video exposes a <video> element we can
   // observe for watch time; an external YouTube/Vimeo iframe cannot be read.
   const isHostedVideo = !!videoContent?.video && videoContent.video.type !== 'external';
-
-  const openFile = async (mode: 'download' | 'preview') => {
-    if (!fileContent?.file?.url || fileBusy) return;
-    setFileBusy(true);
-    try {
-      const res = await fetch(`${API}${fileContent.file.url}`, { headers: authHeaders() });
-      const d = await res.json().catch(() => null);
-      if (!res.ok || !d?.url) {
-        toast.error(locale === 'ar' ? 'لا يمكن الوصول إلى الملف' : 'Cannot access the file');
-        return;
-      }
-      if (mode === 'download') {
-        window.location.href = d.url;
-      } else {
-        window.open(d.url, '_blank');
-      }
-    } catch {
-      toast.error(locale === 'ar' ? 'فشل تحميل الملف' : 'Failed');
-    }
-    setFileBusy(false);
-  };
 
   // ─── Assignments (student) ─────────────────────
   const uploadSubmitFile = async (aid: string, file: File) => {
@@ -751,22 +730,11 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <div className={`bg-white border rounded-2xl leading-relaxed whitespace-pre-wrap select-none ${contentFs ? 'max-w-3xl w-full mx-auto p-6 sm:p-10 text-lg' : 'p-6 sm:p-8'}`} onCopy={(e) => e.preventDefault()}>{textContent.text.body}</div>
                   )}
                   {fileContent?.file?.url && (
-                    <div className={`flex flex-wrap items-center gap-3 ${contentFs ? 'max-w-3xl w-full mx-auto justify-center' : ''}`}>
-                      {fileContent.file.is_downloadable ? (
-                        <Button onClick={() => openFile('download')} disabled={fileBusy} className="gap-2 rounded-full" style={{ background: '#0d9488' }}>
-                          {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} {locale === 'ar' ? 'تحميل الملف' : 'Download'} {fileContent.file.name}
-                        </Button>
-                      ) : fileContent.file.previewable ? (
-                        <>
-                          <Button variant="outline" onClick={() => openFile('preview')} disabled={fileBusy} className="gap-2 rounded-full">
-                            {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} {locale === 'ar' ? 'معاينة الملف (بدون تنزيل)' : 'Preview (no download)'} {fileContent.file.name}
-                          </Button>
-                          <span className="flex items-center gap-1.5 text-xs text-amber-600"><Ban className="h-3.5 w-3.5" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم' : 'Downloads disabled by your teacher'}</span>
-                        </>
-                      ) : (
-                        <span className="flex items-center gap-1.5 text-xs text-amber-600 p-3 rounded-xl bg-amber-50 border border-amber-100"><Ban className="h-4 w-4" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم — هذا النوع من الملفات لا يمكن معاينته' : 'Downloads disabled by your teacher — this file type cannot be previewed'} ({fileContent.file.name})</span>
-                      )}
-                    </div>
+                    <ProtectedFileViewer
+                      file={fileContent.file}
+                      headers={authHeaders()}
+                      className={contentFs ? 'max-w-3xl w-full mx-auto' : ''}
+                    />
                   )}
                   {exercise && exercise.position === 'after_content' && (
                     pageBlurred ? null : <ExerciseCard exercise={exercise} />
