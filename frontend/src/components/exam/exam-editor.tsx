@@ -9,13 +9,13 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
 import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
-import { gradingKeyToText, parseGradingKey } from '@/lib/interactive-question';
+import { buildQuestionPayload, draftFromQuestion } from '@/lib/exam-question-payload';
 import { fetchHtmlEditorPrefs, saveHtmlEditorPrefs } from '@/lib/html-editor-prefs';
 import { useLocale } from '@/store/locale';
 import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, ArrowUp, ArrowDown, Loader2, ClipboardList,
-  CheckCircle2, XCircle, Search, HelpCircle, ArrowRight, ArrowLeft, Eye, Copy,
+  CheckCircle2, XCircle, Search, HelpCircle, ArrowRight, ArrowLeft, Eye, Copy, Dices,
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -71,6 +71,12 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [bankOpen, setBankOpen] = useState(false);
+  const [bankCount, setBankCount] = useState('5');
+  const [bankCategory, setBankCategory] = useState('');
+  const [bankDifficulty, setBankDifficulty] = useState('');
+  const [bankType, setBankType] = useState('');
+  const [bankDrawing, setBankDrawing] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [ordering, setOrdering] = useState(false);
   const [busyId, setBusyId] = useState('');
@@ -126,7 +132,9 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
           duration_minutes: Number(exam.duration_minutes) || 0,
           pass_mark_percent: Number(exam.pass_mark_percent) || 0,
           max_attempts: Number(exam.max_attempts) || 0,
+          random_questions_count: Number(exam.random_questions_count) > 0 ? Number(exam.random_questions_count) : null,
           shuffle_questions: !!exam.shuffle_questions,
+          shuffle_options: !!exam.shuffle_options,
           is_published: !!exam.is_published,
         }),
       });
@@ -204,6 +212,37 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
     setOrdering(false);
   };
 
+  /** Draw N random questions from the teacher's bank straight into this exam. */
+  const drawFromBank = async () => {
+    const count = Number(bankCount);
+    if (!count || count < 1) { toast.error(t('أدخل عدداً صحيحاً أكبر من صفر', 'Enter a count greater than zero')); return; }
+    setBankDrawing(true);
+    try {
+      const res = await fetch(`${API}/exams/${exam.id}/draw-questions`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({
+          count,
+          course_id: initialExam.course_id || undefined,
+          category: bankCategory || undefined,
+          difficulty: bankDifficulty || undefined,
+          question_type: bankType || undefined,
+        }),
+      });
+      const d = await res.json().catch(() => null);
+      if (!res.ok) { toast.error(d?.message || t('تعذّر السحب من البنك', 'Could not draw from the bank')); return; }
+      const added = d?.added_count ?? 0;
+      if (added === 0) {
+        toast.info(t('لا توجد أسئلة مطابقة متاحة في البنك (قد تكون كلها مضافة بالفعل)', 'No matching questions available (they may all be added already)'));
+      } else {
+        toast.success(`${t('أُضيف', 'Added')} ${added} ${t('سؤالاً من البنك', 'question(s) from the bank')}`);
+      }
+      setBankOpen(false);
+      onChanged();
+    } catch { toast.error(t('تعذّر السحب من البنك', 'Could not draw from the bank')); }
+    setBankDrawing(false);
+  };
+
   const deleteFromBank = async (q: any) => {
     if ((q.exams || []).length) return;
     if (!window.confirm(t('حذف هذا السؤال نهائياً من البنك؟', 'Permanently delete this question from the bank?'))) return;
@@ -240,7 +279,7 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
 
   const openEdit = (q: any) => {
     setDraftTarget(q);
-    setDraft(draftFromQuestion(q));
+    setDraft(draftFromQuestion(q, exam.id));
   };
 
   /**
@@ -254,37 +293,11 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
     setDraftTarget(null);
     setPickerOpen(false);
     setDraft({
-      ...draftFromQuestion(q),
+      ...draftFromQuestion(q, exam.id),
       question_text: `${q.question_text} (${t('نسخة', 'copy')})`,
       exam_id: exam.id,
     });
   };
-
-  /** Map a saved question into the flat draft shape shared with QuestionBuilder. */
-  const draftFromQuestion = (q: any): QuestionDraft => ({
-    question_text: q.question_text || '',
-    question_type: q.question_type || 'multiple_choice',
-    points: String(q.points ?? '1'),
-    exam_id: exam.id,
-    section_id: q.section_id || '',
-    options: (q.options && q.options.length ? q.options : [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }])
-      .map((o: any) => ({ option_text: o.option_text || '', is_correct: !!o.is_correct })),
-    image_url: q.metadata?.image_url || '',
-    pairs: (q.metadata?.pairs || []).map((p: any) => ({ left: p.left || '', right: p.right || '' })),
-    items: (q.metadata?.items || []).map((i: any) => (typeof i === 'string' ? i : i.text || '')),
-    answers: (q.metadata?.answers || ['']).map((a: any) => String(a)),
-    keywords: (q.metadata?.keywords || []).join(', '),
-    skills: (q.metadata?.skills || []).join(', '),
-    interactive_html: q.metadata?.interactive?.html || '',
-    interactive_css: q.metadata?.interactive?.css || '',
-    interactive_js: q.metadata?.interactive?.js || '',
-    interactive_height: String(q.metadata?.interactive?.height ?? 360),
-    interactive_auto_capture: q.metadata?.interactive?.auto_capture !== false,
-    grading_mode: q.metadata?.grading?.mode === 'auto' ? 'auto' : 'manual',
-    grading_rule: q.metadata?.grading?.rule || 'single_choice',
-    grading_key: gradingKeyToText(q.metadata?.grading?.key),
-    grading_tolerance: q.metadata?.grading?.tolerance != null ? String(q.metadata.grading.tolerance) : '',
-  });
 
   const closeDraft = () => { setDraft(null); setDraftTarget(null); };
 
@@ -293,50 +306,10 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
     if (!draft.question_text.trim()) { toast.error(t('أدخل نص السؤال', 'Enter question text')); return; }
     setSavingDraft(true);
     try {
-      const meta: any = {};
-      if (draft.image_url) meta.image_url = draft.image_url;
-      const skills = draft.skills.split(',').map((s) => s.trim()).filter(Boolean);
-      if (skills.length) meta.skills = skills;
-      if (draft.question_type === 'drag_drop' || draft.question_type === 'matching') meta.pairs = draft.pairs.filter((p) => p.left.trim() && p.right.trim());
-      if (draft.question_type === 'ordering') meta.items = draft.items.filter((i) => String(i).trim());
-      if (draft.question_type === 'fill_blank') meta.answers = draft.answers.filter((a) => String(a).trim());
-      if (draft.question_type === 'writing') meta.keywords = draft.keywords.split(',').map((k) => k.trim()).filter(Boolean);
-      if (draft.question_type === 'interactive_html' || draft.question_type === 'custom_html') {
-        meta.interactive = {
-          html: draft.interactive_html,
-          css: draft.interactive_css,
-          js: draft.interactive_js,
-          height: Number(draft.interactive_height) || 360,
-          auto_capture: !!draft.interactive_auto_capture,
-        };
-        // The grading key is deliberately kept out of `interactive` so it can
-        // never be serialized to a student.
-        const grading: any = { mode: draft.grading_mode };
-        if (draft.grading_mode === 'auto') {
-          grading.rule = draft.grading_rule;
-          grading.key = parseGradingKey(draft.grading_key);
-          if (draft.grading_rule === 'numeric' && String(draft.grading_tolerance).trim() !== '') {
-            grading.tolerance = Number(draft.grading_tolerance);
-          }
-        }
-        meta.grading = grading;
-      }
-
-      const payload: any = {
-        question_text: draft.question_text,
-        question_type: draft.question_type,
-        points: Number(draft.points) || 1,
-        course_id: initialExam.course_id,
-        section_id: draft.section_id || null,
-        metadata: meta,
-      };
-      if (draft.question_type === 'multiple_choice') payload.options = draft.options.filter((o) => o.option_text.trim());
-      if (draft.question_type === 'true_false') {
-        payload.options = draft.options.length >= 2 ? draft.options : [{ option_text: 'True', is_correct: true }, { option_text: 'False', is_correct: false }];
-      }
-      // A brand-new question is attached to this exam in the same request; an
-      // edit keeps its existing links untouched.
-      if (!draftTarget) payload.exam_id = exam.id;
+      const payload = buildQuestionPayload(draft, {
+        courseId: initialExam.course_id,
+        examId: draftTarget ? null : exam.id,
+      });
 
       const res = await fetch(`${API}/questions${draftTarget ? `/${draftTarget.id}` : ''}`, {
         method: draftTarget ? 'PUT' : 'POST',
@@ -437,6 +410,9 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                 <Button variant="outline" className="gap-2 rounded-full" onClick={() => { setPickerOpen((v) => !v); setTypeFilter(''); setSearch(''); }}>
                   <HelpCircle className="h-4 w-4" />{t('اختيار سؤال محفوظ', 'Pick a saved question')}
                 </Button>
+                <Button variant="outline" className="gap-2 rounded-full" onClick={() => { setBankOpen((v) => !v); setPickerOpen(false); }}>
+                  <Dices className="h-4 w-4" />{t('سحب عشوائي من البنك', 'Draw from bank')}
+                </Button>
                 <Button variant="outline" className="gap-2 rounded-full" onClick={togglePublish}>
                   {exam.is_published ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                   {exam.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')}
@@ -493,6 +469,45 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                 </div>
               )}
 
+              {/* Random draw from the shared bank */}
+              {bankOpen && (
+                <div className="space-y-3 rounded-2xl border border-amber-100 bg-amber-50/40 p-4">
+                  <p className="text-sm font-medium">{t('اسحب عدداً من أسئلة البنك عشوائياً إلى هذا الاختبار', 'Randomly pull a number of bank questions into this exam')}</p>
+                  <div className="grid gap-2 sm:grid-cols-4">
+                    <div className="space-y-1">
+                      <Label>{t('العدد', 'Count')}</Label>
+                      <Input type="number" min={1} dir="ltr" value={bankCount} onChange={(e) => setBankCount(e.target.value)} className="h-10 bg-white" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>{t('التصنيف', 'Category')}</Label>
+                      <Input value={bankCategory} onChange={(e) => setBankCategory(e.target.value)} className="h-10 bg-white" placeholder={t('أي تصنيف', 'Any category')} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>{t('الصعوبة', 'Difficulty')}</Label>
+                      <select value={bankDifficulty} onChange={(e) => setBankDifficulty(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm">
+                        <option value="">{t('كل المستويات', 'All levels')}</option>
+                        <option value="easy">{t('سهل', 'Easy')}</option>
+                        <option value="medium">{t('متوسط', 'Medium')}</option>
+                        <option value="hard">{t('صعب', 'Hard')}</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>{t('النوع', 'Type')}</Label>
+                      <select value={bankType} onChange={(e) => setBankType(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm">
+                        <option value="">{t('كل الأنواع', 'All types')}</option>
+                        {Object.entries(QUESTION_TYPE_META).map(([id, m]) => (
+                          <option key={id} value={id}>{m.icon} {locale === 'ar' ? m.ar : m.en}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{t('يُسحب من بنك أسئلة الكورس الحالي، ويُستثنى أي سؤال مضاف بالفعل إلى الاختبار فلا تتكرر الأسئلة.', 'Drawn from this course\u2019s bank; questions already in the exam are excluded so nothing is duplicated.')}</p>
+                  <Button onClick={drawFromBank} disabled={bankDrawing} className="gap-2 rounded-full bg-amber-600 text-white hover:bg-amber-700">
+                    {bankDrawing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Dices className="h-4 w-4" />}{t('اسحب وأضف', 'Draw and add')}
+                  </Button>
+                </div>
+              )}
+
               {/* Attached questions */}
               {examQuestions.length === 0 ? (
                 <EmptyState icon={ClipboardList} title={t('لا أسئلة بعد', 'No questions yet')} description={t('أضف سؤالاً جديداً أو اختر سؤالاً محفوظاً من الكورس', 'Add a new question or pick a saved one from the course')} />
@@ -546,8 +561,28 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                 <Label>{t('الوصف', 'Description')}</Label>
                 <Textarea value={exam.description || ''} onChange={(e) => setExam({ ...exam, description: e.target.value })} className="min-h-[90px]" />
               </div>
-              <div className="flex items-center gap-2 rounded-xl border p-3">
-                <Switch checked={!!exam.shuffle_questions} onCheckedChange={(v) => setExam({ ...exam, shuffle_questions: v })} label={t('خلط ترتيب الأسئلة للطالب', 'Shuffle questions for the student')} />
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 rounded-xl border p-3">
+                  <Switch checked={!!exam.shuffle_questions} onCheckedChange={(v) => setExam({ ...exam, shuffle_questions: v })} label={t('خلط ترتيب الأسئلة للطالب', 'Shuffle questions for the student')} />
+                </div>
+                <div className="flex items-center gap-2 rounded-xl border p-3">
+                  <Switch checked={!!exam.shuffle_options} onCheckedChange={(v) => setExam({ ...exam, shuffle_options: v })} label={t('خلط ترتيب الخيارات داخل كل سؤال', 'Shuffle answer options inside each question')} />
+                </div>
+                <div className="space-y-2 rounded-xl border p-3">
+                  <Label>{t('عدد أسئلة عشوائي من أسئلة الاختبار في كل محاولة', 'Random number of the exam questions per attempt')}</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    dir="ltr"
+                    className="h-11 max-w-[160px]"
+                    placeholder="0"
+                    value={exam.random_questions_count ?? ''}
+                    onChange={(e) => setExam({ ...exam, random_questions_count: e.target.value })}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('0 = اعرض كل الأسئلة. أدخل رقماً أقل من عدد أسئلة الاختبار ليُسحب هذا العدد عشوائياً لكل طالب ويُثبَّت لبقية محاولته. للاختيار من البنك استخدم «سحب عشوائي من البنك» في تبويب الأسئلة.', '0 = show all. Enter a number lower than the exam\u2019s question count to draw that many at random per student, frozen for their attempt. To pick from the bank instead, use \u201cDraw from bank\u201d on the Questions tab.')}
+                  </p>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2 border-t pt-4">
                 <Button onClick={saveSettings} disabled={savingSettings} className="gap-2 rounded-full bg-violet-600 text-white hover:bg-violet-700">
