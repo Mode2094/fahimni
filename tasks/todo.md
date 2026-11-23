@@ -36,5 +36,5 @@
 - [x] إعدادات النشر: `NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY` (build arg + env examples) وFCM خلفي موثّق.
 - [x] فحوص: TypeScript نظيف، `node --test` 46/46، Vitest 270/270، `next build` ناجح (يظهر `/offline`).
 - [ ] تحقق على جهاز حقيقي (Android/iPhone): تثبيت فعلي + إشعار حي — يتطلب جهازًا حقيقيًا ومفاتيح FCM.
-- [ ] نشر إنتاجي — ينتظر توفّر مفاتيح FCM ومسار النشر المصرّح.
+- [x] نشر إنتاجي لتحسينات UX وPWA (`adbcc7cf…`) — يبقى Push معطّلاً بأمان حتى توفّر مفاتيح FCM/VAPID.
 
