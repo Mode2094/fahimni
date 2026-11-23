@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AssignmentSubmission;
 use App\Models\Booking;
 use App\Models\Course;
 use App\Models\Enrollment;
@@ -12,6 +13,7 @@ use App\Models\Payment;
 use App\Models\Tenant;
 use App\Models\TenantSubscription;
 use App\Models\User;
+use App\Services\AdminNotificationService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +21,10 @@ use Illuminate\Http\Request;
 class DashboardController extends Controller
 {
     use AuthorizesTenantAccess;
+
+    public function __construct(
+        private readonly AdminNotificationService $adminNotifications,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -38,7 +44,7 @@ class DashboardController extends Controller
         }
 
         return $this->isTenantStaff($request, $tenantId)
-            ? $this->teacherDashboard($tenantId, $user)
+            ? $this->teacherDashboard($tenantId, $user, (string) $pivot->role)
             : $this->studentDashboard($tenantId, $user);
     }
 
@@ -65,22 +71,39 @@ class DashboardController extends Controller
         ]);
     }
 
-    private function teacherDashboard(string $tenantId, $user): JsonResponse
+    private function teacherDashboard(string $tenantId, User $user, string $tenantRole): JsonResponse
     {
-        $activeBookings = Booking::where('tenant_id', $tenantId)
-            ->where('teacher_id', $user->id)
+        $bookings = Booking::where('tenant_id', $tenantId);
+
+        // Match the teacher booking screen: individual team teachers see their
+        // own requests, while owners/admins see the whole workspace.
+        if ($tenantRole === 'teacher') {
+            $bookings->where('teacher_id', $user->id);
+        }
+
+        $activeBookings = (clone $bookings)
             ->whereIn('status', [Booking::STATUS_PENDING, Booking::STATUS_CONFIRMED])
             ->where('ends_at', '>', now());
+        $pendingAssignmentSubmissions = AssignmentSubmission::byTenant($tenantId)
+            ->whereIn('status', ['submitted', 'late'])
+            ->whereHas('assignment')
+            ->count();
+        $pendingExamReviews = ExamAttempt::byTenant($tenantId)
+            ->where('status', 'submitted')
+            ->where('needs_review', true)
+            ->count();
 
         return response()->json([
             'total_courses' => Course::byTenant($tenantId)->count(),
             'total_students' => Enrollment::byTenant($tenantId)->count(),
             'total_exams' => Exam::byTenant($tenantId)->count(),
             'total_attempts' => ExamAttempt::byTenant($tenantId)->count(),
+            'pending_assignment_submissions' => $pendingAssignmentSubmissions,
+            'pending_exam_reviews' => $pendingExamReviews,
+            'unread_admin_notifications' => $this->adminNotifications->teacherUnreadCount($user),
             'pending_bookings' => (clone $activeBookings)->where('status', Booking::STATUS_PENDING)->count(),
             'upcoming_bookings' => (clone $activeBookings)->count(),
-            'recent_bookings' => Booking::where('tenant_id', $tenantId)
-                ->where('teacher_id', $user->id)
+            'recent_bookings' => (clone $bookings)
                 ->with('student')
                 ->orderByDesc('starts_at')
                 ->take(5)

@@ -40,6 +40,12 @@ const ANALYTICS_SUCCESS = ok({
 const LESSONS_SUCCESS = ok({ lessons: [{ title: 'درس الرياضيات', scheduled_at: '2026-12-01T10:00:00Z' }] });
 const BOOKINGS_SUCCESS = ok({ bookings: [{ student: { name: 'طالب أحمد' }, date: '2099-12-02', time: '09:00', status: 'confirmed' }] });
 const STUDENT_APP_SUCCESS = ok({ student_app: { enabled: true, teacher_code: 'T-123' } });
+const DASHBOARD_SUCCESS = ok({
+  pending_assignment_submissions: 2,
+  pending_exam_reviews: 1,
+  pending_bookings: 3,
+  unread_admin_notifications: 4,
+});
 
 const FULL_SUCCESS = {
   '/teacher/plan': () => PLAN_SUCCESS,
@@ -47,6 +53,7 @@ const FULL_SUCCESS = {
   '/teacher/scheduled-lessons': () => LESSONS_SUCCESS,
   '/teacher/bookings': () => BOOKINGS_SUCCESS,
   '/teacher/student-app': () => STUDENT_APP_SUCCESS,
+  '/dashboard': () => DASHBOARD_SUCCESS,
 };
 
 const EMPTY = {
@@ -55,6 +62,12 @@ const EMPTY = {
   '/teacher/scheduled-lessons': () => ok({}),
   '/teacher/bookings': () => ok({}),
   '/teacher/student-app': () => ok({}),
+  '/dashboard': () => ok({
+    pending_assignment_submissions: 0,
+    pending_exam_reviews: 0,
+    pending_bookings: 0,
+    unread_admin_notifications: 0,
+  }),
 };
 
 beforeEach(() => {
@@ -79,6 +92,7 @@ describe('Teacher Dashboard', () => {
   });
 
   it('renders real data (Arabic / RTL) once the endpoints respond', async () => {
+    useAuth.setState({ user: { name: 'أ. سامي', permissions: ['exams.manage'] } as any } as any);
     useSettings.setState({
       settings: { ...useSettings.getState().settings, student_app_hidden: false, logo_url: null },
     } as any);
@@ -92,10 +106,50 @@ describe('Teacher Dashboard', () => {
     expect(screen.getByText('64%')).toBeInTheDocument(); // completion rate
     expect(screen.getByText('درس الرياضيات')).toBeInTheDocument();
     expect(screen.getByText('طالب أحمد')).toBeInTheDocument();
-    expect(screen.getByText('الدروس القادمة')).toBeInTheDocument();
+    expect(screen.getByText('مهام تحتاج متابعتك')).toBeInTheDocument();
+    expect(screen.getByText('الدرس القادم')).toBeInTheDocument();
     expect(screen.getByText('استخدام خطتك')).toBeInTheDocument();
     // Student app card surfaces the real teacher code, LTR-isolated.
     expect(screen.getByText('T-123')).toBeInTheDocument();
+  });
+
+  it('shows real review queues and direct routes for tasks the teacher can act on', async () => {
+    useAuth.setState({ user: { name: 'أ. سامي', permissions: ['exams.manage'] } as any } as any);
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    const { container } = render(<TeacherDashboard />);
+
+    expect(await screen.findByText('واجبات تحتاج مراجعة')).toBeInTheDocument();
+    expect(screen.getByText('اختبارات تحتاج تصحيحاً')).toBeInTheDocument();
+    expect(screen.getByText('طلبات حجز معلقة')).toBeInTheDocument();
+    expect(screen.getByText('إشعارات إدارة غير مقروءة')).toBeInTheDocument();
+    expect(container.querySelector('a[href="/teacher/exams"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/courses"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/teacher/appointments"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/teacher/notifications"]')).toBeTruthy();
+  });
+
+  it('hides exam grading work from users without the grading permission', async () => {
+    useAuth.setState({ user: { name: 'أ. سامي', permissions: [] } as any } as any);
+    vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
+
+    render(<TeacherDashboard />);
+
+    expect(await screen.findByText('مهام تحتاج متابعتك')).toBeInTheDocument();
+    expect(screen.queryByText('اختبارات تحتاج تصحيحاً')).toBeNull();
+    expect(screen.getByText('واجبات تحتاج مراجعة')).toBeInTheDocument();
+  });
+
+  it('shows an error instead of pretending the work queue is empty when its API fails', async () => {
+    vi.stubGlobal('fetch', routeFetch({
+      ...FULL_SUCCESS,
+      '/dashboard': () => Promise.resolve({ ok: false, json: async () => ({}) } as any),
+    }));
+
+    render(<TeacherDashboard />);
+
+    expect(await screen.findByText('تعذر تحميل المهام الآن؛ لم نعرض أعداداً تقديرية.')).toBeInTheDocument();
+    expect(screen.queryByText('لا توجد مهام أو مواعيد قادمة تحتاج متابعة الآن.')).toBeNull();
   });
 
   it('renders the empty states when the tenant has no data yet', async () => {
@@ -103,8 +157,7 @@ describe('Teacher Dashboard', () => {
 
     render(<TeacherDashboard />);
 
-    expect(await screen.findByText('لا توجد دروس مجدولة')).toBeInTheDocument();
-    expect(screen.getByText('لا توجد مواعيد قادمة')).toBeInTheDocument();
+    expect(await screen.findByText('لا توجد مهام أو مواعيد قادمة تحتاج متابعة الآن.')).toBeInTheDocument();
     expect(
       screen.getByText('لا توجد بيانات كافية بعد — أضف اختبارات وفيديوهات لطلابك'),
     ).toBeInTheDocument();
@@ -117,7 +170,7 @@ describe('Teacher Dashboard', () => {
 
     const { container } = render(<TeacherDashboard />);
 
-    expect(await screen.findByText('الدروس القادمة')).toBeInTheDocument();
+    expect(await screen.findByText('مهام تحتاج متابعتك')).toBeInTheDocument();
     await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBe(0));
   });
 
@@ -198,8 +251,8 @@ describe('Teacher Dashboard', () => {
 
     render(<TeacherDashboard />);
 
-    expect(await screen.findByText('Upcoming lessons')).toBeInTheDocument();
-    expect(screen.getByText('Upcoming appointments')).toBeInTheDocument();
+    expect(await screen.findByText('Needs your attention')).toBeInTheDocument();
+    expect(screen.getByText('Next lesson')).toBeInTheDocument();
     expect(screen.getByText(/Good (morning|afternoon|evening)/)).toBeInTheDocument();
   });
 });
