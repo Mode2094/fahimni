@@ -11,6 +11,7 @@ import { Eye, EyeOff, ArrowLeft, Users, BarChart3, Lock, Loader2 } from 'lucide-
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import PlatformLogo from '@/components/brand/platform-logo';
 
@@ -25,6 +26,8 @@ export default function AdminLoginPage() {
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [captchaId, setCaptchaId] = useState('');
+  // The math CAPTCHA id is single-use server-side; remounting mints a fresh one.
+  const [captchaKey, setCaptchaKey] = useState(0);
   const router = useRouter();
   const login = useAuth((s) => s.login);
   const login2fa = useAuth((s) => s.login2fa);
@@ -65,6 +68,7 @@ export default function AdminLoginPage() {
       try { await authFetch('/api/session/logout', { method: 'POST' }); } catch { /* */ }
       useAuth.setState({ user: null, initialized: true });
       setErr(locale === 'ar' ? 'هذا الحساب ليس لديه صلاحيات الإدارة' : 'This account does not have admin access');
+      setCaptchaKey((k) => k + 1);
       return false;
     }
 
@@ -89,6 +93,7 @@ export default function AdminLoginPage() {
       await finishAdminLogin();
     } catch (error: any) {
       setErr(error?.response?.data?.message || error?.message || (locale === 'ar' ? 'فشل الدخول' : 'Login failed'));
+      setCaptchaKey((k) => k + 1);
     }
     setLoad(false);
   };
@@ -140,19 +145,27 @@ export default function AdminLoginPage() {
           </div>
           <div className="mb-4"><GoogleLoginButton role="admin" label="دخول الأدمن عبر Google" /></div><form onSubmit={submit} className="space-y-5 bg-white p-6 sm:p-8 rounded-2xl border shadow-sm">
             <div className="space-y-2">
-              <Label className="text-sm font-medium">{t(locale, 'common.email')}</Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="admin@example.com" />
+              <Label htmlFor="admin-email" className="text-sm font-medium">{t(locale, 'common.email')}</Label>
+              <Input id="admin-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="admin@example.com" autoComplete="username" />
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{t(locale, 'common.password')}</Label>
+                <Label htmlFor="admin-password" className="text-sm font-medium">{t(locale, 'common.password')}</Label>
                 <a href="/forgot-password" className="text-xs text-violet-600 hover:underline font-medium">{t(locale, 'common.forgotPassword')}</a>
               </div>
               <div className="relative">
-                <Input type={show ? 'text' : 'password'} value={pass} onChange={(e) => setPass(e.target.value)} required className="h-12 bg-gray-50 pe-11" placeholder="••••••••" />
-                <button type="button" onClick={() => setShow(!show)} className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400">{show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+                <Input id="admin-password" type={show ? 'text' : 'password'} value={pass} onChange={(e) => setPass(e.target.value)} required className="h-12 bg-gray-50 pe-11" placeholder="••••••••" autoComplete="current-password" />
+                <button
+                  type="button"
+                  onClick={() => setShow(!show)}
+                  aria-label={show ? (locale === 'ar' ? 'إخفاء كلمة المرور' : 'Hide password') : (locale === 'ar' ? 'إظهار كلمة المرور' : 'Show password')}
+                  className="absolute end-3 top-1/2 -translate-y-1/2 text-gray-400"
+                >
+                  {show ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                </button>
               </div>
             </div>
+            <Captcha key={captchaKey} value={captchaAnswer} onChange={setCaptchaAnswer} onId={setCaptchaId} locale={locale} />
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 rounded border-gray-300 accent-violet-600" />
@@ -161,8 +174,31 @@ export default function AdminLoginPage() {
             </div>
             {err && <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-600">{err}</div>}
             <Button type="submit" disabled={load} className="w-full h-12 text-base rounded-xl shadow-lg shadow-violet-500/20 text-white" style={{ background: 'linear-gradient(135deg, #6d28d9, #0d9488)' }}>
-              {load ? <Loader2 className="h-5 w-5 animate-spin" /> : (locale === 'ar' ? 'دخول المدير' : 'Admin Sign In')}
+              {load ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : (locale === 'ar' ? 'دخول المدير' : 'Admin Sign In')}
             </Button>
+            {need2fa && (
+              <div className="space-y-3 rounded-xl border border-violet-100 bg-violet-50/60 p-4">
+                <Label htmlFor="admin-2fa">{locale === 'ar' ? 'رمز التحقق بخطوتين' : 'Two-factor code'}</Label>
+                <Input
+                  id="admin-2fa"
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="000000"
+                  className="text-center tracking-widest"
+                />
+                <Button
+                  type="button"
+                  onClick={confirm2fa}
+                  disabled={load || twoFactorCode.length < 6}
+                  className="w-full"
+                >
+                  {locale === 'ar' ? 'تأكيد الرمز' : 'Verify code'}
+                </Button>
+              </div>
+            )}
           </form>
           <div className="text-center">
             <Link href="/" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"><ArrowLeft className="h-3 w-3" /> {locale === 'ar' ? 'العودة للصفحة الرئيسية' : 'Back home'}</Link>

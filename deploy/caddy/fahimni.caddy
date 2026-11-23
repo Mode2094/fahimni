@@ -31,8 +31,16 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# NOTE: Permissions-Policy is intentionally NOT set here. The Next.js
+		# app emits it per-request (camera/microphone = self for live classes,
+		# payment = self + Freemius). A second, stricter header at the edge —
+		# `camera=(), microphone=()` — would win the browser's intersection and
+		# silently disable live video, the microphone and Freemius checkout.
 		-Server
+		# Do not advertise the framework/version. The upstream stack (Next.js,
+		# PHP) is configured to suppress it too, but strip it at the edge so a
+		# stale image can never leak it.
+		-X-Powered-By
 	}
 }
 

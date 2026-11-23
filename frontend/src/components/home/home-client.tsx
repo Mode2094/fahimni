@@ -254,36 +254,50 @@ export default function HomeClient() {
         </div>
       </div>
 
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:start-2 focus:top-2 focus:z-[60] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:font-semibold focus:text-teal-950 focus:shadow-lg"
+      >
+        {t('تخطَّ إلى المحتوى الرئيسي', 'Skip to main content')}
+      </a>
+
       {/* ─── Header ─────────────────────────────────────── */}
       <header className="sticky top-0 z-50 glass-light border-b border-teal-100/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-6">
           <div className="flex items-center gap-2.5 shrink-0">
-            <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+            <img src={resolveLogoUrl(settings.logo_url)} alt="" className="h-9 w-9 rounded-xl object-cover shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
             <span className="text-lg font-bold text-teal-950">{settings.platform_name || t('منصة فهمني', 'Fahimni')}</span>
           </div>
           <nav className="hidden md:flex items-center gap-1 flex-1">
             {navLinks.map(l => (
-              <button key={l.id} onClick={() => scrollTo(l.id)} className="px-3.5 py-2 rounded-lg text-sm text-teal-900/70 hover:text-teal-950 hover:bg-teal-500/10 transition-colors">
+              <button key={l.id} onClick={() => scrollTo(l.id)} className="px-3.5 py-2 rounded-lg text-sm text-teal-950 hover:text-teal-950 hover:bg-teal-500/10 transition-colors">
                 {l.label}
               </button>
             ))}
           </nav>
           <div className="hidden md:flex items-center gap-2 ms-auto">
-            <Link href="/teacher/login" className="px-4 py-2 rounded-xl text-sm font-medium text-teal-900/80 hover:bg-teal-500/10 transition-colors">
+            <Link href="/teacher/login" className="px-4 py-2 rounded-xl text-sm font-medium text-teal-950 hover:bg-teal-500/10 transition-colors">
               {t('دخول المعلمين', 'Teacher Login')}
             </Link>
             <Link href="/register/teacher" className="px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-brand transition-all hover:opacity-90" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                 {t('ابدأ الآن', 'Start Now')}
             </Link>
           </div>
-          <button className="md:hidden ms-auto text-teal-950 flex h-11 w-11 items-center justify-center" onClick={() => setMenuOpen(!menuOpen)}>
-            {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          <button
+            type="button"
+            className="md:hidden ms-auto text-teal-950 flex h-11 w-11 items-center justify-center"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label={menuOpen ? t('إغلاق القائمة', 'Close menu') : t('فتح القائمة', 'Open menu')}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav"
+          >
+            {menuOpen ? <X className="h-6 w-6" aria-hidden="true" /> : <Menu className="h-6 w-6" aria-hidden="true" />}
           </button>
         </div>
         {menuOpen && (
-          <div className="md:hidden border-t border-teal-100/60 bg-white/90 backdrop-blur-xl p-4 space-y-1">
+          <div id="mobile-nav" className="md:hidden border-t border-teal-100/60 bg-white/90 backdrop-blur-xl p-4 space-y-1">
             {navLinks.map(l => (
-              <button key={l.id} onClick={() => scrollTo(l.id)} className="block w-full text-start px-3 py-3 rounded-lg text-sm text-teal-950/80 hover:bg-teal-500/10">{l.label}</button>
+              <button key={l.id} onClick={() => scrollTo(l.id)} className="block w-full text-start px-3 py-3 rounded-lg text-sm text-teal-950 hover:bg-teal-500/10">{l.label}</button>
             ))}
             <div className="flex gap-2 pt-2">
               <Link href="/teacher/login" className="flex-1 text-center px-4 py-3 rounded-xl text-sm font-medium border border-teal-200 text-teal-900">{t('دخول المعلمين', 'Teacher Login')}</Link>
@@ -293,6 +307,7 @@ export default function HomeClient() {
         )}
       </header>
 
+      <main id="main">
       {/* ─── Hero ─────────────────────────────────────── */}
       <section ref={heroRef} className="relative overflow-hidden">
         <div className="absolute inset-0 animate-gradient" style={{ background: 'linear-gradient(130deg, #0f2e2b 0%, #115e54 30%, #0d9488 55%, #115e54 80%, #0f2e2b 100%)' }}>
@@ -315,7 +330,7 @@ export default function HomeClient() {
                   {t('باسمك', 'in your name')}
                 </span>
               </h1>
-              <p className="text-white/70 text-base sm:text-lg mt-6 max-w-xl mx-auto lg:mx-0 leading-relaxed">
+              <p className="text-white/85 text-base sm:text-lg mt-6 max-w-xl mx-auto lg:mx-0 leading-relaxed">
                 {t('موقعك التعليمي الخاص بشعارك وألوانك — أنشئ كورساتك، أدر طلابك، وتابع أرباحك من لوحة تحكم واحدة.', 'Your own branded teaching site — build your courses, manage your students and track your revenue from one dashboard.')}
               </p>
 
@@ -372,8 +387,8 @@ export default function HomeClient() {
                   <span className="h-3 w-3 rounded-full bg-rose-400/80" />
                   <span className="h-3 w-3 rounded-full bg-amber-400/80" />
                   <span className="h-3 w-3 rounded-full bg-emerald-400/80" />
-                  <span className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-1 text-[11px] text-slate-400" dir="ltr">
-                    <Lock className="h-3 w-3" /> fahimni.me/<span className="font-semibold text-teal-600">{locale === 'ar' ? 'اسمك' : 'your-name'}</span>
+                  <span className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-1 text-[11px] text-slate-500" dir="ltr">
+                    <Lock className="h-3 w-3" /> fahimni.me/<span className="font-semibold text-teal-700">{locale === 'ar' ? 'اسمك' : 'your-name'}</span>
                   </span>
                 </div>
 
@@ -384,7 +399,7 @@ export default function HomeClient() {
                       <GraduationCap className="h-5 w-5 text-white" />
                     </span>
                     {[LayoutGrid, BookOpen, Users, CreditCard, BarChart3, Video].map((I, i) => (
-                      <span key={i} className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${i === 0 ? 'bg-teal-500/20 text-teal-200' : 'text-white/40'}`}>
+                      <span key={i} className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${i === 0 ? 'bg-teal-500/20 text-teal-200' : 'text-white/80'}`}>
                         <I className="h-4 w-4" />
                       </span>
                     ))}
@@ -394,10 +409,10 @@ export default function HomeClient() {
                   <div className="space-y-4 bg-white p-4 sm:p-5" dir={locale === 'ar' ? 'rtl' : 'ltr'}>
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-[11px] text-slate-400">{t('لوحة تحكم المعلم', 'Teacher dashboard')}</p>
+                        <p className="text-[11px] text-slate-500">{t('لوحة تحكم المعلم', 'Teacher dashboard')}</p>
                         <p className="text-sm font-black text-slate-800">{t('مرحباً، أ. محمد 👋', 'Welcome, Mr. Mohammed 👋')}</p>
                       </div>
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-50 text-teal-600"><Users className="h-4 w-4" /></span>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-50 text-teal-700"><Users className="h-4 w-4" /></span>
                     </div>
 
                     {/* بطاقات الإحصاء */}
@@ -410,7 +425,7 @@ export default function HomeClient() {
                         <div key={i} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-2.5">
                           <s.icon className="mb-1.5 h-4 w-4" style={{ color: s.color }} />
                           <p className="text-sm font-black leading-none text-slate-800 sm:text-base">{s.value}</p>
-                          <p className="mt-1 text-[10px] text-slate-400">{s.label}</p>
+                          <p className="mt-1 text-[10px] text-slate-500">{s.label}</p>
                         </div>
                       ))}
                     </div>
@@ -419,7 +434,7 @@ export default function HomeClient() {
                     <div className="rounded-2xl border border-slate-100 p-3">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="text-[11px] font-bold text-slate-700">{t('الإيرادات الشهرية', 'Monthly revenue')}</p>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600"><TrendingUp className="h-3 w-3" /> +18%</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><TrendingUp className="h-3 w-3" /> +18%</span>
                       </div>
                       <div className="flex h-16 items-end gap-1.5">
                         {[45, 62, 38, 74, 55, 88, 70].map((h, i) => (
@@ -435,14 +450,14 @@ export default function HomeClient() {
                         { name: t('كورس الفيزياء', 'Physics course'), pct: 64 },
                       ].map((c, i) => (
                         <div key={i} className="flex items-center gap-3">
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600"><Play className="h-3.5 w-3.5" /></span>
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-700"><Play className="h-3.5 w-3.5" /></span>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[11px] font-bold text-slate-700">{c.name}</p>
                             <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
                               <span className="block h-full rounded-full" style={{ width: `${c.pct}%`, background: 'linear-gradient(90deg,#0d9488,#5eead4)' }} />
                             </div>
                           </div>
-                          <span className="text-[10px] font-bold text-slate-400">{c.pct}%</span>
+                          <span className="text-[10px] font-bold text-slate-500">{c.pct}%</span>
                         </div>
                       ))}
                     </div>
@@ -455,7 +470,7 @@ export default function HomeClient() {
                 <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400/20 to-teal-400/20"><TrendingUp className="h-4 w-4 text-emerald-500" /></span>
                 <div>
                   <p className="text-xs font-black text-slate-800">{t('أرباحك 100% لك', 'Your earnings, 100% yours')}</p>
-                  <p className="text-[10px] text-slate-400">{t('بدون وسطاء', 'no middlemen')}</p>
+                  <p className="text-[10px] text-slate-500">{t('بدون وسطاء', 'no middlemen')}</p>
                 </div>
               </div>
             </div>
@@ -470,7 +485,7 @@ export default function HomeClient() {
             <div key={i} className="flex flex-col items-center gap-1.5 text-center">
               <s.icon className="h-5 w-5 text-teal-400" />
               <span className="text-2xl font-black leading-none text-white sm:text-3xl">{s.value}</span>
-              <span className="text-xs leading-snug text-white/55">{s.label}</span>
+              <span className="text-xs leading-snug text-white/80">{s.label}</span>
             </div>
           ))}
         </div>
@@ -482,7 +497,7 @@ export default function HomeClient() {
           <div className="text-center max-w-2xl mx-auto mb-14">
             <h2 className="text-3xl sm:text-4xl font-bold">{t('المميزات', 'Features')}</h2>
             <p className="text-gray-500 mt-3 text-lg">{t('كل ما تحتاجه في منصة واحدة', 'Everything you need in one platform')}</p>
-            <p className="text-gray-400 mt-1">{t('صممنا المنصة لتوفر عليك الوقت وتضاعف إيراداتك', 'Built to save you time and double your revenue')}</p>
+            <p className="text-gray-500 mt-1">{t('صممنا المنصة لتوفر عليك الوقت وتضاعف إيراداتك', 'Built to save you time and double your revenue')}</p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {MAIN_FEATURES.map((f, i) => (
@@ -501,14 +516,14 @@ export default function HomeClient() {
           {/* حماية الفيديوهات التعليمية — مشمولة في جميع الخطط */}
           <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-6 py-5 text-center sm:flex-row sm:justify-center">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
-              <ShieldCheck className="h-5 w-5 text-emerald-600" />
+              <ShieldCheck className="h-5 w-5 text-emerald-700" />
             </div>
             <p className="text-base font-bold text-emerald-900">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
           </div>
 
           {/* CTA مكرر بعد المميزات */}
           <div className="mt-12 text-center">
-            <p className="text-sm text-gray-400 mb-4">{t('ابدأ خلال دقائق — كل ما تحتاجه في مكان واحد', 'Start in minutes — everything you need in one place')}</p>
+            <p className="text-sm text-gray-500 mb-4">{t('ابدأ خلال دقائق — كل ما تحتاجه في مكان واحد', 'Start in minutes — everything you need in one place')}</p>
             <Link href="/register/teacher">
               <button className="inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.02] cta-shine" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                 {t('ابدأ الآن', 'Start now')} {locale === 'ar' ? '←' : '→'}
@@ -522,7 +537,7 @@ export default function HomeClient() {
       <section id="student" className="py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center max-w-2xl mx-auto mb-12">
-            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0d9488' }}>
+            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0f766e' }}>
               <MousePointerClick className="h-4 w-4 inline me-1" />{t('جرّبها بنفسك الآن', 'Try it yourself')}
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('كيف يرى طلابك المنصة', 'How your students see the platform')}</h2>
@@ -540,8 +555,8 @@ export default function HomeClient() {
                   { icon: Zap, text: t('اختبارات تفاعلية بتصحيح فوري ونقاط تحفيزية', 'Interactive exams with instant grading & reward points') },
                   { icon: Award, text: t('شهادات موثقة برمز QR تصل تلقائياً عند الإتمام', 'QR-verified certificates issued automatically on completion') },
                 ].map((b, i) => (
-                  <div key={i} className="flex items-center gap-3 text-teal-900/70">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/10"><b.icon className="h-5 w-5 text-teal-600" /></span>
+                  <div key={i} className="flex items-center gap-3 text-teal-950">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/10"><b.icon className="h-5 w-5 text-teal-700" /></span>
                     <span className="text-sm font-medium">{b.text}</span>
                   </div>
                 ))}
@@ -566,12 +581,12 @@ export default function HomeClient() {
                         onClick={() => setJourneyStep(i)}
                         className={`w-full flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition-all text-start ${active ? 'bg-white shadow-sm border border-teal-200' : 'border border-transparent hover:bg-white/70'}`}
                       >
-                        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black shrink-0 transition-colors ${done ? 'bg-emerald-500 text-white' : active ? 'bg-teal-600 text-white' : 'bg-teal-100 text-teal-600'}`}>
+                        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black shrink-0 transition-colors ${done ? 'bg-emerald-500 text-white' : active ? 'bg-teal-600 text-white' : 'bg-teal-100 text-teal-700'}`}>
                           {done ? <Check className="h-4 w-4" /> : i + 1}
                         </span>
-                        <s.icon className={`h-4 w-4 shrink-0 ${done ? 'text-emerald-600' : 'text-teal-600'}`} />
+                        <s.icon className={`h-4 w-4 shrink-0 ${done ? 'text-emerald-700' : 'text-teal-700'}`} />
                         <span className={`font-bold ${done ? 'text-emerald-700' : 'text-teal-950'}`}>{s.label}</span>
-                        {done && <span className="ms-auto text-[10px] font-bold text-emerald-600">{t('مكتمل', 'Done')}</span>}
+                        {done && <span className="ms-auto text-[10px] font-bold text-emerald-700">{t('مكتمل', 'Done')}</span>}
                       </button>
                     );
                   })}
@@ -599,10 +614,10 @@ export default function HomeClient() {
                           ? 'border-teal-500 bg-teal-50 text-teal-800 shadow-sm'
                           : done
                             ? 'border-emerald-200 bg-emerald-50/50 text-emerald-700'
-                            : 'border-slate-100 bg-slate-50/50 text-slate-400 hover:border-teal-200'
+                            : 'border-slate-100 bg-slate-50/50 text-slate-500 hover:border-teal-200'
                       }`}
                     >
-                      <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-black ${done ? 'bg-emerald-500 text-white' : journeyStep === i ? 'bg-teal-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
+                      <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-black ${done ? 'bg-emerald-500 text-white' : journeyStep === i ? 'bg-teal-600 text-white' : 'bg-white text-slate-500 border border-slate-200'}`}>
                         {done ? <Check className="h-3.5 w-3.5" /> : i + 1}
                       </span>
                       <span className="flex items-center gap-1"><s.icon className="h-3 w-3" />{s.label}</span>
@@ -644,7 +659,7 @@ export default function HomeClient() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-bold text-sm">{t('درس: أساسيات الجبر — الجزء الأول', 'Lesson: Algebra basics — Part 1')}</p>
-                      <p className="text-[10px] text-gray-400">{t('فيديو عالي الجودة · 12:30 دقيقة', 'HD video · 12:30 min')}</p>
+                      <p className="text-[10px] text-gray-500">{t('فيديو عالي الجودة · 12:30 دقيقة', 'HD video · 12:30 min')}</p>
                     </div>
                     {playback < 100 && (
                       <button onClick={() => setPlaying(!playing)} className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-500/10 text-teal-700 transition-colors hover:bg-teal-500/20" aria-label={playing ? t('إيقاف', 'Pause') : t('تشغيل', 'Play')}>
@@ -654,7 +669,7 @@ export default function HomeClient() {
                   </div>
 
                   <div>
-                    <div className="flex justify-between text-[11px] text-gray-400 mb-1.5">
+                    <div className="flex justify-between text-[11px] text-gray-500 mb-1.5">
                       <span>{t('تقدم الدرس', 'Lesson progress')}</span>
                       <span className="font-bold text-teal-700">{Math.floor(playback)}%</span>
                     </div>
@@ -668,7 +683,7 @@ export default function HomeClient() {
                       <CheckCircle className="h-4 w-4 shrink-0" />{t('اكتمل الدرس! +10 نقاط — انتقل للاختبار', 'Lesson complete! +10 points — move to the quiz')}
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-400 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على الشاشة للتشغيل والإيقاف', 'Click the screen to play / pause')}</p>
+                    <p className="text-xs text-gray-500 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على الشاشة للتشغيل والإيقاف', 'Click the screen to play / pause')}</p>
                   )}
                 </div>
               )}
@@ -681,7 +696,7 @@ export default function HomeClient() {
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10"><ClipboardList className="h-5 w-5 text-violet-600" /></span>
                       <div>
                         <p className="font-bold text-sm">{t('اختبار سريع', 'Quick quiz')}</p>
-                        <p className="text-[10px] text-gray-400">{t('سؤال 1 من 3', 'Question 1 of 3')}</p>
+                        <p className="text-[10px] text-gray-500">{t('سؤال 1 من 3', 'Question 1 of 3')}</p>
                       </div>
                     </div>
                     <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-600">
@@ -742,7 +757,7 @@ export default function HomeClient() {
                       </div>
                     )}
                     {quizState === 'idle' && (
-                      <p className="text-xs text-gray-400 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على إجابة — التصحيح فوري', 'Click an answer — instant grading')}</p>
+                      <p className="text-xs text-gray-500 flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5" />{t('اضغط على إجابة — التصحيح فوري', 'Click an answer — instant grading')}</p>
                     )}
                     {quizState === 'right' && (
                       <button onClick={() => setJourneyStep(2)} className="inline-flex items-center gap-2 mt-3 rounded-full bg-teal-600 text-white px-5 py-2.5 text-sm font-bold shadow-brand transition-all hover:scale-[1.03]">
@@ -762,7 +777,7 @@ export default function HomeClient() {
                         <Award className="h-10 w-10 text-amber-500" />
                       </div>
                       <h3 className="text-xl font-bold text-teal-950 mb-2">{t('شهادتك بانتظارك', 'Your certificate awaits')}</h3>
-                      <p className="text-sm text-gray-400 max-w-xs mx-auto mb-7">
+                      <p className="text-sm text-gray-500 max-w-xs mx-auto mb-7">
                         {t('أكملت الدرس والاختبار — الآن تصدر شهادتك الموثقة تلقائياً برمز QR', 'You finished the lesson and quiz — your verified certificate is issued automatically with a QR code')}
                       </p>
                       <button
@@ -780,14 +795,14 @@ export default function HomeClient() {
                           <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #0d9488 1px, transparent 0)', backgroundSize: '16px 16px' }} />
                           <div className="relative">
                             <GraduationCap className="mx-auto h-10 w-10 text-amber-500 mb-2" />
-                            <p className="text-[10px] font-black tracking-[0.25em] text-gray-400 uppercase">{t('شهادة إتمام', 'Certificate of completion')}</p>
+                            <p className="text-[10px] font-black tracking-[0.25em] text-gray-500 uppercase">{t('شهادة إتمام', 'Certificate of completion')}</p>
                             <h4 className="text-2xl font-black text-teal-950 mt-2">{t('بنجاح', 'Successfully')}</h4>
-                            <p className="text-xs text-gray-400 mt-3">{t('تشهد هذه الشهادة بأن', 'This certifies that')}</p>
+                            <p className="text-xs text-gray-500 mt-3">{t('تشهد هذه الشهادة بأن', 'This certifies that')}</p>
                             <p className="text-2xl font-black text-amber-600 mt-1 min-h-[2.5rem]">{typedName}<span className="type-caret inline-block w-1 h-6 bg-amber-500 align-middle ms-1 rounded" /></p>
-                            <p className="text-xs text-gray-400 mt-2">{t('أتم بنجاح دورة: أساسيات الجبر', 'has completed the course: Algebra basics')}</p>
+                            <p className="text-xs text-gray-500 mt-2">{t('أتم بنجاح دورة: أساسيات الجبر', 'has completed the course: Algebra basics')}</p>
                             <div className="flex items-center justify-between mt-6">
                               <div className="text-start">
-                                <p className="text-[10px] text-gray-400">{t('المعلمة', 'Teacher')}</p>
+                                <p className="text-[10px] text-gray-500">{t('المعلمة', 'Teacher')}</p>
                                 <p className="text-sm font-bold text-slate-700">أ. محمد</p>
                               </div>
                               <div className="relative">
@@ -797,14 +812,14 @@ export default function HomeClient() {
                                 <span className="absolute inset-0 rounded-full border-2 border-dashed border-amber-300 stamp-in" style={{ animationDelay: '0.12s' }} />
                               </div>
                               <div className="text-end">
-                                <p className="text-[10px] text-gray-400">{t('التاريخ', 'Date')}</p>
+                                <p className="text-[10px] text-gray-500">{t('التاريخ', 'Date')}</p>
                                 <p className="text-sm font-bold text-slate-700">{new Date().toLocaleDateString(locale === 'ar' ? 'ar-EG' : 'en-US')}</p>
                               </div>
                             </div>
                             <div className="mx-auto mt-4 flex h-12 w-12 items-center justify-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50/50">
                               <QrCode className="h-6 w-6 text-slate-300" />
                             </div>
-                            <p className="text-[10px] text-gray-400 mt-1.5">{t('موثقة برمز QR — تحقق فوري', 'Verified with QR — instant check')}</p>
+                            <p className="text-[10px] text-gray-500 mt-1.5">{t('موثقة برمز QR — تحقق فوري', 'Verified with QR — instant check')}</p>
                           </div>
                         </div>
                       </div>
@@ -836,7 +851,7 @@ export default function HomeClient() {
 
         {/* CTA مكرر بعد الرحلة */}
         <div className="mt-10 text-center">
-          <p className="text-sm text-gray-400 mb-4">{t('هكذا يتعلم طلابك — هكذا تكسب أنت', 'This is how your students learn — and how you earn')}</p>
+          <p className="text-sm text-gray-500 mb-4">{t('هكذا يتعلم طلابك — هكذا تكسب أنت', 'This is how your students learn — and how you earn')}</p>
           <Link href="/register/teacher">
             <button className="inline-flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.02] cta-shine" style={{ background: 'linear-gradient(135deg, #d97706, #f59e0b)' }}>
               {t('أنشئ منصتك الآن', 'Create your platform now')} {locale === 'ar' ? '←' : '→'}
@@ -850,11 +865,11 @@ export default function HomeClient() {
         <div className="absolute top-10 -start-24 w-72 h-72 rounded-full bg-amber-300/15 blur-3xl" aria-hidden="true" />
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center max-w-2xl mx-auto mb-12">
-            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#d9770615', color: '#d97706' }}>
+            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#d9770615', color: '#b45309' }}>
               <Calculator className="h-4 w-4 inline me-1" />{t('قدّر دخلك من كورساتك', 'Estimate your course income')}
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('كم يمكن أن تحقّق كورساتك؟', 'How much can your courses earn you?')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('أنت تحدّد سعر كورسك، وأنت من يربح من طلابك — حرّك المؤشر لتقدير دخلك الشهري. المنصة لا تأخذ أي نسبة من مبيعاتك.', 'You set your course price and you earn from your students — move the slider to estimate your monthly income. The platform takes zero commission on your sales.')}</p>
+            <p className="text-teal-900 mt-3 text-lg">{t('أنت تحدّد سعر كورسك، وأنت من يربح من طلابك — حرّك المؤشر لتقدير دخلك الشهري. المنصة لا تأخذ أي نسبة من مبيعاتك.', 'You set your course price and you earn from your students — move the slider to estimate your monthly income. The platform takes zero commission on your sales.')}</p>
           </div>
 
           <div ref={calcRef} className="grid lg:grid-cols-2 gap-10 items-center">
@@ -874,7 +889,7 @@ export default function HomeClient() {
                     className="w-full h-2.5 rounded-full appearance-none cursor-pointer"
                     style={{ background: 'linear-gradient(90deg, #0d9488, #14b8a6)', accentColor: '#0d9488' }}
                   />
-                  <div className="flex justify-between text-[10px] text-gray-400 mt-1.5"><span>5</span><span>250</span><span>500</span></div>
+                  <div className="flex justify-between text-[10px] text-gray-500 mt-1.5"><span>5</span><span>250</span><span>500</span></div>
                 </div>
 
                 <div>
@@ -890,7 +905,7 @@ export default function HomeClient() {
                     className="w-full h-2.5 rounded-full appearance-none cursor-pointer"
                     style={{ background: 'linear-gradient(90deg, #d97706, #f59e0b)', accentColor: '#d97706' }}
                   />
-                  <div className="flex justify-between text-[10px] text-gray-400 mt-1.5"><span>5</span><span>100</span><span>200</span></div>
+                  <div className="flex justify-between text-[10px] text-gray-500 mt-1.5"><span>5</span><span>100</span><span>200</span></div>
                 </div>
               </div>
             </div>
@@ -902,15 +917,15 @@ export default function HomeClient() {
                   <p className="text-sm text-gray-500">{t('دخلك الشهري المتوقع من كورساتك', 'Your expected monthly income from your courses')}</p>
                   <p className="text-3xl font-black text-teal-700 mt-1">{formatPrice(calcRevenue)}</p>
                 </div>
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10"><Wallet className="h-6 w-6 text-teal-600" /></span>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10"><Wallet className="h-6 w-6 text-teal-700" /></span>
               </div>
 
               <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 opacity-90">
                 <div>
-                  <p className="text-sm text-gray-400">{t('رسوم المنصات الأخرى', 'Other platforms\' fees')} <span className="line-through">(20-30%)</span></p>
+                  <p className="text-sm text-gray-500">{t('رسوم المنصات الأخرى', 'Other platforms\' fees')} <span className="line-through">(20-30%)</span></p>
                   <p className="text-3xl font-black text-slate-300 mt-1 line-through">{formatPrice(calcCompetitorFee)}</p>
                 </div>
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100"><Ban className="h-6 w-6 text-slate-400" /></span>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100"><Ban className="h-6 w-6 text-slate-500" /></span>
               </div>
 
               <div className="relative overflow-hidden rounded-2xl p-[2px]" style={{ background: 'linear-gradient(135deg, #d97706, #0d9488, #d97706)' }}>
@@ -918,7 +933,7 @@ export default function HomeClient() {
                   <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '20px 20px' }} />
                   <div className="relative flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-white/60">{t('دخلك الصافي — يبقى لك بالكامل', 'Your net income — it all stays yours')}</p>
+                      <p className="text-sm text-white/80">{t('دخلك الصافي — يبقى لك بالكامل', 'Your net income — it all stays yours')}</p>
                       <p className="text-4xl font-black text-white mt-1">{formatPrice(calcRevenue)}</p>
                       <p className="text-xs font-bold mt-1" style={{ color: '#fcd34d' }}>{t('تحقّقه من مبيعات كورساتك — دون أي عمولة من المنصة', 'Earned from your course sales — the platform takes no commission')}</p>
                     </div>
@@ -932,11 +947,11 @@ export default function HomeClient() {
                 </div>
               </div>
 
-              <p className="text-xs text-gray-400 text-center">
+              <p className="text-xs text-gray-500 text-center">
                 {t('لو كنت على منصة تأخذ 20% عمولة، كنت ستخسر', 'On a platform taking a 20% commission, you would lose')} <b className="text-teal-700">{formatPrice(calcSave)}</b> {t('سنوياً — معنا يبقى لك كل شيء', 'per year — with us everything stays yours')}
               </p>
 
-              <p className="text-[11px] leading-relaxed text-gray-400 text-center">
+              <p className="text-[11px] leading-relaxed text-gray-500 text-center">
                 {t(
                   'الأرقام تقديرية لأغراض التوضيح وليست أرباحًا مضمونة، وقد لا تشمل رسوم بوابة الدفع وتكاليف الاشتراك.',
                   'Figures are illustrative estimates, not guaranteed earnings, and may exclude payment-gateway fees and subscription costs.',
@@ -957,21 +972,21 @@ export default function HomeClient() {
       <section className="py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="text-center max-w-2xl mx-auto mb-12">
-            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0d9488' }}>
+            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0f766e' }}>
               <BarChart3 className="h-4 w-4 inline me-1" />{t('لماذا نحن؟', 'Why us?')}
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('مع المنصة… أم بدونها؟', 'With the platform… or without?')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('قارن بنفسك كم سيوفر عليك الوقت ويضاعف إيرادك', 'Compare for yourself how much time it saves and revenue it multiplies')}</p>
+            <p className="text-teal-900 mt-3 text-lg">{t('قارن بنفسك كم سيوفر عليك الوقت ويضاعف إيرادك', 'Compare for yourself how much time it saves and revenue it multiplies')}</p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
             {/* بدون منصة */}
             <div className="rounded-[2rem] border-2 border-slate-200 bg-white p-7 opacity-80">
               <div className="flex items-center gap-3 mb-6">
-                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100"><X className="h-5 w-5 text-slate-400" /></span>
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100"><X className="h-5 w-5 text-slate-500" /></span>
                 <div>
                   <h3 className="font-bold text-slate-500">{t('بدون المنصة', 'Without the platform')}</h3>
-                  <p className="text-[11px] text-gray-400">{t('الطريقة اليدوية', 'The manual way')}</p>
+                  <p className="text-[11px] text-gray-500">{t('الطريقة اليدوية', 'The manual way')}</p>
                 </div>
               </div>
               <ul className="space-y-3.5">
@@ -982,7 +997,7 @@ export default function HomeClient() {
                   t('لا بطاقات تسجيل ولا تحليلات', 'No registration cards, no analytics'),
                   t('لا شهادات تلقائية لطلابك', 'No automatic certificates for your students'),
                 ].map((x, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-sm text-slate-400">
+                  <li key={i} className="flex items-start gap-2.5 text-sm text-slate-500">
                     <X className="h-4 w-4 shrink-0 mt-0.5 text-red-400" />{x}
                   </li>
                 ))}
@@ -1000,7 +1015,7 @@ export default function HomeClient() {
                   <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: 'rgba(94,234,212,0.15)', border: '1px solid rgba(94,234,212,0.3)' }}><CheckCircle className="h-5 w-5 text-teal-300" /></span>
                   <div>
                     <h3 className="font-bold text-white">{t('مع المنصة', 'With the platform')}</h3>
-                    <p className="text-[11px] text-white/50">{t('كل شيء تلقائي', 'Everything automated')}</p>
+                    <p className="text-[11px] text-white/85">{t('كل شيء تلقائي', 'Everything automated')}</p>
                   </div>
                 </div>
                 <ul className="relative space-y-3.5">
@@ -1027,11 +1042,11 @@ export default function HomeClient() {
       <section id="pricing" className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="text-center max-w-2xl mx-auto mb-8">
-            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0d9488' }}>
+            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0f766e' }}>
               <Rocket className="h-4 w-4 inline me-1" />{t('خطط واضحة، بلا مفاجآت', 'Clear plans, no surprises')}
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('اختر خطتك وابدأ اليوم', 'Pick your plan and start today')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{trialOn
+            <p className="text-teal-900 mt-3 text-lg">{trialOn
               ? t(`كل ما تربحه من كورساتك يبقى لك — لا نأخذ أي عمولة على مبيعاتك. ابدأ بتجربة مجانية ${settings.trial_days} أيام.`, `Everything your courses earn stays yours — we take zero commission on your sales. Start with a ${settings.trial_days}-day free trial.`)
               : t('كل ما تربحه من كورساتك يبقى لك — لا نأخذ أي عمولة على مبيعاتك. اختر خطتك وابدأ الآن.', 'Everything your courses earn stays yours — we take zero commission on your sales. Choose your plan and start now.')}</p>
           </div>
@@ -1046,14 +1061,14 @@ export default function HomeClient() {
               t('دعم عربي 24/7', '24/7 Arabic support'),
             ].map((x, i) => (
               <span key={i} className={`inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-white px-3 py-2 text-center text-xs font-semibold text-teal-800 shadow-sm sm:justify-start sm:px-3.5`}>
-                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-teal-600" />{x}
+                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-teal-700" />{x}
               </span>
             ))}
           </div>
 
           {/* ─── حماية الفيديوهات — مضمّنة في كل الخطط ─── */}
           <div className="mx-auto mb-6 flex max-w-3xl flex-col items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-5 py-4 text-center sm:flex-row sm:justify-center sm:gap-3">
-            <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" />
+            <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-700" />
             <p className="text-sm font-bold text-emerald-900">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
           </div>
 
@@ -1061,10 +1076,10 @@ export default function HomeClient() {
           {minMonthly !== null && (
             <div className="mx-auto mb-10 flex max-w-3xl flex-wrap items-center justify-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-white px-3.5 py-2 text-xs font-bold text-teal-800 shadow-sm">
-                <BadgeCheck className="h-3.5 w-3.5 text-teal-600" />{t(`${formatPrice(minMonthly)} بدايةً`, `From ${formatPrice(minMonthly)}`)}
+                <BadgeCheck className="h-3.5 w-3.5 text-teal-700" />{t(`${formatPrice(minMonthly)} بدايةً`, `From ${formatPrice(minMonthly)}`)}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-sm">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />{t('فيديوهات محمية', 'Protected videos')}
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-700" />{t('فيديوهات محمية', 'Protected videos')}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-white px-3.5 py-2 text-xs font-bold text-violet-800 shadow-sm">
                 <Video className="h-3.5 w-3.5 text-violet-600" />{t('عدد فيديوهات بلا حد عددي ضمن المساحة', 'No numeric video limit within your storage')}
@@ -1177,7 +1192,7 @@ export default function HomeClient() {
                       );
                     })}
                     {!allExpanded && enabledCount(p.features) > 8 && (
-                      <p className="text-xs text-gray-400 mt-1">+ {enabledCount(p.features) - 8} {t('ميزة أخرى', 'more features')}</p>
+                      <p className="text-xs text-gray-500 mt-1">+ {enabledCount(p.features) - 8} {t('ميزة أخرى', 'more features')}</p>
                     )}
                   </div>
                   <Link
@@ -1215,11 +1230,11 @@ export default function HomeClient() {
         <div className="absolute bottom-20 -end-24 w-72 h-72 rounded-full bg-amber-300/15 blur-3xl" aria-hidden="true" />
         <div className="max-w-3xl mx-auto px-4 sm:px-6 relative">
           <div className="text-center mb-14">
-            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0d9488' }}>
+            <div className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-4" style={{ backgroundColor: '#0d948815', color: '#0f766e' }}>
               <HelpCircle className="h-4 w-4 inline me-1" />{t('الأسئلة الشائعة', 'FAQ')}
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold text-teal-950">{t('لديك سؤال؟', 'Have a question?')}</h2>
-            <p className="text-teal-900/60 mt-3 text-lg">{t('كل ما تريد معرفته عن المنصة', 'Everything you want to know about the platform')}</p>
+            <p className="text-teal-900 mt-3 text-lg">{t('كل ما تريد معرفته عن المنصة', 'Everything you want to know about the platform')}</p>
           </div>
 
           <div className="space-y-3.5">
@@ -1239,10 +1254,10 @@ export default function HomeClient() {
                     className="w-full flex items-center gap-4 px-5 sm:px-6 py-4.5 sm:py-5 text-start"
                     aria-expanded={open}
                   >
-                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black transition-all duration-300 ${open ? 'bg-gradient-to-br from-teal-600 to-emerald-500 text-white shadow-brand rotate-3' : 'bg-teal-50 text-teal-600 group-hover:bg-teal-100/70'}`}>
+                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black transition-all duration-300 ${open ? 'bg-gradient-to-br from-teal-600 to-emerald-500 text-white shadow-brand rotate-3' : 'bg-teal-50 text-teal-700 group-hover:bg-teal-100/70'}`}>
                       {String(i + 1).padStart(2, '0')}
                     </span>
-                    <span className={`flex-1 font-bold text-[15px] leading-relaxed transition-colors ${open ? 'text-teal-950' : 'text-teal-900/80'}`}>
+                    <span className={`flex-1 font-bold text-[15px] leading-relaxed transition-colors ${open ? 'text-teal-950' : 'text-teal-950'}`}>
                       {t(f[0], f[0])}
                     </span>
                     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-300 ${open ? 'rotate-180 bg-gradient-to-br from-teal-600 to-emerald-500 text-white shadow-brand' : 'bg-teal-50 text-teal-500 group-hover:bg-teal-100/70'}`}>
@@ -1251,7 +1266,7 @@ export default function HomeClient() {
                   </button>
                   <div className={`grid transition-all duration-300 ease-in-out ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                     <div className="overflow-hidden">
-                      <div className="px-5 sm:px-6 pb-5 sm:pb-6 ps-[4.6rem] text-teal-900/60 text-sm leading-loose border-t border-teal-50 pt-4">
+                      <div className="px-5 sm:px-6 pb-5 sm:pb-6 ps-[4.6rem] text-teal-900 text-sm leading-loose border-t border-teal-50 pt-4">
                         <span className="inline-block w-8 h-px bg-gradient-to-r from-teal-400 to-transparent align-middle me-2" />
                         {t(f[1], f[1])}
                       </div>
@@ -1264,10 +1279,10 @@ export default function HomeClient() {
 
           {/* بطاقة تواصل */}
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4 rounded-3xl border border-teal-100 bg-white/80 backdrop-blur px-6 py-5 shadow-sm">
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500/15 to-emerald-500/15"><MessageCircle className="h-5 w-5 text-teal-600" /></span>
-            <p className="text-sm text-teal-900/70">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500/15 to-emerald-500/15"><MessageCircle className="h-5 w-5 text-teal-700" /></span>
+            <p className="text-sm text-teal-950">
               {t('لم تجد إجابتك؟', 'Didn\'t find your answer?')}{' '}
-              <a href="mailto:support@fahimni.me" className="font-bold text-teal-700 underline underline-offset-4 hover:text-teal-600 transition-colors">
+              <a href="mailto:support@fahimni.me" className="font-bold text-teal-700 underline underline-offset-4 hover:text-teal-700 transition-colors">
                 {t('تواصل مع الدعم الفني', 'Contact support')}
               </a>
             </p>
@@ -1281,7 +1296,7 @@ export default function HomeClient() {
                 <div className="relative">
                   <span className="flex h-12 w-12 items-center justify-center rounded-2xl glass mb-4"><Phone className="h-6 w-6 text-teal-200" /></span>
                   <h3 className="text-xl font-bold text-white">{t('محتار؟ نرجع عليك', 'Unsure? We\'ll call you')}</h3>
-                  <p className="text-white/60 text-sm mt-2 leading-relaxed">
+                  <p className="text-white/80 text-sm mt-2 leading-relaxed">
                     {t('اترك اسمك ورقم واتساب — أحد خبرائنا يشرح لك كل شيء خلال ساعة. بدون أي التزام.', 'Leave your name and WhatsApp number — one of our experts explains everything within an hour. No commitment.')}
                   </p>
                   <div className="mt-5 space-y-2">
@@ -1323,7 +1338,7 @@ export default function HomeClient() {
                   <button type="submit" className="w-full rounded-full py-3.5 text-white font-bold shadow-brand transition-all hover:scale-[1.01] cta-shine" style={{ background: 'linear-gradient(135deg, #25d366, #128c7e)' }}>
                     <WhatsAppIcon className="h-4 w-4 inline me-1.5" />{t('يتواصل معي خبير', 'An expert will contact me')}
                   </button>
-                  <p className="text-center text-[11px] text-gray-400">{t('بياناتك لا تُشارك مع أي طرف ثالث', 'Your data is never shared with third parties')}</p>
+                  <p className="text-center text-[11px] text-gray-500">{t('بياناتك لا تُشارك مع أي طرف ثالث', 'Your data is never shared with third parties')}</p>
                 </form>
               </div>
             </div>
@@ -1335,34 +1350,35 @@ export default function HomeClient() {
       <div id="quran-teachers">
         <QuranTeacherBanner />
       </div>
+      </main>
 
       {/* ─── Footer ─────────────────────────────────────── */}
       <footer className="border-t border-teal-900" style={{ background: '#0f2e2b' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-14 grid sm:grid-cols-2 lg:grid-cols-4 gap-10">
           <div>
             <div className="flex items-center gap-2.5 mb-4">
-              <img src={resolveLogoUrl(settings.logo_url)} alt="logo" className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/20" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+              <img src={resolveLogoUrl(settings.logo_url)} alt="" className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/20" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
               <span className="text-lg font-bold text-white">{settings.platform_name || t('منصة فهمني', 'Fahimni')}</span>
             </div>
-            <p className="text-white/50 text-sm leading-relaxed">{t('منصة تعليمية متكاملة تساعد المعلمين على بناء علامتهم التجارية وزيادة إيراداتهم.', 'An all-in-one platform helping teachers build their brand and grow revenue.')}</p>
+            <p className="text-white/85 text-sm leading-relaxed">{t('منصة تعليمية متكاملة تساعد المعلمين على بناء علامتهم التجارية وزيادة إيراداتهم.', 'An all-in-one platform helping teachers build their brand and grow revenue.')}</p>
           </div>
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('المنصة', 'Platform')}</h4>
+            <h3 className="text-white font-semibold mb-4">{t('المنصة', 'Platform')}</h3>
             <ul className="space-y-2.5 text-sm">
-              <li><button onClick={() => scrollTo('features')} className="text-white/50 hover:text-white transition-colors">{t('المميزات', 'Features')}</button></li>
-              <li><button onClick={() => scrollTo('pricing')} className="text-white/50 hover:text-white transition-colors">{t('الأسعار', 'Pricing')}</button></li>
+              <li><button onClick={() => scrollTo('features')} className="text-white/85 hover:text-white transition-colors">{t('المميزات', 'Features')}</button></li>
+              <li><button onClick={() => scrollTo('pricing')} className="text-white/85 hover:text-white transition-colors">{t('الأسعار', 'Pricing')}</button></li>
             </ul>
           </div>
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('حسابك', 'Your Account')}</h4>
+            <h3 className="text-white font-semibold mb-4">{t('حسابك', 'Your Account')}</h3>
             <ul className="space-y-2.5 text-sm">
-              <li><Link href="/register/teacher" className="text-white/50 hover:text-white transition-colors">{t('إنشاء حساب معلم', 'Create Teacher Account')}</Link></li>
-              <li><Link href="/teacher/login" className="text-white/50 hover:text-white transition-colors">{t('دخول المعلمين', 'Teacher Login')}</Link></li>
+              <li><Link href="/register/teacher" className="text-white/85 hover:text-white transition-colors">{t('إنشاء حساب معلم', 'Create Teacher Account')}</Link></li>
+              <li><Link href="/teacher/login" className="text-white/85 hover:text-white transition-colors">{t('دخول المعلمين', 'Teacher Login')}</Link></li>
             </ul>
           </div>
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('تواصل معنا', 'Contact Us')}</h4>
-            <ul className="space-y-2.5 text-sm text-white/50">
+            <h3 className="text-white font-semibold mb-4">{t('تواصل معنا', 'Contact Us')}</h3>
+            <ul className="space-y-2.5 text-sm text-white/85">
               <li className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-400" />{t('دعم فني 24/7', '24/7 Support')}</li>
               <li className="flex items-center gap-2"><Clock className="h-4 w-4 text-teal-300" />{t('رد خلال ساعة', 'Reply within an hour')}</li>
               <li className="flex items-center gap-2"><span className="text-teal-300">@</span>support@fahimni.me</li>
@@ -1370,13 +1386,13 @@ export default function HomeClient() {
           </div>
         </div>
           <div className="border-t border-white/10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-xs text-white/40">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-xs text-white/80">
             <span>© 2026 {settings.platform_name || 'منصة فهمني'} · {t('جميع الحقوق محفوظة', 'All rights reserved')}</span>
             <div className="flex gap-4">
-              <a href="/privacy" className="hover:text-white/70">{t('سياسة الخصوصية', 'Privacy Policy')}</a>
-              <a href="/terms" className="hover:text-white/70">{t('الشروط والأحكام', 'Terms & Conditions')}</a>
-              <a href="/refund-policy" className="hover:text-white/70">{t('سياسة استرداد الأموال', 'Refund Policy')}</a>
-              <a href="/contact" className="hover:text-white/70">{t('اتصل بنا', 'Contact Us')}</a>
+              <a href="/privacy" className="hover:text-white/95">{t('سياسة الخصوصية', 'Privacy Policy')}</a>
+              <a href="/terms" className="hover:text-white/95">{t('الشروط والأحكام', 'Terms & Conditions')}</a>
+              <a href="/refund-policy" className="hover:text-white/95">{t('سياسة استرداد الأموال', 'Refund Policy')}</a>
+              <a href="/contact" className="hover:text-white/95">{t('اتصل بنا', 'Contact Us')}</a>
             </div>
           </div>
         </div>

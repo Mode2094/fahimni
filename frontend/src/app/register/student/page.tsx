@@ -11,6 +11,7 @@ import GoogleLoginButton from '@/components/auth/google-login-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
@@ -35,6 +36,10 @@ function StudentRegisterForm() {
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', confirm: '' });
   const [load, setLoad] = useState(false);
   const [googleLoad, setGoogleLoad] = useState(false);
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [captchaId, setCaptchaId] = useState('');
+  // The math CAPTCHA id is single-use server-side; remounting mints a fresh one.
+  const [captchaKey, setCaptchaKey] = useState(0);
   const u = (f: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [f]: e.target.value });
 
   // Fire `signup_start` once per visit.
@@ -53,10 +58,10 @@ function StudentRegisterForm() {
     try {
       const res = await authFetch('/api/session/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone, password: form.password, password_confirmation: form.confirm, tenant_slug: searchParams.get('tenant_slug') || searchParams.get('slug') }),
+        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone, password: form.password, password_confirmation: form.confirm, tenant_slug: searchParams.get('tenant_slug') || searchParams.get('slug'), captcha_id: captchaId, captcha_answer: captchaAnswer }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(data.message || 'Failed'); setCaptchaKey((k) => k + 1); return; }
             localStorage.setItem('user', JSON.stringify(data.user));
       setSessionHint(true);
       useAuth.setState({ user: data.user, loading: false, initialized: true });
@@ -66,7 +71,7 @@ function StudentRegisterForm() {
       const from = searchParams.get('from');
       if (from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/\\')) router.push(from);
       else router.push('/my-learning');
-    } catch { toast.error(locale === 'ar' ? 'فشل التسجيل' : 'Failed'); }
+    } catch { toast.error(locale === 'ar' ? 'فشل التسجيل' : 'Failed'); setCaptchaKey((k) => k + 1); }
     setLoad(false);
   };
 
@@ -106,13 +111,14 @@ function StudentRegisterForm() {
           <div className="relative flex justify-center text-xs"><span className="bg-white px-3 text-gray-400">{locale === 'ar' ? 'أو سجل بالبريد الإلكتروني' : 'or sign up with email'}</span></div>
         </div>
         <form onSubmit={submit} className="space-y-4 bg-white p-6 rounded-2xl border shadow-sm">
-          <div className="space-y-2"><Label>{locale === 'ar' ? 'الاسم الكامل' : 'Full name'}</Label><Input value={form.name} onChange={u('name')} required className="h-11" /></div>
-          <div className="space-y-2"><Label>{locale === 'ar' ? 'البريد الإلكتروني' : 'Email'}</Label><Input type="email" value={form.email} onChange={u('email')} required className="h-11" /></div>
-          <div className="space-y-2"><Label>{locale === 'ar' ? 'رقم الهاتف (اختياري)' : 'Phone (optional)'}</Label><Input type="tel" value={form.phone} onChange={u('phone')} className="h-11" /></div>
-          <div className="space-y-2"><Label>{locale === 'ar' ? 'كلمة المرور' : 'Password'}</Label><Input type="password" value={form.password} onChange={u('password')} required className="h-11" /></div>
-          <div className="space-y-2"><Label>{locale === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm password'}</Label><Input type="password" value={form.confirm} onChange={u('confirm')} required className="h-11" /></div>
+          <div className="space-y-2"><Label htmlFor="sreg-name">{locale === 'ar' ? 'الاسم الكامل' : 'Full name'}</Label><Input id="sreg-name" value={form.name} onChange={u('name')} required className="h-11" autoComplete="name" /></div>
+          <div className="space-y-2"><Label htmlFor="sreg-email">{locale === 'ar' ? 'البريد الإلكتروني' : 'Email'}</Label><Input id="sreg-email" type="email" value={form.email} onChange={u('email')} required className="h-11" autoComplete="email" /></div>
+          <div className="space-y-2"><Label htmlFor="sreg-phone">{locale === 'ar' ? 'رقم الهاتف (اختياري)' : 'Phone (optional)'}</Label><Input id="sreg-phone" type="tel" value={form.phone} onChange={u('phone')} className="h-11" autoComplete="tel" /></div>
+          <div className="space-y-2"><Label htmlFor="sreg-password">{locale === 'ar' ? 'كلمة المرور' : 'Password'}</Label><Input id="sreg-password" type="password" value={form.password} onChange={u('password')} required className="h-11" autoComplete="new-password" /></div>
+          <div className="space-y-2"><Label htmlFor="sreg-confirm">{locale === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm password'}</Label><Input id="sreg-confirm" type="password" value={form.confirm} onChange={u('confirm')} required className="h-11" autoComplete="new-password" /></div>
+          <Captcha key={captchaKey} value={captchaAnswer} onChange={setCaptchaAnswer} onId={setCaptchaId} locale={locale} />
           <Button type="submit" disabled={load} className="w-full h-12 rounded-xl text-white" style={{ background: 'linear-gradient(135deg, #0891b2, #059669)' }}>
-            {load ? <Loader2 className="h-5 w-5 animate-spin" /> : (locale === 'ar' ? 'إنشاء حساب الطالب' : 'Create Student Account')}
+            {load ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : (locale === 'ar' ? 'إنشاء حساب الطالب' : 'Create Student Account')}
           </Button>
         </form>
         <p className="text-center text-sm text-gray-500">{locale === 'ar' ? 'لديك حساب؟' : 'Have an account?'} <Link href="/student/login" className="text-cyan-600 font-medium hover:underline">{locale === 'ar' ? 'تسجيل دخول' : 'Login'}</Link></p>

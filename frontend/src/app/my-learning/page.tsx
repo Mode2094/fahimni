@@ -181,7 +181,7 @@ export default function MyLearningPage() {
                   <Badge className="shrink-0 rounded-full border-0 bg-slate-100 text-slate-600">{t('الحالة غير متاحة', 'Status unavailable')}</Badge>
                 )}
               </div>
-              <p className="mt-1.5 text-[11px] text-gray-400">
+              <p className="mt-1.5 text-[11px] text-gray-500">
                 {course.progress === null
                   ? t('بيانات التقدم غير متاحة حالياً', 'Progress data is unavailable')
                   : course.progress === 0
@@ -199,7 +199,7 @@ export default function MyLearningPage() {
         className="absolute top-1/2 -translate-y-1/2 end-4 flex h-11 w-11 items-center justify-center rounded-full border bg-white shadow-sm transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
         aria-label={favorites.has(course.id) ? t('إزالة من المفضلة', 'Remove from favorites') : t('إضافة للمفضلة', 'Add to favorites')}
       >
-        <Heart className={`h-4 w-4 ${favorites.has(course.id) ? 'fill-rose-500 text-rose-500' : 'text-gray-400'}`} aria-hidden="true" />
+        <Heart className={`h-4 w-4 ${favorites.has(course.id) ? 'fill-rose-500 text-rose-500' : 'text-gray-500'}`} aria-hidden="true" />
       </button>
     </div>
   );
@@ -218,7 +218,7 @@ export default function MyLearningPage() {
               {greeting}، {user?.name?.split(' ')[0] || t('طالبنا العزيز', 'Dear student')}
             </span>
             <h1 className="text-2xl sm:text-3xl font-bold text-white leading-snug">{t('رحلتك التعليمية', 'Your learning journey')}</h1>
-            <p className="text-white/65 text-sm sm:text-base mt-1.5 max-w-lg">
+            <p className="text-white/80 text-sm sm:text-base mt-1.5 max-w-lg">
               {t('تابع كورساتك، استكمل دروسك، وحقق أهدافك — التقدم يحفظ تلقائياً.', 'Track your courses, continue your lessons and reach your goals — progress is saved automatically.')}
             </p>
             <div className="flex flex-wrap gap-2.5 mt-5">
@@ -235,7 +235,7 @@ export default function MyLearningPage() {
               <div key={i} className="glass rounded-2xl px-4 py-3 text-center">
                 <s.icon className="mx-auto h-5 w-5 text-teal-200 mb-1.5" />
                 <div className="text-xl font-black text-white">{s.value}</div>
-                <div className="text-[10px] text-white/60 mt-0.5">{s.label}</div>
+                <div className="text-[10px] text-white/75 mt-0.5">{s.label}</div>
               </div>
             ))}
           </div>
@@ -462,7 +462,7 @@ export default function MyLearningPage() {
               </div>
               <div>
                 <p className="text-xl font-bold">{t('لم تسجل في أي كورس بعد', 'No enrollments yet')}</p>
-                <p className="text-gray-400 text-sm mt-2 max-w-sm">
+                <p className="text-gray-500 text-sm mt-2 max-w-sm">
                   {t('احصل على بطاقة تسجيل من معلمك وأدخل رمزها أعلاه ليظهر كورسك هنا فوراً', 'Get an enrollment card from your teacher and enter its code above to start learning')}
                 </p>
               </div>

@@ -21,15 +21,27 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 const DEFAULT_SECTIONS = ['stats', 'about', 'courses', 'card', 'testimonials', 'faq', 'cta'];
 
-export default function TeacherLanding({ params }: { params: Promise<{ slug: string }> | { slug: string } }) {
+export default function TeacherLanding({
+  params,
+  initialSite = null,
+  initialCourses = [],
+}: {
+  params: Promise<{ slug: string }> | { slug: string };
+  /** Server-rendered tenant payload: prevents the duplicate client fetch + spinner flash. */
+  initialSite?: any;
+  initialCourses?: any[];
+}) {
   // Next.js hands pages a promise; tests may pass the resolved object directly.
   const paramsOrPromise = params as any;
   const { slug } = paramsOrPromise && typeof paramsOrPromise.then === 'function' ? use(paramsOrPromise) : paramsOrPromise;
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
-  const [site, setSite] = useState<any>(null);
-  const [courses, setCourses] = useState<any[]>([]);
+  const [site, setSite] = useState<any>(initialSite);
+  const [courses, setCourses] = useState<any[]>(initialCourses);
+  // The server already rendered the page when it handed us the payload, so a
+  // spinner here would be a second, pointless loading state.
+  const [loading, setLoading] = useState(!initialSite);
   const [slideIdx, setSlideIdx] = useState(0);
   const [loggedIn, setLoggedIn] = useState(false);
   const [cardCode, setCardCode] = useState('');
@@ -66,10 +78,27 @@ export default function TeacherLanding({ params }: { params: Promise<{ slug: str
 
   useEffect(() => {
     setLoggedIn(!!localStorage.getItem('lms_authed'));
+    // Server payload present → no duplicate client fetch, no spinner flash.
+    if (initialSite) return;
+
+    let alive = true;
+    let gotSite = false;
     Promise.all([
-      fetch(`${API}/public/${slug}`).then((r) => r.json()).then((d) => setSite(d.site || null)).catch(() => {}),
-      fetch(`${API}/public/${slug}/courses`).then((r) => r.json()).then((d) => setCourses(d.courses || [])).catch(() => {}),
-    ]);
+      fetch(`${API}/public/${slug}`)
+        .then((r) => r.json())
+        .then((d) => { if (alive && d?.site) { gotSite = true; setSite(d.site); } })
+        .catch(() => {}),
+      fetch(`${API}/public/${slug}/courses`)
+        .then((r) => r.json())
+        .then((d) => { if (alive) setCourses(Array.isArray(d?.courses) ? d.courses : []); })
+        .catch(() => {}),
+    ]).finally(() => {
+      if (!alive) return;
+      setLoading(false);
+      // Unknown slug: stop the pulsing logo and say so instead of hanging.
+      if (!gotSite) setSite(null);
+    });
+    return () => { alive = false; };
   }, [slug]);
 
   const cfg = site?.site_config || {};
@@ -127,12 +156,31 @@ export default function TeacherLanding({ params }: { params: Promise<{ slug: str
     setRedeeming(false);
   };
 
-  if (!site) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="flex h-14 w-14 animate-pulse items-center justify-center rounded-2xl shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
           <GraduationCap className="h-7 w-7 text-white" />
         </div>
+      </div>
+    );
+  }
+
+  if (!site) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+          <GraduationCap className="h-8 w-8 text-white" />
+        </div>
+        <h1 className="text-2xl font-bold">{t('لم نعثر على هذه المنصة', 'Platform not found')}</h1>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          {t('تحقق من الرابط، أو اطلب الرابط الصحيح من معلمك.', 'Check the link, or ask your teacher for the correct one.')}
+        </p>
+        <Link href="/">
+          <Button className="h-12 min-h-[48px] rounded-full px-8 text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+            {t('الصفحة الرئيسية', 'Home')}
+          </Button>
+        </Link>
       </div>
     );
   }

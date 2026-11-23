@@ -24,7 +24,7 @@ export function SessionStatusBanner() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-x-0 top-0 z-[70] flex items-center justify-center gap-2 bg-amber-500 px-3 py-2 text-center text-xs font-medium text-white shadow-md sm:text-sm"
+      className="fixed inset-x-0 top-0 z-[70] flex items-center justify-center gap-2 border-b border-amber-300 bg-amber-100 px-3 py-2 text-center text-xs font-medium text-amber-950 shadow-md sm:text-sm"
     >
       <WifiOff className="h-4 w-4 shrink-0" />
       <span>
@@ -36,7 +36,7 @@ export function SessionStatusBanner() {
         type="button"
         onClick={() => void refreshSession()}
         disabled={loading}
-        className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-1 font-semibold transition hover:bg-white/30 disabled:opacity-60"
+        className="inline-flex items-center gap-1 rounded-full border border-amber-400 bg-amber-200 px-2.5 py-1 font-semibold text-amber-950 transition hover:bg-amber-300 disabled:opacity-60"
       >
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
         {ar ? 'إعادة المحاولة' : 'Retry'}

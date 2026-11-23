@@ -16,12 +16,36 @@ import { Users, BookOpen, ClipboardList, ClipboardCheck, FileQuestion, BellRing,
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
+/** Real work items surfaced on the dashboard (from GET /dashboard). */
 type DashboardWorkItems = {
   pending_assignment_submissions: number;
   pending_exam_reviews: number;
   pending_bookings: number;
   unread_admin_notifications: number;
 };
+
+/** Last-known snapshots so a failed request never turns real numbers into 0. */
+const CACHE = {
+  plan: 'fahimni.cache.teacher.plan',
+  analytics: 'fahimni.cache.teacher.analytics',
+};
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode / quota: caching is best-effort only.
+  }
+}
 
 export default function TeacherDashboard() {
   const { user, check } = useAuth();
@@ -43,6 +67,10 @@ export default function TeacherDashboard() {
   const [platform, setPlatform] = useState<{ url: string; slug: string; customDomain: string | null; verified: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // Which data sources failed to load — drives the honest error notice instead
+  // of the old "?? 0" fallbacks that showed a fake zero on a network error.
+  const [planFailed, setPlanFailed] = useState(false);
+  const [analyticsFailed, setAnalyticsFailed] = useState(false);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -78,8 +106,30 @@ export default function TeacherDashboard() {
         user?.is_super_admin ? Promise.resolve(null) : fetch(`${API}/dashboard`, { headers: headers() }).catch(() => null),
       ]);
 
-      if (planR?.ok) { const d = await planR.json(); setPlan(d.plan || null); setUsage(d.usage || null); }
-      if (anaR?.ok) { const d = await anaR.json(); setAnalytics(d.overview || null); }
+      if (planR?.ok) {
+        const d = await planR.json();
+        const snapshot = { plan: d.plan || null, usage: d.usage || null };
+        setPlan(snapshot.plan);
+        setUsage(snapshot.usage);
+        setPlanFailed(false);
+        writeCache(CACHE.plan, snapshot);
+      } else {
+        // Never blank real numbers on a transient error: keep the last-known
+        // snapshot and flag the failure so the tiles are marked as stale.
+        const cached = readCache<{ plan: any; usage: any }>(CACHE.plan);
+        if (cached) { setPlan(cached.plan); setUsage(cached.usage); }
+        setPlanFailed(true);
+      }
+      if (anaR?.ok) {
+        const d = await anaR.json();
+        setAnalytics(d.overview || null);
+        setAnalyticsFailed(false);
+        writeCache(CACHE.analytics, d.overview || null);
+      } else {
+        const cached = readCache<any>(CACHE.analytics);
+        if (cached) setAnalytics(cached);
+        setAnalyticsFailed(true);
+      }
       if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
       if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
       if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
@@ -194,14 +244,21 @@ export default function TeacherDashboard() {
     { label: t('نسبة النجاح', 'Pass rate'), key: 'pass' },
   ];
 
+  // A stat is only "0" when the data actually resolved; when a request failed
+  // and there is no last-known snapshot it is unknown and renders as "—".
+  const usageUnknown = planFailed && !usage;
+  const analyticsUnknown = analyticsFailed && !analytics;
+  const usageValue = (v: number | undefined) => (usageUnknown ? '—' : (v ?? 0));
+  const attemptsValue = () => (analyticsUnknown ? '—' : (analytics?.total_attempts ?? 0));
+
   const stats = [
-    { label: t('الطلاب', 'Students'), value: usage?.students?.used ?? 0, href: '/students', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
-    { label: t('الكورسات', 'Courses'), value: usage?.courses?.used ?? 0, href: '/courses', icon: BookOpen, tone: 'bg-sky-500/10 text-sky-600' },
-    { label: t('الاختبارات', 'Exams'), value: usage?.exams?.used ?? 0, href: '/courses', icon: ClipboardList, tone: 'bg-violet-500/10 text-violet-600' },
-    { label: t('المحاولات', 'Attempts'), value: analytics?.total_attempts ?? 0, href: '/analytics', icon: FileQuestion, tone: 'bg-amber-500/10 text-amber-600' },
+    { label: t('الطلاب', 'Students'), value: usageValue(usage?.students?.used), href: '/students', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
+    { label: t('الكورسات', 'Courses'), value: usageValue(usage?.courses?.used), href: '/courses', icon: BookOpen, tone: 'bg-sky-500/10 text-sky-600' },
+    { label: t('الاختبارات', 'Exams'), value: usageValue(usage?.exams?.used), href: '/courses', icon: ClipboardList, tone: 'bg-violet-500/10 text-violet-600' },
+    { label: t('المحاولات', 'Attempts'), value: attemptsValue(), href: '/analytics', icon: FileQuestion, tone: 'bg-amber-500/10 text-amber-600' },
   ];
 
-  const hasData = (analytics?.total_attempts ?? 0) > 0 || (analytics?.watch_seconds ?? 0) > 0;
+  const hasData = !analyticsUnknown && ((analytics?.total_attempts ?? 0) > 0 || (analytics?.watch_seconds ?? 0) > 0);
   const canReviewExams = !!user?.is_super_admin || !!user?.permissions?.includes('exams.manage');
   const workQueue = [
     ...(workItems && canReviewExams && workItems.pending_exam_reviews > 0 ? [{
@@ -294,6 +351,26 @@ export default function TeacherDashboard() {
           </div>
         </div>
       </section>
+
+      {/* ─── تنبيه تعذّر التحميل (لا نعرض صفراً كاذباً) ──── */}
+      {(planFailed || analyticsFailed) && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+          data-testid="dashboard-load-error"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1 font-semibold">
+            {t('تعذر تحميل بعض البيانات', 'Some data could not be loaded')}
+            {((planFailed && plan) || (analyticsFailed && analytics)) &&
+              t(' — تُعرض آخر قيمة معروفة', ' — showing the last known values')}
+          </span>
+          <Button size="sm" variant="outline" className="rounded-full bg-white" onClick={loadAll}>
+            {t('إعادة المحاولة', 'Retry')}
+          </Button>
+        </div>
+      )}
 
       {/* ─── مهام ومواعيد تحتاج متابعة ──────────────── */}
       {!user?.is_super_admin && <section
@@ -539,10 +616,10 @@ export default function TeacherDashboard() {
           <h3 className="mb-3 flex items-center gap-2 text-sm font-bold"><Film className="h-4 w-4 text-teal-600" />{t('الوسائط والملفات', 'Media & files')}</h3>
           <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             {[
-              { label: t('الفيديوهات', 'Videos'), value: `${usage?.videos?.used ?? 0} / ${usage?.videos?.unlimited ? '∞' : (usage?.videos?.limit ?? 0)}` },
-              { label: t('جلسات البث', 'Live sessions'), value: `${usage?.live_sessions?.used ?? 0} / ${usage?.live_sessions?.unlimited ? '∞' : (usage?.live_sessions?.limit ?? 0)}` },
-              { label: t('الملفات', 'Files'), value: `${usage?.files?.used ?? 0} / ${usage?.files?.unlimited ? '∞' : (usage?.files?.limit ?? 0)}` },
-              { label: t('ملفات PDF', 'PDFs'), value: `${usage?.pdfs?.used ?? 0} / ${usage?.pdfs?.unlimited ? '∞' : (usage?.pdfs?.limit ?? 0)}` },
+              { label: t('الفيديوهات', 'Videos'), value: usageUnknown ? '—' : `${usage?.videos?.used ?? 0} / ${usage?.videos?.unlimited ? '∞' : (usage?.videos?.limit ?? 0)}` },
+              { label: t('جلسات البث', 'Live sessions'), value: usageUnknown ? '—' : `${usage?.live_sessions?.used ?? 0} / ${usage?.live_sessions?.unlimited ? '∞' : (usage?.live_sessions?.limit ?? 0)}` },
+              { label: t('الملفات', 'Files'), value: usageUnknown ? '—' : `${usage?.files?.used ?? 0} / ${usage?.files?.unlimited ? '∞' : (usage?.files?.limit ?? 0)}` },
+              { label: t('ملفات PDF', 'PDFs'), value: usageUnknown ? '—' : `${usage?.pdfs?.used ?? 0} / ${usage?.pdfs?.unlimited ? '∞' : (usage?.pdfs?.limit ?? 0)}` },
             ].map((m, i) => (
               <div key={i} className="rounded-xl border border-slate-100 px-4 py-3">
                 <p className="text-xs font-semibold text-gray-500">{m.label}</p>
@@ -555,7 +632,9 @@ export default function TeacherDashboard() {
 
       {/* ─── الأداء ──────────────────────────────────── */}
       <SectionCard icon={Activity} title={t('الأداء', 'Performance')} forceOpen={isDesktop}>
-        {!hasData ? (
+        {analyticsUnknown ? (
+          <p className="py-4 text-center text-sm font-semibold text-amber-700">{t('تعذر تحميل بيانات الأداء', 'Performance data could not be loaded')}</p>
+        ) : !hasData ? (
           <p className="py-4 text-center text-sm text-gray-400">{t('لا توجد بيانات كافية بعد — أضف اختبارات وفيديوهات لطلابك', 'Not enough data yet — add exams and videos for your students')}</p>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">

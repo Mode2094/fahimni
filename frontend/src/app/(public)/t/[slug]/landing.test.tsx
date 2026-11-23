@@ -115,6 +115,37 @@ describe('Teacher landing — student-facing storefront', () => {
       '/t/trial-teacher/register?course=c-1',
     );
   });
+
+  it('renders the server payload without a duplicate fetch or spinner flash', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <TeacherLanding
+        params={{ slug: 'trial-teacher' }}
+        initialSite={SITE}
+        initialCourses={COURSES.courses}
+      />,
+    );
+
+    // Content is painted on the first render…
+    expect(screen.getAllByText('أكاديمية التجربة').length).toBeGreaterThan(0);
+    expect(screen.getByText('أساسيات البرمجة')).toBeInTheDocument();
+    // …and the client never repeats the requests the server already made.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows a real not-found page (not an endless spinner) for an unknown platform', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: unknown) => (String(url).includes('/courses') ? ok({ courses: [] }) : ok({ site: null }))),
+    );
+
+    render(<TeacherLanding params={{ slug: 'ghost' }} />);
+
+    expect(await screen.findByText('لم نعثر على هذه المنصة')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /استكشف الكورسات/ })).toBeNull();
+  });
 });
 
 describe('Teacher landing — every template and custom identity', () => {

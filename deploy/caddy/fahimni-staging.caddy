@@ -23,7 +23,9 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# NOTE: Permissions-Policy is intentionally NOT set here (the Next.js
+		# app owns it — see fahimni.caddy); a stricter edge value would block
+		# camera/microphone/payment on the platform UI.
 		-Server
 	}
 }
