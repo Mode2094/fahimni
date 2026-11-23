@@ -11,7 +11,7 @@ use App\Models\ExamAnswer;
 use App\Models\ExamAttempt;
 use App\Models\ExamQuestion;
 use App\Models\Question;
-use App\Services\InteractiveHtmlGrader;
+use App\Services\ExamPaper;
 use App\Services\StudentGamificationService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
@@ -23,80 +23,7 @@ class ExamAttemptController extends Controller
 {
     use AuthorizesTenantAccess;
 
-    /**
-     * Metadata keys that encode the answer key. Never serialized to students
-     * in their raw form (writing keywords, fill-blank answers, canonical
-     * ordering).
-     */
-    private const ANSWER_KEY_METADATA_KEYS = ['keywords', 'answers'];
-
-    /**
-     * Build the student-safe metadata payload for a question:
-     *  - image_url is always visible
-     *  - drag_drop/matching pairs are rendered with both columns shuffled so
-     *    the correct mapping is not aligned (the pairing is inherent to the
-     *    interaction type)
-     *  - ordering items are sent shuffled; grading compares against the
-     *    canonical order stored server-side
-     *  - fill_blank sends only the number of blanks
-     */
-    private function studentSafeMetadata(array $metadata, string $questionType): array
-    {
-        // The sandboxed HTML types (interactive_html / custom_html) use an
-        // explicit ALLOWLIST, not a denylist: the teacher's html/css/js is
-        // display-only and the hidden answer key lives in metadata.grading.
-        // Only the interactive payload may reach a student, so a future
-        // metadata key can never leak by default.
-        if (Question::isSandboxType($questionType)) {
-            $interactive = is_array($metadata['interactive'] ?? null) ? $metadata['interactive'] : [];
-
-            return [
-                'interactive' => [
-                    'html' => (string) ($interactive['html'] ?? ''),
-                    'css' => (string) ($interactive['css'] ?? ''),
-                    'js' => (string) ($interactive['js'] ?? ''),
-                    'height' => (int) ($interactive['height'] ?? 360),
-                    'auto_capture' => (bool) ($interactive['auto_capture'] ?? true),
-                ],
-            ];
-        }
-
-        $safe = collect($metadata)->except(self::ANSWER_KEY_METADATA_KEYS)->all();
-
-        if ($questionType === 'drag_drop' || $questionType === 'matching') {
-            $pairs = $metadata['pairs'] ?? [];
-
-            if (is_array($pairs) && $pairs !== []) {
-                $left = collect($pairs)->pluck('left')->shuffle()->values()->all();
-                $right = collect($pairs)->pluck('right')->shuffle()->values()->all();
-
-                $safe['pairs'] = array_map(fn ($l, $i) => [
-                    'left' => $l,
-                    'right' => $right[$i] ?? null,
-                ], $left, array_keys($left));
-            } else {
-                $safe['pairs'] = [];
-            }
-        }
-
-        if ($questionType === 'ordering') {
-            $items = $metadata['items'] ?? [];
-
-            if (is_array($items) && $items !== []) {
-                $safe['items'] = collect($items)->shuffle()->values()->all();
-            } else {
-                $safe['items'] = [];
-            }
-        }
-
-        if ($questionType === 'fill_blank') {
-            $safe['blanks_count'] = is_array($metadata['answers'] ?? null)
-                ? count($metadata['answers'])
-                : 0;
-        }
-
-        return $safe;
-    }
+    public function __construct(private readonly ExamPaper $paper) {}
 
     public function index(Request $request, string $examId): JsonResponse
     {
@@ -140,41 +67,64 @@ class ExamAttemptController extends Controller
     }
 
     /**
-     * Build the student-facing question payload for an exam's questions.
+     * Build the student-facing question payload straight from the LIVE bank.
      *
-     * Shared by a real attempt (`start`) and the teacher preview so the preview
-     * is exactly the student experience: identical sanitised metadata (the
-     * answer key never leaks) and identical ordering/shuffling.
+     * Used by the teacher preview (which should always reflect the current
+     * bank) so the preview is exactly the student experience: identical
+     * sanitised metadata (the answer key never leaks) and identical
+     * ordering/shuffling. Real attempts serve their frozen paper instead.
      */
-    private function questionsPayload(\Illuminate\Support\Collection $examQuestions, Exam $exam): \Illuminate\Support\Collection
+    private function livePayload(\Illuminate\Support\Collection $examQuestions, Exam $exam): \Illuminate\Support\Collection
     {
-        return $examQuestions->map(function ($eq) use ($exam) {
-            $q = $eq->question;
-            $metadata = $q->metadata ?? [];
-
-            $data = [
+        return $this->paper->payload(
+            ['version' => ExamPaper::VERSION, 'questions' => $examQuestions->map(fn ($eq) => [
                 'exam_question_id' => $eq->id,
-                'question_id' => $q->id,
-                'question_type' => $q->question_type,
-                'question_text' => $q->question_text,
-                'points' => $eq->points_override ?? $q->points,
-            ];
+                'question_id' => $eq->question->id,
+                'question_type' => $eq->question->question_type,
+                'question_text' => $eq->question->question_text,
+                'points' => (float) ($eq->points_override ?? $eq->question->points),
+                'options' => collect($eq->question->options ?? [])->map(fn ($o) => [
+                    'id' => $o->id,
+                    'option_text' => $o->option_text,
+                    'sort_order' => (int) $o->sort_order,
+                    'is_correct' => (bool) $o->is_correct,
+                ])->values()->all(),
+                'metadata' => $eq->question->metadata ?? [],
+                'image_url' => data_get($eq->question->metadata, 'image_url'),
+            ])->values()->all()],
+            $exam
+        );
+    }
 
-            if ($exam->shuffle_options && $q->options) {
-                $q->options = $q->options->shuffle();
-            }
+    /**
+     * Student payload from a frozen paper. Sandboxed questions whose display
+     * payload was dropped to keep the paper small are re-served from the live
+     * bank (their grading key stays frozen).
+     */
+    private function paperPayload(array $paper, Exam $exam): \Illuminate\Support\Collection
+    {
+        $liveSandbox = $this->liveSandboxQuestions($paper);
 
-            $data['options'] = $q->options->map(fn ($o) => [
-                'id' => $o->id,
-                'option_text' => $o->option_text,
-                'sort_order' => $o->sort_order,
-            ]);
+        return $this->paper->payload($paper, $exam, $liveSandbox);
+    }
 
-            $data['metadata'] = $this->studentSafeMetadata($metadata, $q->question_type);
-            $data['image_url'] = $metadata['image_url'] ?? null;
+    /**
+     * @return array<string, Question>
+     */
+    private function liveSandboxQuestions(array $paper): array
+    {
+        $ids = collect($paper['questions'] ?? [])
+            ->filter(fn ($e) => ! empty($e['display_live']))
+            ->pluck('question_id')
+            ->filter()
+            ->unique()
+            ->values();
 
-            return $data;
-        })->values();
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        return Question::whereIn('id', $ids)->get()->keyBy('id')->all();
     }
 
     /**
@@ -200,7 +150,7 @@ class ExamAttemptController extends Controller
         return response()->json([
             'preview' => true,
             'attempt' => null,
-            'questions' => $this->questionsPayload($examQuestions, $exam),
+            'questions' => $this->livePayload($examQuestions, $exam),
             'deadline' => $exam->duration_minutes > 0 ? now()->addMinutes($exam->duration_minutes)->toIso8601String() : null,
             'attempts_left' => null,
             'exam' => [
@@ -254,7 +204,7 @@ class ExamAttemptController extends Controller
             $pointsMax = (float) ($examQuestion->points_override ?? $question->points);
             $given = $ans['given_answer'] ?? null;
 
-            $isCorrect = $this->checkAnswer($question, $given);
+            $isCorrect = $this->paper->checkAnswer($question, $given);
             $pointsEarned = $isCorrect === true ? $pointsMax : 0.0;
             $earned += $pointsEarned;
 
@@ -434,37 +384,51 @@ class ExamAttemptController extends Controller
             ->reject(fn ($eq) => ! $eq->question)
             ->values();
 
-        // A resumed attempt replays the exact questions/order it was drawn with
-        // (a random draw or shuffle must not hand out a different, easier set).
-        $questionOrder = $attempt->metadata['question_order'] ?? null;
+        $metadata = $attempt->metadata ?? [];
+        $paper = $this->paper->isValid($metadata[ExamPaper::KEY] ?? null)
+            ? $metadata[ExamPaper::KEY]
+            : null;
 
-        if ($resumed && is_array($questionOrder) && $questionOrder !== []) {
-            $order = array_flip($questionOrder);
-            $examQuestions = $examQuestions
-                ->filter(fn ($eq) => isset($order[$eq->question_id]))
-                ->sortBy(fn ($eq) => $order[$eq->question_id])
-                ->values();
+        if ($paper !== null) {
+            // A resumed attempt serves its FROZEN paper: the exact questions,
+            // options, points and grading keys it was drawn with — a later
+            // edit to the question bank cannot change a live attempt.
+            $questionsData = $this->paperPayload($paper, $exam);
         } else {
-            if ($exam->random_questions_count && $exam->random_questions_count > 0 && $exam->random_questions_count < $examQuestions->count()) {
-                $examQuestions = $examQuestions->shuffle()->take($exam->random_questions_count)->values();
+            // Legacy resumed attempt (started before papers existed) or a fresh
+            // one. Replay the original draw from question_order when present.
+            $questionOrder = $metadata['question_order'] ?? null;
+
+            if ($resumed && is_array($questionOrder) && $questionOrder !== []) {
+                $order = array_flip($questionOrder);
+                $examQuestions = $examQuestions
+                    ->filter(fn ($eq) => isset($order[$eq->question_id]))
+                    ->sortBy(fn ($eq) => $order[$eq->question_id])
+                    ->values();
+            } else {
+                if ($exam->random_questions_count && $exam->random_questions_count > 0 && $exam->random_questions_count < $examQuestions->count()) {
+                    $examQuestions = $examQuestions->shuffle()->take($exam->random_questions_count)->values();
+                }
+
+                if ($exam->shuffle_questions) {
+                    $examQuestions = $examQuestions->shuffle()->values();
+                }
             }
 
-            if ($exam->shuffle_questions) {
-                $examQuestions = $examQuestions->shuffle()->values();
-            }
+            $paper = $this->paper->build($examQuestions);
+            $questionsData = $this->paperPayload($paper, $exam);
 
             if (! $resumed) {
-                // Remember the presented order so a reload/refresh continues the
-                // same paper instead of reshuffling into a fresh one.
+                // Freeze the paper and its order so a reload/refresh continues
+                // the same, unchanged paper instead of reshuffling into a new one.
                 $attempt->update([
-                    'metadata' => array_merge($attempt->metadata ?? [], [
-                        'question_order' => $examQuestions->pluck('question_id')->values()->toArray(),
+                    'metadata' => array_merge($metadata, [
+                        'question_order' => $this->paper->questionOrder($paper),
+                        ExamPaper::KEY => $paper,
                     ]),
                 ]);
             }
         }
-
-        $questionsData = $this->questionsPayload($examQuestions, $exam);
 
         $attemptsUsed = $this->scopeToTerm(
             ExamAttempt::where('exam_id', $exam->id)
@@ -488,7 +452,7 @@ class ExamAttemptController extends Controller
             ? ExamAnswer::where('exam_attempt_id', $attempt->id)
                 ->get()
                 ->mapWithKeys(fn (ExamAnswer $a) => [
-                    (string) $a->exam_question_id => $this->decodeStoredAnswer($a->given_answer),
+                    (string) $a->exam_question_id => $this->paper->decodeStoredAnswer($a->given_answer),
                 ])
                 ->all()
             : (object) [];
@@ -602,18 +566,36 @@ class ExamAttemptController extends Controller
             $autoSubmitted = true;
         }
 
+        // Grade against the FROZEN paper the student was actually served, so a
+        // teacher editing the bank mid-attempt can never change a live
+        // attempt's questions, options or grading keys. A legacy attempt
+        // without a stored paper falls back to the live bank.
+        $attemptMetadata = $attempt->metadata ?? [];
+        $paper = $this->paper->isValid($attemptMetadata[ExamPaper::KEY] ?? null)
+            ? $attemptMetadata[ExamPaper::KEY]
+            : null;
+
+        if ($paper !== null) {
+            $grading = collect($paper['questions'])->keyBy('exam_question_id')->map(fn (array $entry) => [
+                'question' => $this->paper->gradable($entry),
+                'points_max' => (float) $entry['points'],
+            ]);
+        } else {
+            $grading = ExamQuestion::where('exam_id', $exam->id)
+                ->with('question.options')
+                ->get()
+                ->reject(fn ($eq) => ! $eq->question)
+                ->keyBy('id')
+                ->map(fn ($eq) => [
+                    'question' => $eq->question,
+                    'points_max' => (float) ($eq->points_override ?? $eq->question->points),
+                ]);
+        }
+
         // Total points always derive from the full server-side question set,
         // never from the submitted subset — otherwise answering one easy
         // question would yield 100%.
-        $examQuestions = ExamQuestion::where('exam_id', $exam->id)
-            ->with('question.options')
-            ->get()
-            ->reject(fn ($eq) => ! $eq->question)
-            ->keyBy('id');
-
-        $totalPoints = (float) $examQuestions->sum(
-            fn ($eq) => $eq->points_override ?? $eq->question->points
-        );
+        $totalPoints = (float) $grading->sum(fn ($g) => $g['points_max']);
 
         $earnedPoints = 0.0;
         $answersData = [];
@@ -621,25 +603,26 @@ class ExamAttemptController extends Controller
         $needsReview = false;
 
         foreach ($request->answers as $ans) {
-            $examQuestion = $examQuestions[$ans['exam_question_id']] ?? null;
-            if (! $examQuestion) {
+            $examQuestionId = $ans['exam_question_id'];
+            $gradingEntry = $grading[$examQuestionId] ?? null;
+            if (! $gradingEntry) {
                 abort(422, 'Invalid question for this exam.');
             }
 
-            if (isset($seenExamQuestionIds[$examQuestion->id])) {
+            if (isset($seenExamQuestionIds[$examQuestionId])) {
                 abort(422, 'Duplicate answer for the same question.');
             }
-            $seenExamQuestionIds[$examQuestion->id] = true;
+            $seenExamQuestionIds[$examQuestionId] = true;
 
-            $question = $examQuestion->question;
-            $pointsMax = (float) ($examQuestion->points_override ?? $question->points);
+            $question = $gradingEntry['question'];
+            $pointsMax = $gradingEntry['points_max'];
 
             // Writing and file answers cannot be auto-graded truthfully, and a
             // sandboxed HTML question without a decisive key must be reviewed
             // too: the attempt is flagged and only the teacher's score counts.
             if (in_array($question->question_type, ['writing', 'file_upload'], true)
                 || (Question::isSandboxType($question->question_type)
-                    && $this->interactiveGrader()->requiresManualReview($question))) {
+                    && $this->paper->requiresManualReview($question))) {
                 $needsReview = true;
             }
 
@@ -647,11 +630,11 @@ class ExamAttemptController extends Controller
             // persisted (scoped to those types so existing answer limits for the
             // eight original types are unchanged).
             if (Question::isSandboxType($question->question_type)
-                && ! $this->interactiveGrader()->isWithinSizeLimit($ans['given_answer'])) {
+                && ! $this->paper->isWithinSizeLimit($ans['given_answer'])) {
                 abort(422, 'Answer is too large.');
             }
 
-            $isCorrect = $this->checkAnswer($question, $ans['given_answer']);
+            $isCorrect = $this->paper->checkAnswer($question, $ans['given_answer']);
             $pointsEarned = $isCorrect === true ? $pointsMax : 0;
             $earnedPoints += $pointsEarned;
 
@@ -659,7 +642,7 @@ class ExamAttemptController extends Controller
                 'id' => UuidV7::generate(),
                 'tenant_id' => $exam->tenant_id,
                 'exam_attempt_id' => $attempt->id,
-                'exam_question_id' => $examQuestion->id,
+                'exam_question_id' => $examQuestionId,
                 'question_id' => $question->id,
                 'given_answer' => json_encode($ans['given_answer']),
                 'is_correct' => $isCorrect,
@@ -843,12 +826,23 @@ class ExamAttemptController extends Controller
     {
         $exam = $attempt->exam()->first();
 
-        $examQuestions = ExamQuestion::where('exam_id', $attempt->exam_id)
-            ->with('question')
-            ->get()
-            ->reject(fn ($eq) => ! $eq->question);
+        // Prefer the frozen paper's total so an expired attempt is scored
+        // against the exact questions the student was served.
+        $paper = $this->paper->isValid(($attempt->metadata ?? [])[ExamPaper::KEY] ?? null)
+            ? ($attempt->metadata ?? [])[ExamPaper::KEY]
+            : null;
 
-        $totalPoints = (float) $examQuestions->sum(fn ($eq) => $eq->points_override ?? $eq->question->points);
+        if ($paper !== null) {
+            $totalPoints = (float) collect($paper['questions'])->sum(fn ($e) => $e['points']);
+        } else {
+            $examQuestions = ExamQuestion::where('exam_id', $attempt->exam_id)
+                ->with('question')
+                ->get()
+                ->reject(fn ($eq) => ! $eq->question);
+
+            $totalPoints = (float) $examQuestions->sum(fn ($eq) => $eq->points_override ?? $eq->question->points);
+        }
+
         $percentage = $totalPoints > 0 ? 0 : 0;
 
         $attempt->update([
@@ -868,11 +862,6 @@ class ExamAttemptController extends Controller
     private function perPage(Request $request): int
     {
         return min(max((int) $request->input('per_page', 20), 1), 100);
-    }
-
-    private function interactiveGrader(): InteractiveHtmlGrader
-    {
-        return app(InteractiveHtmlGrader::class);
     }
 
     /**
@@ -904,153 +893,5 @@ class ExamAttemptController extends Controller
         return $termId === null
             ? $query->whereNull('academic_term_id')
             : $query->where('academic_term_id', $termId);
-    }
-
-    /**
-     * Reverse the JSON encoding used when persisting an answer, so a resumed
-     * attempt receives the same type (string/array/object) the student sent.
-     */
-    private function decodeStoredAnswer(mixed $stored): mixed
-    {
-        if (! is_string($stored)) {
-            return $stored;
-        }
-
-        $decoded = json_decode($stored, true);
-
-        return json_last_error() === JSON_ERROR_NONE ? $decoded : $stored;
-    }
-
-    private function checkAnswer(Question $question, mixed $givenAnswer): ?bool
-    {
-        if (Question::isSandboxType($question->question_type)) {
-            return $this->interactiveGrader()->grade($question, $givenAnswer);
-        }
-
-        if ($question->question_type === 'multiple_choice') {
-            $correctOptions = $question->options->where('is_correct', true)->pluck('id')->toArray();
-
-            if (is_array($givenAnswer)) {
-                sort($givenAnswer);
-                sort($correctOptions);
-
-                return $givenAnswer === $correctOptions;
-            }
-
-            return in_array($givenAnswer, $correctOptions);
-        }
-
-        if ($question->question_type === 'true_false') {
-            $correctOption = $question->options->where('is_correct', true)->first();
-
-            if (is_array($givenAnswer)) {
-                return in_array($correctOption?->id, $givenAnswer);
-            }
-
-            // Students answer with the literal 'true'/'false' (the option
-            // list itself is hidden), or with the option id/text from
-            // teacher-facing tools.
-            if (is_string($givenAnswer)) {
-                $normalized = strtolower(trim($givenAnswer));
-                $optionText = strtolower(trim((string) ($correctOption?->option_text ?? '')));
-
-                if ($normalized === 'true' || $normalized === '1') {
-                    return in_array($optionText, ['true', 'صحيح', 'صح', '1'], true);
-                }
-                if ($normalized === 'false' || $normalized === '0') {
-                    return in_array($optionText, ['false', 'خطأ', '0'], true);
-                }
-            }
-
-            return $givenAnswer === $correctOption?->id || $givenAnswer === $correctOption?->option_text;
-        }
-
-        $metadata = $question->metadata ?? [];
-
-        if ($question->question_type === 'drag_drop' || $question->question_type === 'matching') {
-            $pairs = $metadata['pairs'] ?? [];
-            $given = is_array($givenAnswer) ? $givenAnswer : (json_decode((string) $givenAnswer, true) ?? []);
-
-            $correct = [];
-            foreach ($pairs as $pair) {
-                $correct[trim((string) ($pair['left'] ?? ''))] = trim((string) ($pair['right'] ?? ''));
-            }
-
-            $givenMap = [];
-            foreach ($given as $g) {
-                if (is_array($g) && isset($g['left'], $g['right'])) {
-                    $givenMap[trim((string) $g['left'])] = trim((string) $g['right']);
-                }
-            }
-
-            if (count($givenMap) !== count($correct)) {
-                return false;
-            }
-
-            foreach ($correct as $left => $right) {
-                if (($givenMap[$left] ?? null) !== $right) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        if ($question->question_type === 'ordering') {
-            $correctOrder = array_map(fn ($i) => trim((string) $i), $metadata['items'] ?? []);
-            $given = is_array($givenAnswer) ? $givenAnswer : (json_decode((string) $givenAnswer, true) ?? []);
-
-            if (count($given) !== count($correctOrder)) {
-                return false;
-            }
-
-            foreach ($correctOrder as $i => $item) {
-                if (trim((string) ($given[$i] ?? '')) !== $item) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        if ($question->question_type === 'fill_blank') {
-            $correctAnswers = array_map(fn ($a) => strtolower(trim((string) $a)), $metadata['answers'] ?? []);
-            $given = is_array($givenAnswer) ? $givenAnswer : (json_decode((string) $givenAnswer, true) ?? []);
-
-            if (count($given) !== count($correctAnswers)) {
-                return false;
-            }
-
-            foreach ($correctAnswers as $i => $answer) {
-                if (strtolower(trim((string) ($given[$i] ?? ''))) !== $answer) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        if ($question->question_type === 'file_upload') {
-            return trim((string) $givenAnswer) !== '';
-        }
-
-        if ($question->question_type === 'writing') {
-            $keywords = array_map(fn ($k) => strtolower(trim((string) $k)), $metadata['keywords'] ?? []);
-            $text = strtolower(trim((string) $givenAnswer));
-
-            if (empty($keywords) || $text === '') {
-                return false;
-            }
-
-            foreach ($keywords as $keyword) {
-                if (str_contains($text, $keyword)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        return false;
     }
 }

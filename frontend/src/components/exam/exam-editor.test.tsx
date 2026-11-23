@@ -36,6 +36,7 @@ function mockFetch() {
     const ok = (json: any) => ({ ok: true, status: 200, json: async () => json, headers: new Map() } as any);
     if (url.includes('/questions/reorder')) return ok({ message: 'reordered' });
     if (url.includes('/add-questions')) return ok({ message: 'added', exam });
+    if (url.includes('/draw-questions')) return ok({ message: 'drawn', added_count: 2, exam });
     if (method === 'DELETE') return ok({ message: 'ok' });
     if (method === 'PUT') return ok({ exam });
     return ok({});
@@ -128,6 +129,33 @@ describe('ExamEditor', () => {
     const put = calls.find((c) => c.method === 'PUT' && c.url.endsWith('/exams/exam-1'));
     expect(put?.body.title).toBe('اختبار الوحدة');
     expect(put?.body.is_published).toBe(false);
+  });
+
+  it('persists option shuffling and a random per-attempt question count', async () => {
+    renderEditor();
+    fireEvent.click(screen.getByText('الإعدادات'));
+
+    fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '4' } });
+    fireEvent.click(screen.getByLabelText('خلط ترتيب الخيارات داخل كل سؤال'));
+    fireEvent.click(screen.getByText('حفظ الإعدادات'));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const put = calls.find((c) => c.method === 'PUT' && c.url.endsWith('/exams/exam-1'));
+    expect(put?.body.random_questions_count).toBe(4);
+    expect(put?.body.shuffle_options).toBe(true);
+  });
+
+  it('draws a random set of the bank questions into the exam', async () => {
+    renderEditor();
+    fireEvent.click(screen.getByText('سحب عشوائي من البنك'));
+
+    fireEvent.change(screen.getByDisplayValue('5'), { target: { value: '3' } });
+    fireEvent.click(screen.getByText('اسحب وأضف'));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const draw = calls.find((c) => c.url.includes('/draw-questions'));
+    expect(draw?.method).toBe('POST');
+    expect(draw?.body.count).toBe(3);
   });
 
   it('renders inside the course content flow, never as a full-screen overlay', () => {

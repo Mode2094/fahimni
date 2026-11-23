@@ -316,6 +316,7 @@ Route::prefix('v1')->group(function () {
             Route::post('exams/{exam}/publish', [ExamController::class, 'publish']);
             Route::post('exams/{exam}/duplicate', [ExamController::class, 'duplicate']);
             Route::post('exams/{exam}/add-questions', [ExamController::class, 'addQuestions']);
+            Route::post('exams/{exam}/draw-questions', [ExamController::class, 'drawQuestions']);
             Route::post('exams/{exam}/questions/reorder', [ExamController::class, 'reorderQuestions']);
             Route::delete('exams/{exam}/questions/{question}', [ExamController::class, 'removeQuestion']);
 
