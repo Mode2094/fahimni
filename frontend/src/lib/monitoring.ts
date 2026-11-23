@@ -35,6 +35,21 @@ type IngestEvent = {
 let queue: IngestEvent[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Background / best-effort endpoints. Their failures (offline, restarting
+ * backend, logged-out 401) are expected and must not flood the error feed.
+ */
+const QUIET_PATHS = [
+  '/monitoring/ingest',
+  '/notifications/unread-count',
+  '/conversations/unread-total',
+  '/admin-notifications/unread-count',
+];
+
+export function isQuietPath(path: string): boolean {
+  return QUIET_PATHS.some((p) => path.includes(p));
+}
+
 function canSend(): boolean {
   if (typeof window === 'undefined') return false;
   if (process.env.NODE_ENV !== 'production') return true; // dev is fine
@@ -77,6 +92,15 @@ export function reportError(event: IngestEvent) {
 }
 
 function onWindowError(event: ErrorEvent) {
+  // Resource load failures (<script>/<link>/<img>) and cross-origin scripts
+  // report as opaque events ("Script error.") with no useful stack. They are
+  // third-party/CDN noise (Google Fonts, connect.facebook.net…), not app bugs.
+  const target = event.target as { tagName?: string } | null;
+  if (target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK' || target.tagName === 'IMG')) {
+    return;
+  }
+  if (!event.message || /^Script error\.?$/i.test(event.message)) return;
+
   reportError({
     app: 'web',
     type: 'error',
@@ -131,16 +155,20 @@ export function instrumentFetch() {
   if (typeof window === 'undefined') return;
   const originalFetch = window.fetch;
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
     try {
       const res = await originalFetch(input, init);
-      if (res.status >= 500) {
-        const path = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
+      // 5xx from background/best-effort endpoints (unread badges, the ingest
+      // endpoint itself) is expected noise, not a reportable error.
+      if (res.status >= 500 && !isQuietPath(path)) {
         reportHttpError(path, res.status, init?.method);
       }
       return res;
     } catch (error) {
-      const path = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
-      reportHttpError(path, undefined, init?.method);
+      // A deliberate abort is normal; only real network failures are reported.
+      if ((error as any)?.name !== 'AbortError' && !isQuietPath(path)) {
+        reportHttpError(path, undefined, init?.method);
+      }
       throw error;
     }
   };

@@ -4,10 +4,13 @@ namespace Tests\Feature;
 
 use App\Models\FrontendError;
 use App\Models\MonitoringAlert;
+use App\Models\MonitoringSlowRequest;
 use App\Models\MonitoringSnapshot;
 use App\Models\User;
+use App\Monitoring\AlertDispatcher;
+use App\Monitoring\HealthService;
+use App\Monitoring\MetricsRegistry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class MonitoringTest extends TestCase
@@ -41,7 +44,7 @@ class MonitoringTest extends TestCase
         // Redis may or may not be reachable in the test environment
         // (inside the dev container it is). The contract is: healthy (200)
         // when everything is up, degraded (503) otherwise — shape must hold.
-        $cacheUp = app(\App\Monitoring\HealthService::class)->ready()['checks']['redis'] === 'ok';
+        $cacheUp = app(HealthService::class)->ready()['checks']['redis'] === 'ok';
 
         $response->assertStatus($cacheUp ? 200 : 503)
             ->assertJsonPath('status', $cacheUp ? 'ok' : 'degraded')
@@ -55,7 +58,7 @@ class MonitoringTest extends TestCase
         $response = $this->getJson('/api/health');
 
         // Redis reachable → healthy (200), otherwise degraded (503).
-        $cacheUp = app(\App\Monitoring\HealthService::class)->legacy()['cache'] === true;
+        $cacheUp = app(HealthService::class)->legacy()['cache'] === true;
 
         $response->assertStatus($cacheUp ? 200 : 503)
             ->assertJsonPath('status', $cacheUp ? 'ok' : 'degraded')
@@ -69,9 +72,9 @@ class MonitoringTest extends TestCase
         // Trigger a request that will be recorded by the middleware.
         $this->getJson('/api/health/live');
 
-        $this->assertTrue(\App\Monitoring\MetricsRegistry::counter('requests.total') > 0);
+        $this->assertTrue(MetricsRegistry::counter('requests.total') > 0);
 
-        $slow = \App\Models\MonitoringSlowRequest::count();
+        $slow = MonitoringSlowRequest::count();
         $this->assertGreaterThanOrEqual(0, $slow);
     }
 
@@ -195,5 +198,54 @@ class MonitoringTest extends TestCase
         config()->set('monitoring.ssl.cert_path', storage_path('monitoring/nonexistent.pem'));
 
         $this->artisan('monitoring:check')->assertSuccessful();
+    }
+
+    /**
+     * Regression: load thresholds were absolute (1.0 / 1.5) on a 2-vCPU host,
+     * so a half-loaded box raised CRITICALs. The dispatcher now divides by the
+     * core count, making the configured values per-core ratios.
+     */
+    public function test_load_alert_thresholds_are_per_core(): void
+    {
+        $dispatcher = app(AlertDispatcher::class);
+
+        // 2 cores, load 1.4 = 0.70/core → below the 1.0 warning → no alert.
+        $dispatcher->evaluate(['host' => ['loadavg_1' => 1.4, 'cpu_cores' => 2]]);
+        $this->assertDatabaseMissing('monitoring_alerts', ['source' => 'host.load']);
+
+        // Same load on 1 core = 1.40/core → warning.
+        $dispatcher->evaluate(['host' => ['loadavg_1' => 1.4, 'cpu_cores' => 1]]);
+        $this->assertDatabaseHas('monitoring_alerts', ['source' => 'host.load', 'level' => 'warning']);
+
+        // 2 cores, load 3.2 = 1.60/core → critical.
+        $dispatcher->evaluate(['host' => ['loadavg_1' => 3.2, 'cpu_cores' => 2]]);
+        $this->assertDatabaseHas('monitoring_alerts', ['source' => 'host.load', 'level' => 'critical']);
+    }
+
+    /**
+     * The dashboard accumulated stale open alerts (disk %, load…) that never
+     * cleared once the metric recovered. An evaluation that no longer reports
+     * a source auto-resolves its open alerts.
+     */
+    public function test_alerts_auto_resolve_when_the_condition_clears(): void
+    {
+        MonitoringAlert::create([
+            'level' => 'warning',
+            'source' => 'host.cpu',
+            'key' => 'host.cpu:stale',
+            'message' => 'CPU at 88% (warning threshold 70%)',
+            'context' => [],
+            'status' => MonitoringAlert::STATUS_OPEN,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'occurrences' => 3,
+        ]);
+
+        app(AlertDispatcher::class)->evaluate(['host' => ['loadavg_1' => 0.1, 'cpu_cores' => 2]]);
+
+        $this->assertDatabaseHas('monitoring_alerts', [
+            'source' => 'host.cpu',
+            'status' => MonitoringAlert::STATUS_RESOLVED,
+        ]);
     }
 }

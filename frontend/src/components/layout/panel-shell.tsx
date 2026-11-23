@@ -60,15 +60,31 @@ function SidebarNav({ groups, collapsed, variant, showAccount = true }: SidebarP
     return 0;
   };
 
-  const isActive = (item: NavItem) => {
-    if (path === item.href) return true;
-    if (item.href !== '/' && path.startsWith(item.href + '/')) return true;
-    return (item.match ?? []).some((m) => m !== '/' && path.startsWith(m + '/'));
-  };
+  const isActive = (item: NavItem) => item.href === activeHref;
 
   const visibleGroups = groups
     .map((g) => ({ ...g, items: g.items.filter((i) => (!i.gate || gates[i.gate]) && !(i.hideWithApp && settings.student_app_hidden)) }))
     .filter((g) => g.items.length > 0);
+
+  // Exactly one nav item is highlighted: an exact/tab match wins over a section
+  // prefix, and a deeper prefix wins over a shallower one. Without this,
+  // `/admin/invoices` (a tab of «المبيعات») highlighted nothing, and
+  // `/admin/monitoring/frontend` highlighted both itself and its parent.
+  const normPath = path.replace(/\/+$/, '') || '/';
+  const allItems = groups.flatMap((g) => g.items);
+  let activeHref: string | null =
+    allItems.find((i) => i.href === normPath || (i.match ?? []).includes(normPath))?.href ?? null;
+  if (!activeHref) {
+    let bestLen = -1;
+    for (const item of allItems) {
+      for (const m of [item.href, ...(item.match ?? [])]) {
+        if (m && m !== '/' && normPath.startsWith(m + '/') && m.length > bestLen) {
+          activeHref = item.href;
+          bestLen = m.length;
+        }
+      }
+    }
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -308,7 +324,8 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
         >
           <div className="grid grid-cols-5">
             {STUDENT_BOTTOM_NAV.map((item) => {
-              const active = path === item.href || (item.match ?? []).some((m) => m !== '/' && path.startsWith(m + '/'));
+              const norm = path.replace(/\/+$/, '') || '/';
+              const active = norm === item.href || (item.match ?? []).some((m) => m !== '/' && (norm === m || norm.startsWith(m + '/')));
               const label = locale === 'ar' ? item.ar : item.en;
               return (
                 <a
