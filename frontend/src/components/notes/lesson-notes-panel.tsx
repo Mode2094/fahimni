@@ -8,6 +8,7 @@ import { formatClock } from '@/lib/watch-position';
 import { canJumpToNote, positionProblemLabel, type LessonNote } from '@/lib/lesson-notes';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import {
   Bookmark, NotebookPen, Trash2, Pencil, Play, X, Check,
@@ -127,7 +128,7 @@ export default function LessonNotesPanel({
   };
 
   const remove = async (note: LessonNote) => {
-    if (!window.confirm(t('حذف هذه الملاحظة؟', 'Delete this note?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه الملاحظة؟', 'Delete this note?') }))) return;
     setBusyId(note.id);
     try {
       await notesApi.remove(note.id);

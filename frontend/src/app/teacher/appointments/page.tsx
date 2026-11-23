@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog, promptDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -88,7 +89,7 @@ export default function TeacherAppointmentsPage() {
   };
 
   const removeAvailability = async (id: string) => {
-    if (!window.confirm(t('حذف فترة التوفر هذه؟', 'Delete this availability slot?'))) return;
+    if (!(await confirmDialog({ description: t('حذف فترة التوفر هذه؟', 'Delete this availability slot?') }))) return;
     setRemoving(id);
     try {
       const res = await fetch(`${API}/teacher/availabilities/${id}`, { method: 'DELETE', headers: headers() });
@@ -112,7 +113,7 @@ export default function TeacherAppointmentsPage() {
   };
 
   const confirmWithLink = async (b: any) => {
-    const url = prompt(t('رابط الاجتماع (اختياري)', 'Meeting link (optional)'));
+    const url = await promptDialog({ inputLabel: t('رابط الاجتماع (اختياري)', 'Meeting link (optional)') });
     if (url === null) return;
     await setStatus(b, 'confirmed', url || undefined);
   };
@@ -148,9 +149,9 @@ export default function TeacherAppointmentsPage() {
           {tab === 'availability' && <Button onClick={openAdd} className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}><Plus className="h-4 w-4" /> {t('فترة توفر', 'Add availability')}</Button>}
       </div>
 
-      <div className="flex gap-2 rounded-full bg-slate-100/80 p-1 w-fit">
-        <button aria-selected={tab === 'bookings'} onClick={() => setTab('bookings')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'bookings' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('الحجوزات', 'Bookings')}</button>
-        <button aria-selected={tab === 'availability'} onClick={() => setTab('availability')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'availability' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('أوقات التوفر', 'Availability')}</button>
+      <div role="tablist" aria-label={t('الحجوزات وأوقات التوفر', 'Bookings and availability')} className="flex gap-2 rounded-full bg-slate-100/80 p-1 w-fit">
+        <button role="tab" type="button" aria-selected={tab === 'bookings'} onClick={() => setTab('bookings')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'bookings' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('الحجوزات', 'Bookings')}</button>
+        <button role="tab" type="button" aria-selected={tab === 'availability'} onClick={() => setTab('availability')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'availability' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('أوقات التوفر', 'Availability')}</button>
       </div>
 
       {loading ? <CardSkeleton count={3} /> : tab === 'availability' ? (

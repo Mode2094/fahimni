@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -100,7 +101,7 @@ export default function TeacherSchedulePage() {
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm(t('حذف هذا الدرس نهائياً؟', 'Delete this lesson permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الدرس نهائياً؟', 'Delete this lesson permanently?') }))) return;
     try {
       const res = await fetch(`${API}/teacher/scheduled-lessons/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();

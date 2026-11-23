@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { useUnsavedChangesWarning } from '@/lib/use-unsaved-changes';
 import { Switch } from '@/components/ui/switch';
 import Link from 'next/link';
 import QRCode from 'qrcode';
@@ -44,6 +45,14 @@ export default function TeacherSettingsPage() {
   const [copied, setCopied] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
 
+  // Last-saved snapshots — compared against live state to show the
+  // unsaved-changes guard. Kept in a ref so saving never triggers a re-render.
+  const savedRef = useRef<{ policy: any; filePolicy: any; videoSecurity: any }>({
+    policy: null,
+    filePolicy: null,
+    videoSecurity: null,
+  });
+
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
     const tid = localStorage.getItem('tenant_id');
@@ -53,11 +62,11 @@ export default function TeacherSettingsPage() {
   useEffect(() => {
     if (!check()) return;
     fetch(`${API}/teacher/device-policy`, { headers: headers() })
-      .then(r => r.json()).then(dd => setPolicy(dd.policy || null)).catch(() => {});
+      .then(r => r.json()).then(dd => { const p = dd.policy || null; setPolicy(p); savedRef.current.policy = p; }).catch(() => {});
     fetch(`${API}/teacher/file-policy`, { headers: headers() })
-      .then(r => r.json()).then(dd => setFilePolicy(dd.policy || null)).catch(() => {});
+      .then(r => r.json()).then(dd => { const p = dd.policy || null; setFilePolicy(p); savedRef.current.filePolicy = p; }).catch(() => {});
     fetch(`${API}/teacher/video-security`, { headers: headers() })
-      .then(r => r.json()).then(dd => setVideoSecurity(dd || null)).catch(() => {});
+      .then(r => r.json()).then(dd => { const v = dd || null; setVideoSecurity(v); savedRef.current.videoSecurity = v; }).catch(() => {});
     fetch(`${API}/teacher/site-design`, { headers: headers() })
       .then(r => r.json()).then(d => setSite(d.site || null)).catch(() => {});
     fetch(`${API}/tenants`, { headers: { Accept: 'application/json' } })
@@ -68,6 +77,13 @@ export default function TeacherSettingsPage() {
   }, [check()]);
 
   const pageUrl = typeof window !== 'undefined' && mySlug ? `${window.location.origin}/t/${mySlug}` : '';
+
+  // Block accidental close/reload while settings edits are unsaved.
+  const dirty =
+    JSON.stringify(policy) !== JSON.stringify(savedRef.current.policy) ||
+    JSON.stringify(filePolicy) !== JSON.stringify(savedRef.current.filePolicy) ||
+    JSON.stringify(videoSecurity) !== JSON.stringify(savedRef.current.videoSecurity);
+  useUnsavedChangesWarning(dirty);
 
   // توليد QR عند الحاجة (مشاركة صفحتك)
   useEffect(() => {
@@ -102,6 +118,7 @@ export default function TeacherSettingsPage() {
     try {
       const res = await fetch(`${API}/teacher/device-policy`, { method: 'PUT', headers: headers(), body: JSON.stringify(policy) });
       if (!res.ok) throw new Error();
+      savedRef.current.policy = policy;
       toast.success(t('تم حفظ سياسة الأجهزة — تطبق على كل طلابك فوراً', 'Device policy saved — applies to all your students now'));
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ سياسة الأجهزة', 'Could not save the device policy'))); }
     setSavingPolicy(false);
@@ -113,6 +130,7 @@ export default function TeacherSettingsPage() {
     try {
       const res = await fetch(`${API}/teacher/file-policy`, { method: 'PUT', headers: headers(), body: JSON.stringify(filePolicy) });
       if (!res.ok) throw new Error();
+      savedRef.current.filePolicy = filePolicy;
       toast.success(t('تم حفظ إعدادات الملفات — تطبق على كل دروسك فوراً', 'File policy saved — applies to all your lessons now'));
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ إعدادات الملفات', 'Could not save the file policy'))); }
     setSavingFilePolicy(false);
@@ -234,9 +252,9 @@ export default function TeacherSettingsPage() {
       <div className="grid lg:grid-cols-[260px_1fr] gap-6 items-start">
         {/* شريط التبويبات */}
         <aside className="lg:sticky lg:top-20 space-y-1.5">
-          <div className="flex lg:flex-col gap-1.5 p-1.5 bg-white rounded-2xl border shadow-sm overflow-x-auto lg:overflow-visible">
+          <div role="tablist" aria-label={t('أقسام الإعدادات', 'Settings sections')} className="flex lg:flex-col gap-1.5 p-1.5 bg-white rounded-2xl border shadow-sm overflow-x-auto lg:overflow-visible">
             {tabs.map((tb) => (
-              <button key={tb.id} onClick={() => setTab(tb.id)} aria-selected={tab === tb.id}
+              <button key={tb.id} role="tab" type="button" onClick={() => setTab(tb.id)} aria-selected={tab === tb.id}
                 className={cn('group flex shrink-0 items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all text-start',
                   tab === tb.id
                     ? 'bg-gradient-to-r from-teal-600 to-teal-500 text-white shadow-brand'
@@ -455,6 +473,7 @@ export default function TeacherSettingsPage() {
                         if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('فشل الحفظ', 'Save failed')); return; }
                         const d = await res.json();
                         setVideoSecurity({ ...videoSecurity, settings: d.settings });
+                        savedRef.current.videoSecurity = { ...videoSecurity, settings: d.settings };
                         toast.success(t('تم حفظ إعدادات حماية الفيديو — تطبق فوراً على كل الفيديوهات', 'Video security saved — applies to all videos instantly'));
                       } catch { toast.error(t('فشل الحفظ', 'Save failed')); }
                       setSavingVideo(false);

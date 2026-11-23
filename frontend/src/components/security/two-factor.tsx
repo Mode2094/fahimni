@@ -64,7 +64,7 @@ export default function TwoFactorPanel() {
       if (!res.ok) { toast.error(d.message || 'Failed'); return; }
       setSetup(d);
       setPassword('');
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setBusy(false);
   };
 
@@ -77,7 +77,7 @@ export default function TwoFactorPanel() {
       if (!res.ok) { toast.error(d.message || 'Failed'); return; }
       toast.success(t('تم تفعيل المصادقة الثنائية', '2FA enabled'));
       setEnabled(true); setSetup(null); setCode('');
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setBusy(false);
   };
 
@@ -91,7 +91,7 @@ export default function TwoFactorPanel() {
       if (!res.ok) { toast.error(d.message || 'Failed'); return; }
       toast.success(t('تم تعطيل المصادقة الثنائية', '2FA disabled'));
       setEnabled(false); setCode(''); setPassword('');
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setBusy(false);
   };
 

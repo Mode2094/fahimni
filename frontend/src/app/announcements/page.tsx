@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Select } from '@/components/ui/select';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -129,7 +130,7 @@ export default function AnnouncementsPage() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm(t('حذف هذا الإعلان نهائياً؟', 'Delete this announcement permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الإعلان نهائياً؟', 'Delete this announcement permanently?') }))) return;
     setDeletingId(id);
     try {
       await announcementsApi.remove(id);

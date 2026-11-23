@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import {
   NotebookPen, Search, Bookmark, Clock, Trash2, Pencil, X, Check,
@@ -94,7 +95,7 @@ export default function MyNotesPage() {
   };
 
   const remove = async (note: LessonNote) => {
-    if (!window.confirm(t('حذف هذه الملاحظة؟', 'Delete this note?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه الملاحظة؟', 'Delete this note?') }))) return;
     setBusyId(note.id);
     try {
       await notesApi.remove(note.id);

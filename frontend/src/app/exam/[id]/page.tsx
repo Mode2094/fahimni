@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Loader2, AlertTriangle, Clock, CheckCircle, Trophy, XCircle, ArrowLeft, RotateCcw, ShieldAlert, Pencil } from 'lucide-react';
 import { QuestionRenderer, type AnswerValue } from '@/components/exam/question-renderer';
 import { Latex } from '@/components/exam/latex';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -390,13 +391,15 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
 
   // Submitting ends the attempt for good; if questions are still blank, make
   // that explicit instead of silently dropping them.
-  const confirmSubmit = () => {
+  const confirmSubmit = async () => {
     if (previewMode) { submit(); return; }
     const unanswered = questions.length - answeredCount;
-    if (unanswered > 0 && !window.confirm(t(
-      `لديك ${unanswered} سؤالاً بلا إجابة. هل تريد تسليم الاختبار الآن؟`,
-      `You have ${unanswered} unanswered question(s). Submit the exam now?`,
-    ))) return;
+    if (unanswered > 0 && !(await confirmDialog({
+      description: t(
+        `لديك ${unanswered} سؤالاً بلا إجابة. هل تريد تسليم الاختبار الآن؟`,
+        `You have ${unanswered} unanswered question(s). Submit the exam now?`,
+      ),
+    }))) return;
     submit();
   };
 

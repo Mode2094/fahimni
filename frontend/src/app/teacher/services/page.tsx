@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { HandCoins, Plus, Trash2, Loader2, Pencil, Clock, Coins, MessageSquareQuote, GraduationCap } from 'lucide-react';
@@ -77,7 +78,7 @@ export default function TeacherServicesPage() {
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm(t('حذف هذه الخدمة نهائياً؟', 'Delete this service permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه الخدمة نهائياً؟', 'Delete this service permanently?') }))) return;
     setRemoving(id);
     try {
       const res = await fetch(`${API}/teacher/services/${id}`, { method: 'DELETE', headers: headers() });
