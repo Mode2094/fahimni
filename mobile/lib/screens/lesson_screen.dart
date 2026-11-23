@@ -147,6 +147,9 @@ class _ContentCard extends StatelessWidget {
               streamUrl: streamUrl,
               watermarkEnabled: watermark?['enabled'] == true,
               watermarkText: watermark?['text']?.toString(),
+              videoId: video['id']?.toString(),
+              resumeSeconds: _resumeSeconds(video),
+              state: state,
             ),
           ],
         );
@@ -188,11 +191,14 @@ class _ContentCard extends StatelessWidget {
                         MaterialPageRoute(
                           builder: (_) => VideoPlayerScreen(
                             title: content.title,
+                            state: state,
                             source: VideoSource.provider(
                               streamUrl: video['stream_url']?.toString() ?? '',
                               thumbnailUrl: video['thumbnail_url']?.toString(),
                               watermarkEnabled: (video['watermark'] as Map?)?['enabled'] == true,
                               watermarkText: (video['watermark'] as Map?)?['text']?.toString(),
+                              videoId: video['id']?.toString(),
+                              resumeSeconds: _resumeSeconds(video),
                             ),
                           ),
                         ),
@@ -261,18 +267,33 @@ class _ContentCard extends StatelessWidget {
   }
 }
 
+/// آخر موضع مشاهدة محفوظ للطالب من حِمل الفيديو (0 إن لم يوجد/انتهى الفيديو).
+int _resumeSeconds(Map<String, dynamic> video) {
+  final resume = video['resume'];
+  if (resume is Map && resume['position_seconds'] != null) {
+    return (resume['position_seconds'] as num).toInt();
+  }
+  return 0;
+}
+
 class _VideoTile extends StatelessWidget {
   const _VideoTile({
     required this.title,
     required this.streamUrl,
     required this.watermarkEnabled,
     this.watermarkText,
+    this.videoId,
+    this.resumeSeconds = 0,
+    this.state,
   });
 
   final String title;
   final String streamUrl;
   final bool watermarkEnabled;
   final String? watermarkText;
+  final String? videoId;
+  final int resumeSeconds;
+  final AppState? state;
 
   @override
   Widget build(BuildContext context) {
@@ -292,7 +313,11 @@ class _VideoTile extends StatelessWidget {
         ),
         title: const Text('مشاهدة الفيديو', style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
         subtitle: Text(
-          watermarkEnabled ? 'حماية: علامة مائية' : 'فيديو محمي',
+          resumeSeconds > 0
+              ? 'متابعة من حيث توقفت'
+              : watermarkEnabled
+                  ? 'حماية: علامة مائية'
+                  : 'فيديو محمي',
           style: const TextStyle(color: AppColors.textTertiary, fontSize: 12),
         ),
         trailing: const Icon(Icons.chevron_left, color: AppColors.textTertiary),
@@ -300,7 +325,14 @@ class _VideoTile extends StatelessWidget {
           MaterialPageRoute(
             builder: (_) => VideoPlayerScreen(
               title: title,
-              source: VideoSource.stream(streamUrl: streamUrl, watermarkEnabled: watermarkEnabled, watermarkText: watermarkText),
+              state: state,
+              source: VideoSource.stream(
+                streamUrl: streamUrl,
+                watermarkEnabled: watermarkEnabled,
+                watermarkText: watermarkText,
+                videoId: videoId,
+                resumeSeconds: resumeSeconds,
+              ),
             ),
           ),
         ),

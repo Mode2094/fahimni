@@ -135,6 +135,10 @@ class AppServiceProvider extends ServiceProvider
         // طلبات الدفق (Ranges للـ <video>): حد معقول للمشاهدة الفعلية.
         RateLimiter::for('stream', fn (Request $request) => Limit::perMinute(240)->by($request->ip()));
 
+        // حفظ موضع المشاهدة (نبضة خفيفة كل بضع ثوانٍ): حد سخي لكن محدود لكل
+        // مستخدم — يكفي الحفظ الدوري وعند الإيقاف/الخروج دون إثقال القاعدة.
+        RateLimiter::for('position', fn (Request $request) => Limit::perMinute(40)->by($request->user()?->id ?: $request->ip()));
+
         RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by(hash('sha256', (string) $request->input('email')).'|'.$request->ip()));
 
         RateLimiter::for('register', fn (Request $request) => Limit::perMinute(3)->by($request->ip()));
