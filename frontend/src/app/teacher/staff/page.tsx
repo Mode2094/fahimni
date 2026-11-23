@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { UsersRound, Plus, Loader2, Trash2, Crown, Shield, Mail, XCircle, UserRound } from 'lucide-react';
@@ -78,7 +79,7 @@ export default function TeacherStaffPage() {
   };
 
   const cancelInvitation = async (id: string) => {
-    if (!window.confirm(t('إلغاء هذه الدعوة؟', 'Cancel this invitation?'))) return;
+    if (!(await confirmDialog({ description: t('إلغاء هذه الدعوة؟', 'Cancel this invitation?') }))) return;
     setRemovingId(id);
     try {
       const res = await fetch(`${API}/teacher/staff/invitations/${id}`, { method: 'DELETE', headers: headers() });
@@ -89,7 +90,7 @@ export default function TeacherStaffPage() {
   };
 
   const removeMember = async (member: any) => {
-    if (!window.confirm(t('إزالة هذا المعلم من المؤسسة؟', 'Remove this teacher from the institution?'))) return;
+    if (!(await confirmDialog({ description: t('إزالة هذا المعلم من المؤسسة؟', 'Remove this teacher from the institution?') }))) return;
     setRemovingId(member.id);
     try {
       const res = await fetch(`${API}/teacher/staff/members/${member.id}`, { method: 'DELETE', headers: headers() });

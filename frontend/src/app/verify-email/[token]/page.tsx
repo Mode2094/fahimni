@@ -50,7 +50,7 @@ export default function VerifyEmailTokenPage() {
       toast.success(t('تم إرسال رابط جديد', 'A new link was sent'));
       setState('ok');
       setTimeout(() => router.push('/profile'), 1200);
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
   };
 
   return (

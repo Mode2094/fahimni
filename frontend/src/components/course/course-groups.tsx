@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '@/store/locale';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -137,7 +138,7 @@ export default function CourseGroupsManager({
   };
 
   const deleteGroup = async (g: Group) => {
-    if (!window.confirm(t(`حذف مجموعة «${g.name}»؟ لا يُحذف أي طالب أو درجة — فقط المجموعة وإسناداتها.`, `Delete group "${g.name}"? No student or grade is deleted — only the group and its assignments.`))) return;
+    if (!(await confirmDialog({ description: t(`حذف مجموعة «${g.name}»؟ لا يُحذف أي طالب أو درجة — فقط المجموعة وإسناداتها.`, `Delete group "${g.name}"? No student or grade is deleted — only the group and its assignments.`) }))) return;
     setBusy(true);
     try {
       const res = await fetch(`${API}/course-groups/${g.id}`, { method: 'DELETE', headers: hdrs() });

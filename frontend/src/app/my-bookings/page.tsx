@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CalendarClock, XCircle, HandCoins, Clock, ExternalLink, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/services/api';
@@ -42,7 +43,7 @@ export default function MyBookingsPage() {
   useEffect(() => { if (check()) load(); }, [check()]);
 
   const cancel = async (id: string) => {
-    if (!confirm(t('إلغاء هذا الحجز؟', 'Cancel this booking?'))) return;
+    if (!(await confirmDialog({ description: t('إلغاء هذا الحجز؟', 'Cancel this booking?') }))) return;
     setCancelling(true);
     try {
       const res = await fetch(`${API}/my-bookings/${id}/cancel`, { method: 'POST', headers: headers() });

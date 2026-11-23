@@ -153,7 +153,7 @@ export default function PageBuilder({ onSaved }: { onSaved?: () => void }) {
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(t('تم حفظ الصفحة — شاهدها الآن', 'Page saved — view it now'));
       onSaved?.();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setSaving(false);
   };
 
@@ -168,7 +168,7 @@ export default function PageBuilder({ onSaved }: { onSaved?: () => void }) {
       if (!res.ok) throw new Error();
       const d = await res.json();
       updateData(selected, { url: d.url });
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = '';
   };

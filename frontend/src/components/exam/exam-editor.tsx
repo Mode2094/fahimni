@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
 import { buildQuestionPayload, draftFromQuestion } from '@/lib/exam-question-payload';
 import { fetchHtmlEditorPrefs, saveHtmlEditorPrefs } from '@/lib/html-editor-prefs';
@@ -179,7 +180,7 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
   };
 
   const detach = async (questionId: string) => {
-    if (!window.confirm(t('إزالة هذا السؤال من الاختبار؟ سيبقى محفوظاً في بنك أسئلة الكورس ولن تُفقد نتائجه.', 'Remove this question from the exam? It stays saved in the course bank and its results are kept.'))) return;
+    if (!(await confirmDialog({ description: t('إزالة هذا السؤال من الاختبار؟ سيبقى محفوظاً في بنك أسئلة الكورس ولن تُفقد نتائجه.', 'Remove this question from the exam? It stays saved in the course bank and its results are kept.') }))) return;
     setBusyId(questionId);
     try {
       const res = await fetch(`${API}/exams/${exam.id}/questions/${questionId}`, { method: 'DELETE', headers: headers() });
@@ -245,7 +246,7 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
 
   const deleteFromBank = async (q: any) => {
     if ((q.exams || []).length) return;
-    if (!window.confirm(t('حذف هذا السؤال نهائياً من البنك؟', 'Permanently delete this question from the bank?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا السؤال نهائياً من البنك؟', 'Permanently delete this question from the bank?') }))) return;
     setBusyId(q.id);
     try {
       const res = await fetch(`${API}/questions/${q.id}`, { method: 'DELETE', headers: headers() });

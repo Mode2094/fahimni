@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Layers, Plus, Trash2, Loader2, Check, Crown, Pencil, RefreshCw,
   TrendingDown,
   X, HelpCircle, ShieldCheck, AlertTriangle, UploadCloud, BadgeCheck, Clock,
@@ -121,10 +122,12 @@ export default function AdminPlansPage() {
 
   const applyPendingPrice = async () => {
     if (!editing?.id) return;
-    const ok = window.confirm(t(
-      'تطبيق السعر المعلّق الآن؟ سيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا عند التأكد من تطابقه مع سعر الدفع الحقيقي.',
-      'Apply the pending price now? It will be sent to Freemius and re-read; it is adopted on the site only once it matches the real charge.',
-    ));
+    const ok = await confirmDialog({
+      description: t(
+        'تطبيق السعر المعلّق الآن؟ سيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا عند التأكد من تطابقه مع سعر الدفع الحقيقي.',
+        'Apply the pending price now? It will be sent to Freemius and re-read; it is adopted on the site only once it matches the real charge.',
+      ),
+    });
     if (!ok) return;
 
     setPublishing(true);
@@ -163,10 +166,12 @@ export default function AdminPlansPage() {
       yearly && `${t('سنوي', 'Yearly')}: ${yearly} USD`,
     ].filter(Boolean).join(' · ');
 
-    const ok = window.confirm(t(
-      `تأكيد نشر السعر؟\n${summary}\n\nسيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا بعد التأكد من تطابقه مع سعر الدفع الحقيقي.`,
-      `Publish this price?\n${summary}\n\nIt will be sent to Freemius and re-read; the site price is adopted only after it is confirmed to match the real charge.`,
-    ));
+    const ok = await confirmDialog({
+      description: t(
+        `تأكيد نشر السعر؟\n${summary}\n\nسيُرسَل إلى Freemius ثم يُعاد قراءته، ولن يُعتمد في الموقع إلا بعد التأكد من تطابقه مع سعر الدفع الحقيقي.`,
+        `Publish this price?\n${summary}\n\nIt will be sent to Freemius and re-read; the site price is adopted only after it is confirmed to match the real charge.`,
+      ),
+    });
     if (!ok) return;
 
     setPublishing(true);
@@ -346,7 +351,7 @@ export default function AdminPlansPage() {
       toast.success(editing ? t('تم تحديث الخطة', 'Plan updated') : t('تم إنشاء الخطة', 'Plan created'));
       setProfitWarning(warning);
       setEditing(null); resetForm(); setShowDialog(false); load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setSaving(false);
   };
 
@@ -387,12 +392,12 @@ export default function AdminPlansPage() {
   };
 
   const remove = async (p: any) => {
-    if (!window.confirm(t(`حذف الخطة «${p.name}»؟`, `Delete plan "${p.name}"?`))) return;
+    if (!(await confirmDialog({ description: t(`حذف الخطة «${p.name}»؟`, `Delete plan "${p.name}"?`) }))) return;
     setBusyId(p.id);
     try {
       await fetch(`${API}/admin/plans/${p.id}`, { method: 'DELETE', headers: headers() });
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); } finally { setBusyId(null); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); } finally { setBusyId(null); }
   };
 
   const featValue = (f: any) => {
