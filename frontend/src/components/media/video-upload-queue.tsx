@@ -11,10 +11,11 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  addFiles, markUploading, markProgress, markProcessing, markDone, markFailed,
-  cancelPending, cancelAllPending, retryFailed, retryOne, nextPending, counts,
-  humanBytes, MAX_FILE_BYTES, type QueueState, type QueueItem,
+  addFiles, markUploading, markProgress, markProcessing, markDone, markFailed, markAsset,
+  markCanceled, cancelAllPending, retryFailed, retryOne, nextPendingBatch, counts,
+  overallProgress, humanBytes, MAX_FILE_BYTES, MAX_PARALLEL, type QueueState, type QueueItem,
 } from '@/lib/video-upload-queue';
+import { uploadVideoDirect, type TusHandle } from '@/lib/tus-upload';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -23,14 +24,33 @@ const EMPTY: QueueState = { items: [], rejected: [] };
 type Section = { id: string; title: string };
 type Lesson = { id: string; title: string; section_id?: string };
 
+const baseName = (n: string) => n.replace(/\.[^.]+$/, '');
+
+/** POST JSON with a single automatic retry on the per-user ticket rate limit. */
+async function postJson(url: string, body: unknown, tid: string, retry = 0): Promise<any> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'X-Tenant-Id': tid, Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  if (res.status === 429 && retry < 2) {
+    await new Promise((r) => setTimeout(r, 1500 * (retry + 1)));
+    return postJson(url, body, tid, retry + 1);
+  }
+  if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+  return data;
+}
+
 /**
- * Multi-video upload with a real queue: several files, independent progress,
- * per-file status, retry of only the failed ones, cancel of the pending ones,
- * and one organized lesson created per video (with the teacher's confirmation).
+ * Multi-video upload that goes DIRECTLY to Bunny (TUS) — the video bytes never
+ * pass through our server. Up to {@link MAX_PARALLEL} files upload at once with
+ * independent progress; failures retry individually (a succeeded file is never
+ * re-uploaded), pending/active items can be cancelled, and an interrupted
+ * upload resumes from its last acknowledged chunk.
  *
- * Files are uploaded ONE AT A TIME on purpose: the `video-upload` rate limit is
- * per-IP and every file costs two requests, so a bounded, sequential queue is
- * the only way to stay under it and never trip a 429 mid-batch.
+ * Each file gets a deterministic idempotency key, so re-adding the same file
+ * reuses its video instead of creating a duplicate or charging space twice.
  */
 export default function VideoUploadQueue({
   open, onOpenChange, sections, lessons, onUploaded,
@@ -51,11 +71,11 @@ export default function VideoUploadQueue({
   const [confirmCreate, setConfirmCreate] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const tenantId = () => (typeof window !== 'undefined' ? localStorage.getItem('tenant_id') || '' : '');
+
   useEffect(() => {
     if (!open) return;
-    // Ask the server for the real remaining video quota so we never queue more
-    // than the plan allows (shown as the true operational limit).
-    const tid = localStorage.getItem('tenant_id') || '';
+    const tid = tenantId();
     fetch(`${API}/teacher/media/usage`, { headers: { 'X-Tenant-Id': tid, Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -86,115 +106,159 @@ export default function VideoUploadQueue({
   // One lesson per queue item is created at most ONCE: its id is remembered so
   // retrying a failed upload never leaves an orphan lesson behind.
   const createdLessonsRef = useRef<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const workerLockRef = useRef(false);
+  const abortsRef = useRef<Record<string, TusHandle['abort']>>({});
+  const activeRef = useRef<Set<string>>(new Set());
+  const [pump, setPump] = useState(0);
+
+  // Latest queue state for async callbacks (closures would otherwise read a
+  // stale snapshot — e.g. missing a "canceled" flag set while a file uploads).
+  const queueRef = useRef(queue);
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+  const currentItem = (id: string) => queueRef.current.items.find((i) => i.id === id);
 
   const uploadOne = useCallback(async (item: QueueItem) => {
-    const tid = localStorage.getItem('tenant_id') || '';
-    const jsonHeaders = { 'X-Tenant-Id': tid, Accept: 'application/json', 'Content-Type': 'application/json' };
-    // A stable idempotency key per item: a retry can never create a second
-    // video or charge the file twice against the plan (the server replays it).
-    const idempotencyKey = `vq-${item.id}`;
+    const tid = tenantId();
+    const file = item.file;
+    if (!file) throw new Error(t('الملف غير متاح — أعد اختياره', 'File is no longer available — pick it again'));
 
-    let targetLesson = item.lessonId || createdLessonsRef.current[item.id] || (destination === 'existing' ? lessonId : '');
+    // 1) Resumable (TUS) ticket FIRST: reserves quota + signs a direct Bunny
+    // upload. `key` is deterministic per file, so a retry/reload reuses the
+    // same video (and TUS can resume) instead of creating a duplicate.
+    const ticket = await postJson(`${API}/teacher/media/resumable-ticket`, {
+      file_size: item.size,
+      title: baseName(item.name),
+      original_filename: item.name,
+      mime_type: file.type || 'video/mp4',
+      idempotency_key: item.key,
+    }, tid);
 
-    if (!targetLesson) {
-      const res = await fetch(`${API}/lessons`, {
-        method: 'POST',
-        headers: jsonHeaders,
-        body: JSON.stringify({ section_id: sectionId, title: item.name.replace(/\.[^.]+$/, ''), lesson_type: 'video' }),
-      });
-      const d = await res.json().catch(() => null);
-      if (!res.ok || !d?.lesson?.id) throw new Error(d?.message || t('فشل إنشاء الدرس', 'Could not create lesson'));
-      targetLesson = d.lesson.id as string;
-      createdLessonsRef.current[item.id] = targetLesson;
-    }
+    const upload = ticket?.upload || {};
+    const assetId = upload.asset_id as string;
+    if (!assetId) throw new Error(t('فشل إنشاء تذكرة الرفع', 'Could not create upload ticket'));
 
-    const ticketRes = await fetch(`${API}/videos/upload-ticket`, {
-      method: 'POST',
-      headers: jsonHeaders,
-      body: JSON.stringify({
-        lesson_id: targetLesson,
-        file_size: item.size,
-        title: item.name.replace(/\.[^.]+$/, ''),
-        original_filename: item.name,
-        mime_type: 'video/mp4',
-        idempotency_key: idempotencyKey,
-      }),
-    });
-    const ticket = await ticketRes.json().catch(() => null);
-    if (!ticketRes.ok) throw new Error(ticket?.message || t('فشل إنشاء تذكرة الرفع', 'Could not create upload ticket'));
+    setQueue((s) => markAsset(s, item.id, assetId));
 
-    const assetId = ticket?.upload?.asset_id || item.assetId || '';
-
+    // 2) Upload the bytes straight to Bunny — await the client's own retries.
     await new Promise<void>((resolve, reject) => {
-      const file = item.file;
-      if (!file) { reject(new Error(t('الملف غير متاح — أعد اختياره', 'File is no longer available — pick it again'))); return; }
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('lesson_id', targetLesson);
-      if (assetId) fd.append('asset_id', assetId);
-      fd.append('idempotency_key', idempotencyKey);
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API}/videos/upload`);
-      xhr.setRequestHeader('X-Tenant-Id', tid);
-      xhr.setRequestHeader('Accept', 'application/json');
-      xhr.upload.onprogress = (ev) => {
-        if (ev.lengthComputable) {
-          setQueue((s) => markProgress(s, item.id, (ev.loaded / ev.total) * 100));
-        }
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve();
-        } else {
-          let msg = t('فشل رفع الفيديو', 'Video upload failed');
-          try { msg = JSON.parse(xhr.responseText)?.message || msg; } catch { /* keep default */ }
-          reject(new Error(msg));
-        }
-      };
-      xhr.onerror = () => reject(new Error(t('انقطع الاتصال أثناء الرفع', 'Connection lost during upload')));
-      xhr.ontimeout = () => reject(new Error(t('انتهت مهلة الرفع', 'Upload timed out')));
-      xhr.timeout = 60 * 60 * 1000;
-      xhr.send(fd);
+      uploadVideoDirect(
+        file,
+        {
+          endpoint: upload.endpoint,
+          signature: upload.signature,
+          expires: upload.expires,
+          library_id: upload.library_id,
+          video_guid: upload.video_guid,
+        },
+        {
+          onProgress: (p) => setQueue((s) => markProgress(s, item.id, p)),
+          onSuccess: () => resolve(),
+          onError: (m) => reject(new Error(m || t('فشل رفع الفيديو', 'Video upload failed'))),
+        },
+        { resume: Boolean(upload.reused) },
+      )
+        .then((handle) => { abortsRef.current[item.id] = handle.abort; })
+        .catch(reject);
     });
-  }, [destination, lessonId, sectionId, t]);
 
-  // Sequential worker: exactly one item uploads at a time, and only a `pending`
-  // item the teacher has not cancelled is ever started.
-  useEffect(() => {
-    if (!open || busy || workerLockRef.current) return;
-    const item = nextPending(queue);
-    if (!item) return;
+    // A cancel during the transfer must win over "done".
+    if (currentItem(item.id)?.status === 'canceled') return;
 
-    // Synchronous lock: React StrictMode's double-invoked effects must not
-    // start the same file twice.
-    workerLockRef.current = true;
-    setBusy(true);
-    setQueue((s) => markUploading(s, item.id));
-    (async () => {
-      try {
-        await uploadOne(item);
-        setQueue((s) => markProcessing(s, item.id));
-        setQueue((s) => markDone(s, item.id, item.lessonId || createdLessonsRef.current[item.id]));
-        onUploaded?.();
-      } catch (err: any) {
-        setQueue((s) => markFailed(s, item.id, err?.message || t('فشل', 'Failed')));
-      } finally {
-        workerLockRef.current = false;
-        setBusy(false);
+    // 3) Destination lesson — created only AFTER the bytes landed, so a failed
+    // upload never leaves an empty lesson behind. Remembered per item so a
+    // retried completion never creates a second lesson.
+    let targetLesson = item.lessonId || createdLessonsRef.current[item.id];
+    if (!targetLesson) {
+      if (destination === 'existing') {
+        targetLesson = lessonId;
+      } else {
+        const d = await postJson(`${API}/lessons`, {
+          section_id: sectionId, title: baseName(item.name), lesson_type: 'video',
+        }, tid);
+        if (!d?.lesson?.id) throw new Error(t('فشل إنشاء الدرس', 'Could not create lesson'));
+        targetLesson = d.lesson.id as string;
+        createdLessonsRef.current[item.id] = targetLesson;
       }
-    })();
-  }, [queue, open, busy, uploadOne, onUploaded, t]);
+    }
+    if (!targetLesson) throw new Error(t('اختر درساً', 'Choose a lesson'));
 
+    // 4) Attach to the lesson. The video stays `processing` until Bunny
+    // confirms the upload + transcode — it is never shown ready early.
+    setQueue((s) => markProcessing(s, item.id, assetId));
+    await postJson(`${API}/teacher/media/resumable-complete`, { asset_id: assetId, lesson_id: targetLesson }, tid);
+    setQueue((s) => (currentItem(item.id)?.status === 'canceled' ? s : markDone(s, item.id, targetLesson, assetId)));
+    onUploaded?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destination, lessonId, sectionId, t, onUploaded]);
+
+  // Parallel worker: start up to MAX_PARALLEL pending items, no more. The
+  // synchronous `activeRef` guard keeps React StrictMode's double effect from
+  // starting the same file twice.
+  useEffect(() => {
+    if (!open) return;
+    const free = MAX_PARALLEL - activeRef.current.size;
+    if (free <= 0) return;
+
+    const batch = nextPendingBatch(queue, free);
+    if (batch.length === 0) return;
+
+    for (const item of batch) {
+      activeRef.current.add(item.id);
+      setQueue((s) => markUploading(s, item.id));
+      uploadOne(item)
+        .catch((err: any) => {
+          setQueue((s) => (s.items.find((i) => i.id === item.id)?.status === 'canceled'
+            ? s
+            : markFailed(s, item.id, err?.message || t('فشل', 'Failed'))));
+        })
+        .finally(() => {
+          activeRef.current.delete(item.id);
+          delete abortsRef.current[item.id];
+          setPump((p) => p + 1);
+        });
+    }
+  }, [queue, open, pump, uploadOne, t]);
+
+  /** Cancel one item: abort a live upload, else just drop it from the queue. */
+  const cancelOne = useCallback((item: QueueItem) => {
+    const live = currentItem(item.id) ?? item;
+    if (live.status === 'pending') {
+      setQueue((s) => markCanceled(s, item.id));
+      return;
+    }
+    if (live.status === 'uploading' || live.status === 'processing') {
+      abortsRef.current[item.id]?.();
+      activeRef.current.delete(item.id);
+      setQueue((s) => markCanceled(s, item.id));
+      // Free the reserved space + discard the unfinished provider asset.
+      const assetId = live.assetId;
+      if (assetId) {
+        fetch(`${API}/teacher/media/assets/${assetId}`, {
+          method: 'DELETE',
+          headers: { 'X-Tenant-Id': tenantId(), Accept: 'application/json' },
+        }).catch(() => { /* cleanup is best-effort */ });
+      }
+    }
+  }, []);
+
+  const cancelAll = useCallback(() => {
+    // Iterate the live snapshot (side effects must stay out of the updater).
+    for (const it of queueRef.current.items) {
+      if (it.status === 'pending' || it.status === 'uploading' || it.status === 'processing') {
+        cancelOne(it);
+      }
+    }
+    setQueue((s) => cancelAllPending(s));
+    setPump((p) => p + 1);
+  }, [cancelOne]);
 
   const items = queue.items;
   const c = counts(queue);
+  const overall = overallProgress(queue);
+  const active = c.pending + c.uploading + c.processing;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="space-y-4">
+      <DialogContent className="space-y-4 max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><UploadCloud className="h-5 w-5 text-teal-600" />{t('رفع فيديوهات متعددة', 'Upload multiple videos')}</DialogTitle>
         </DialogHeader>
@@ -243,6 +307,26 @@ export default function VideoUploadQueue({
           </span>
         </div>
 
+        {/* Overall progress — real aggregate of every file in the batch. */}
+        {overall.total > 0 && (
+          <div className="space-y-1.5 rounded-xl bg-slate-50 p-3">
+            <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+              <span>{t('التقدم الإجمالي', 'Overall progress')} · {overall.settled}/{overall.total}</span>
+              <span className="font-bold text-teal-600">{overall.percent}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+              <div className={`h-full rounded-full transition-all ${c.failed > 0 ? 'bg-rose-400' : 'bg-teal-500'}`} style={{ width: `${overall.percent}%` }} />
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+              {c.uploading + c.processing > 0 && <span>{t('قيد الرفع', 'Uploading')}: {c.uploading + c.processing}</span>}
+              {c.pending > 0 && <span>{t('بالانتظار', 'Queued')}: {c.pending}</span>}
+              {c.done > 0 && <span className="text-emerald-600">{t('اكتمل', 'Done')}: {c.done}</span>}
+              {c.failed > 0 && <span className="text-rose-600">{t('فشل', 'Failed')}: {c.failed}</span>}
+              {c.canceled > 0 && <span>{t('ملغى', 'Canceled')}: {c.canceled}</span>}
+            </div>
+          </div>
+        )}
+
         {queue.rejected.length > 0 && (
           <div className="space-y-1 rounded-xl bg-amber-50 p-2.5 text-[11px] text-amber-700">
             {queue.rejected.map((r, i) => (
@@ -252,7 +336,7 @@ export default function VideoUploadQueue({
         )}
 
         {items.length > 0 && (
-          <div className="max-h-64 space-y-2 overflow-y-auto">
+          <div className="max-h-72 space-y-2 overflow-y-auto pe-1">
             {items.map((it) => (
               <div key={it.id} className="rounded-xl border p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
@@ -269,18 +353,23 @@ export default function VideoUploadQueue({
                 {it.error && <p className="text-[11px] text-rose-600">{it.error}</p>}
                 <div className="flex gap-1.5">
                   {it.status === 'failed' && <Button size="sm" variant="outline" className="h-7 gap-1 rounded-full text-xs" onClick={() => setQueue((s) => retryOne(s, it.id))}><RefreshCw className="h-3 w-3" />{t('إعادة المحاولة', 'Retry')}</Button>}
-                  {it.status === 'pending' && <Button size="sm" variant="ghost" className="h-7 gap-1 rounded-full text-xs text-gray-500" onClick={() => setQueue((s) => cancelPending(s, it.id))}><Ban className="h-3 w-3" />{t('إلغاء', 'Cancel')}</Button>}
+                  {(it.status === 'pending' || it.status === 'uploading' || it.status === 'processing') && <Button size="sm" variant="ghost" className="h-7 gap-1 rounded-full text-xs text-gray-500" onClick={() => cancelOne(it)}><Ban className="h-3 w-3" />{t('إلغاء', 'Cancel')}</Button>}
                 </div>
               </div>
             ))}
           </div>
         )}
 
-        {queue.items.some((i) => i.status === 'done') && (
+        {(c.uploading > 0 || c.processing > 0) && (
+          <p className="text-[11px] text-gray-400">{t('يتم الرفع مباشرة إلى Bunny — الفيديو لا يمر عبر خادمنا، ويمكنك متابعة عملك.',
+            'Uploading straight to Bunny — the video never passes through our server, and you can keep working.')}</p>
+        )}
+        {c.done > 0 && (
           <p className="text-[11px] text-emerald-600">{t(`${c.done} فيديو اكتمل رفعه وهو قيد المعالجة لدى المزوّد.`, `${c.done} video(s) uploaded and are being processed by the provider.`)}</p>
         )}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          {active > 0 && <Button variant="outline" className="gap-1.5 rounded-full text-gray-500" onClick={cancelAll}><Ban className="h-4 w-4" />{t('إلغاء الباقي', 'Cancel remaining')}</Button>}
           {c.failed > 0 && <Button variant="outline" className="gap-1.5 rounded-full" onClick={() => setQueue((s) => retryFailed(s))}><RefreshCw className="h-4 w-4" />{t('إعادة محاولة الفاشل', 'Retry failed')}</Button>}
           <Button variant="outline" className="rounded-full" onClick={() => { setQueue(cancelAllPending(queue)); onUploaded?.(); onOpenChange(false); }}>{t('تم', 'Done')}</Button>
         </div>

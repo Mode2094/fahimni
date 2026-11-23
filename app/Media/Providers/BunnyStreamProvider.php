@@ -29,6 +29,10 @@ class BunnyStreamProvider implements MediaProviderInterface
     // (upload.bunnycdn.com غير موجود في DNS).
     private const UPLOAD_API = 'https://video.bunnycdn.com/library';
 
+    // رفع TUS قابل للاستئناف — المتصفح يرفع مباشرة إلى هذا العنوان.
+    // https://docs.bunny.net/stream/tus-resumable-uploads
+    private const TUS_ENDPOINT = 'https://video.bunnycdn.com/tusupload';
+
     private ?MediaProvider $model = null;
 
     public function __construct(?MediaProvider $model = null)
@@ -45,6 +49,7 @@ class BunnyStreamProvider implements MediaProviderInterface
     {
         return [
             'direct_upload' => true,
+            'resumable_upload' => true,
             'recordings' => true,
             'signed_urls' => true,
             'webhooks' => true,
@@ -176,6 +181,43 @@ class BunnyStreamProvider implements MediaProviderInterface
             'asset_id' => $guid,
             'expires_in' => (int) ($params['expires_in'] ?? 3600),
         ];
+    }
+
+    /**
+     * بيانات اعتماد رفع TUS المباشر لملف واحد.
+     *
+     * التوقيع = SHA256(library_id + api_key + expires + video_id) بصيغة hex.
+     * يُحسب هنا على السيرفر — مفتاح الـAPI لا يصل المتصفح أبداً. الرمز نفسه
+     * يمكن إعادة توقيعه لنفس الفيديو لاستئناف رفع منقطع (لا فيديو جديد).
+     */
+    public function createResumableUploadTicket(string $assetId, int $ttlSeconds = 86400): array
+    {
+        if (! $this->isConfigured()) {
+            throw new RuntimeException('Bunny Stream is not configured.');
+        }
+
+        if ($assetId === '') {
+            throw new RuntimeException('A provider video id is required for a resumable upload ticket.');
+        }
+
+        $libraryId = $this->libraryId();
+        $apiKey = $this->apiKey();
+
+        // وثائق Bunny: لا تقل مدة الصلاحية عن ساعة حتى يكتمل الرفع.
+        $expires = time() + max(3600, $ttlSeconds);
+
+        return [
+            'endpoint' => self::TUS_ENDPOINT,
+            'signature' => hash('sha256', $libraryId.$apiKey.$expires.$assetId),
+            'expires' => $expires,
+            'library_id' => $libraryId,
+            'video_id' => $assetId,
+        ];
+    }
+
+    public function supportsResumableUpload(): bool
+    {
+        return $this->isConfigured();
     }
 
     public function getVideo(string $assetId): array
