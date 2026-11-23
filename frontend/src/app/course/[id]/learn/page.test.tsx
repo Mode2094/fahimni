@@ -23,11 +23,12 @@ const SECTIONS = {
       id: 's1',
       title: 'الوحدة الأولى',
       lessons: [
-        { id: 'l1', title: 'درس 1', locked: false, lesson_type: 'text' },
-        { id: 'l2', title: 'درس 2', locked: false, lesson_type: 'text' },
+        { id: 'l1', title: 'درس 1', locked: false, lesson_type: 'text', completed: false },
+        { id: 'l2', title: 'درس 2', locked: false, lesson_type: 'text', completed: true },
       ],
     },
   ],
+  enrollment_id: 'e1',
   file_downloads_enabled: true,
 };
 
@@ -35,14 +36,20 @@ function json(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) } as any);
 }
 
+let progressCalls: string[];
+
 beforeEach(() => {
   localStorage.clear();
   useLocale.setState({ locale: 'ar' });
-  // jsdom does not implement smooth scrolling.
   window.scrollTo = vi.fn() as any;
+  progressCalls = [];
 
-  global.fetch = vi.fn((input: any) => {
+  global.fetch = vi.fn((input: any, init?: any) => {
     const url = String(input);
+    if (url.includes('/progress/')) {
+      progressCalls.push(`${init?.method || 'GET'} ${url} ${init?.body || ''}`);
+      return json({ progress: { id: 'p1', status: 'completed' } });
+    }
     if (url.includes('/sections')) return json(SECTIONS);
     if (url.includes('/lessons/')) {
       return json({ contents: [{ id: 'ct1', content_type: 'text', text: { body: 'محتوى الدرس' } }] });
@@ -51,22 +58,46 @@ beforeEach(() => {
   }) as any;
 });
 
-describe('Course learn page — prev/next lesson navigation', () => {
+function renderPage() {
+  return render(
+    <Suspense fallback={<div>loading</div>}>
+      <CourseLearnPage params={PARAMS} />
+    </Suspense>,
+  );
+}
+
+describe('Course learn page — navigation & progress', () => {
   it('moves to the next lesson from the navigation bar', async () => {
-    render(
-      <Suspense fallback={<div>loading</div>}>
-        <CourseLearnPage params={PARAMS} />
-      </Suspense>,
-    );
+    renderPage();
 
     // The first unlocked lesson becomes active.
     expect(await screen.findByRole('heading', { name: 'درس 1' })).toBeInTheDocument();
 
-    const next = await screen.findByRole('button', { name: /التالي/ });
-    await userEvent.click(next);
+    await userEvent.click(await screen.findByRole('button', { name: /التالي/ }));
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'درس 2' })).toBeInTheDocument();
     });
+  });
+
+  it('marks the current lesson complete and persists it for the enrollment', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'درس 1' });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'أكملت هذا الدرس' }));
+
+    expect(await screen.findByText('تم إكمال الدرس')).toBeInTheDocument();
+    expect(progressCalls.some((c) => c.includes('PUT') && c.includes('/progress/l1') && c.includes('completed'))).toBe(true);
+  });
+
+  it('shows the completion state, not the action, for an already-completed lesson', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'درس 1' });
+
+    await userEvent.click(await screen.findByRole('button', { name: /التالي/ }));
+
+    expect(await screen.findByRole('heading', { name: 'درس 2' })).toBeInTheDocument();
+    expect(screen.getByText('تم إكمال الدرس')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'أكملت هذا الدرس' })).toBeNull();
   });
 });

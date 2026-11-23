@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { use } from 'react';
 import { useLocale } from '@/store/locale';
 import { useFocus } from '@/store/focus';
@@ -10,6 +10,7 @@ import ProtectedVideoPlayer from '@/components/video/protected-video-player';
 import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { saveLessonProgress } from '@/lib/lesson-progress';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -158,6 +159,11 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [contentFs, setContentFs] = useState(false);
   const [pageBlurred, setPageBlurred] = useState(false);
+  // Progress: how far the student actually watched, keyed by lesson id. Kept in
+  // a ref so the 15s autosave timer always sees the latest value.
+  const watchTimeRef = useRef<Record<string, number>>({});
+  const autosaveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
 
   /* إخفاء المحتوى التعليمي عند مغادرة الصفحة (نص وفيديو) */
   useEffect(() => {
@@ -245,6 +251,57 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
       .finally(() => setContentLoading(false));
   }, [id, active?.id]);
 
+  // ─── Lesson progress ───────────────────────────
+  // Only a real student enrollment can persist progress; owner/staff previews
+  // and guests have no enrollment_id and stay read-only. These hooks MUST live
+  // above the early `return`s below so hook order stays stable.
+  const enrollmentId: string | null = data?.enrollment_id || null;
+
+  const persistWatch = useCallback((lessonId: string, seconds: number) => {
+    if (!enrollmentId) return;
+    const best = Math.max(seconds, watchTimeRef.current[lessonId] || 0);
+    watchTimeRef.current[lessonId] = best;
+    void saveLessonProgress(enrollmentId, lessonId, { watch_time_seconds: best });
+  }, [enrollmentId]);
+
+  const completeLesson = useCallback(async (lessonId: string) => {
+    if (!enrollmentId || !lessonId) return;
+    setCompletingId(lessonId);
+    const seconds = watchTimeRef.current[lessonId] || 0;
+    const progress = await saveLessonProgress(enrollmentId, lessonId, {
+      status: 'completed',
+      watch_time_seconds: seconds,
+    });
+    setCompletingId(null);
+    if (!progress) {
+      // The server enforces watch-time for videos; surface its verdict honestly
+      // instead of pretending the lesson is done.
+      toast.error(locale === 'ar' ? 'لم يُسجَّل الإكمال بعد — تأكد من مشاهدة معظم الدرس.' : 'Not marked complete yet — watch most of the lesson first.');
+      return;
+    }
+    setData((d: any) => d ? {
+      ...d,
+      sections: (d.sections || []).map((s: any) => ({
+        ...s,
+        lessons: (s.lessons || []).map((l: any) => l.id === lessonId ? { ...l, completed: true, progress_status: 'completed' } : l),
+      })),
+    } : d);
+    setActive((a: any) => (a && a.id === lessonId ? { ...a, completed: true } : a));
+    toast.success(locale === 'ar' ? 'أحسنت! تم إكمال الدرس' : 'Well done — lesson completed');
+  }, [enrollmentId, locale]);
+
+  // Autosave the playhead every 15s while an enrolled student watches a lesson.
+  useEffect(() => {
+    if (!enrollmentId) return;
+    autosaveRef.current = setInterval(() => {
+      const l = active;
+      if (!l || l.locked || l.completed) return;
+      const secs = watchTimeRef.current[l.id];
+      if (secs && secs > 0) persistWatch(l.id, secs);
+    }, 15000);
+    return () => { if (autosaveRef.current) clearInterval(autosaveRef.current); };
+  }, [enrollmentId, active, persistWatch]);
+
   if (loading) return <div className="flex items-center justify-center h-screen"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>;
   if (!data) return <div className="flex items-center justify-center h-screen text-gray-400">{locale === 'ar' ? 'غير موجود' : 'Not found'}</div>;
 
@@ -310,6 +367,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const textContent = content?.contents?.find((c: any) => c.content_type === 'text');
   const fileContent = content?.contents?.find((c: any) => c.content_type === 'file');
   const exercise = content?.exercise;
+  // Only a self-hosted stream/provider video exposes a <video> element we can
+  // observe for watch time; an external YouTube/Vimeo iframe cannot be read.
+  const isHostedVideo = !!videoContent?.video && videoContent.video.type !== 'external';
 
   const openFile = async (mode: 'download' | 'preview') => {
     if (!fileContent?.file?.url || fileBusy) return;
@@ -431,7 +491,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
             </button>
             {expanded.has(s.id) && (s.lessons || []).map((l: any) => (
               <button key={l.id} onClick={() => setActive(l)} className={`flex items-center gap-3 px-4 py-3 w-full text-start hover:bg-muted/50 ${active?.id === l.id ? 'bg-teal-50 border-s-2 border-s-teal-500' : 'border-s-2 border-s-transparent'}`}>
-                {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
+                {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : l.completed ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
                 <div className="flex-1"><p className="text-sm">{l.title}</p><p className="text-xs text-gray-500">{l.duration_minutes || 0} min{l.locked && l.unlock_at && <span className="text-amber-600 ms-1"> · {formatCountdown(l.unlock_at)}</span>}</p></div>
               </button>
             ))}
@@ -668,7 +728,14 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <LiveLessonView live={liveContent.live} />
                   )}
                   {videoContent?.video ? (
-                    <ProtectedVideoPlayer videoId={videoContent.video.id ?? videoContent.id} />
+                    <ProtectedVideoPlayer
+                      videoId={videoContent.video.id ?? videoContent.id}
+                      onTimeUpdate={(s) => {
+                        if (!active?.id || active.completed) return;
+                        watchTimeRef.current[active.id] = Math.max(watchTimeRef.current[active.id] || 0, s);
+                      }}
+                      onEnded={() => { if (active?.id && !active.completed) void completeLesson(active.id); }}
+                    />
                   ) : (
                     <div className="flex items-center gap-3 p-4 rounded-xl bg-white border"><FileText className="h-6 w-6 text-green-500" /><span className="font-medium">{locale === 'ar' ? 'درس نصي' : 'Text lesson'}</span></div>
                   )}
@@ -700,6 +767,29 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     pageBlurred ? null : <ExerciseCard exercise={exercise} />
                   )}
                 </>
+              )}
+              {!contentFs && !pageBlurred && enrollmentId && !active.completed && (
+                <div className="flex flex-col items-center gap-1 pt-1">
+                  <Button
+                    onClick={() => completeLesson(active.id)}
+                    disabled={completingId === active.id}
+                    className="gap-2 rounded-full"
+                    style={{ background: '#0d9488' }}
+                  >
+                    {completingId === active.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {locale === 'ar' ? 'أكملت هذا الدرس' : 'Mark lesson complete'}
+                  </Button>
+                  {isHostedVideo && (
+                    <p className="text-xs text-gray-400">{locale === 'ar' ? 'يُسجَّل الإكمال تلقائياً عند مشاهدة معظم الدرس.' : 'Completion is recorded automatically once you watch most of the lesson.'}</p>
+                  )}
+                </div>
+              )}
+              {!contentFs && !pageBlurred && enrollmentId && active.completed && (
+                <div className="flex items-center justify-center pt-1">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700">
+                    <CheckCircle2 className="h-4 w-4" /> {locale === 'ar' ? 'تم إكمال الدرس' : 'Lesson completed'}
+                  </span>
+                </div>
               )}
               {!contentFs && !pageBlurred && (prevLesson || nextLesson) && (
                 <nav className="flex items-center justify-between gap-3 pt-2" aria-label={locale === 'ar' ? 'التنقل بين الدروس' : 'Lesson navigation'}>

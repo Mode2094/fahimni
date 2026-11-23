@@ -137,7 +137,17 @@ function WatermarkOverlay({
   );
 }
 
-export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
+export default function ProtectedVideoPlayer({
+  videoId,
+  onTimeUpdate,
+  onEnded,
+}: {
+  videoId: string;
+  /** Called with the current playhead (seconds) while the hosted video plays. */
+  onTimeUpdate?: (seconds: number) => void;
+  /** Called once when the hosted video reaches the end. */
+  onEnded?: () => void;
+}) {
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [blurred, setBlurred] = useState(false);
@@ -439,6 +449,8 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
         disablePictureInPicture={blockPip}
         disableRemotePlayback
         onContextMenu={prevent}
+        onTimeUpdate={onTimeUpdate ? (e) => onTimeUpdate(Math.floor(e.currentTarget.currentTime)) : undefined}
+        onEnded={onEnded}
       />
 
       {/* غطاء إخفاء عند مغادرة الصفحة */}

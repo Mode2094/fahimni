@@ -8,6 +8,7 @@ use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\Lesson;
+use App\Models\LessonProgress;
 use App\Models\Post;
 use App\Models\SubscriptionPlan;
 use App\Models\SupportTicket;
@@ -270,12 +271,19 @@ class PublicSiteController extends Controller
         $intervalDays = max(1, (int) $course->drip_interval_days);
         $position = 0;
 
-        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible) {
+        // Per-lesson completion for THIS student's own enrollment (never the
+        // owner/staff preview), so the player can show check marks, overall
+        // progress and "resume where you left off" without extra round-trips.
+        $progressByLesson = $enrollment
+            ? LessonProgress::where('enrollment_id', $enrollment->id)->get()->keyBy('lesson_id')
+            : collect();
+
+        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $progressByLesson) {
             return [
                 'id' => $section->id,
                 'title' => $section->title,
                 'sort_order' => $section->sort_order,
-                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible) {
+                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $progressByLesson) {
                     $position++;
 
                     // Hidden for this student's group — not merely locked.
@@ -295,6 +303,7 @@ class PublicSiteController extends Controller
                     }
 
                     $file = $lesson->contents->where('content_type', 'file')->first()?->file;
+                    $progress = $progressByLesson->get($lesson->id);
 
                     return [
                         'id' => $lesson->id,
@@ -305,6 +314,9 @@ class PublicSiteController extends Controller
                         'locked' => $locked,
                         'unlock_at' => $locked ? $unlockAt?->toIso8601String() : null,
                         'position' => $position,
+                        'completed' => ($progress?->status) === 'completed',
+                        'progress_status' => $progress?->status,
+                        'watch_time_seconds' => (int) ($progress?->watch_time_seconds ?? 0),
                         'file_url' => ! $locked && $file
                             ? '/lessons/'.$lesson->id.'/file-ticket?tenant_id='.$course->tenant_id
                             : null,
@@ -321,6 +333,9 @@ class PublicSiteController extends Controller
             // Whether the caller is enrolled (owner/staff count as enrolled):
             // drives the "Enrolled / Guest" badge on the lesson page.
             'is_enrolled' => $enrolled,
+            // The student's OWN enrollment id, used to persist lesson progress.
+            // Null for guests and for owner/staff previews (they have none).
+            'enrollment_id' => $enrollment?->id,
             'drip' => [
                 'enabled' => $dripEnabled,
                 'interval_days' => $dripEnabled ? $intervalDays : null,
