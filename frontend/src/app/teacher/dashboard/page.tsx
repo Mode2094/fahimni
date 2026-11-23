@@ -12,9 +12,17 @@ import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dash
 import SetupGuide from '@/components/teacher/setup-guide';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Film, Copy, Check, Construction, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight, HardDrive, AlertTriangle } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, ClipboardCheck, FileQuestion, BellRing, Plus, Crown, CalendarClock, Film, Copy, Check, Construction, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight, HardDrive, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+/** Real work items surfaced on the dashboard (from GET /dashboard). */
+type DashboardWorkItems = {
+  pending_assignment_submissions: number;
+  pending_exam_reviews: number;
+  pending_bookings: number;
+  unread_admin_notifications: number;
+};
 
 /** Last-known snapshots so a failed request never turns real numbers into 0. */
 const CACHE = {
@@ -50,6 +58,8 @@ export default function TeacherDashboard() {
   const [plan, setPlan] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [workItems, setWorkItems] = useState<DashboardWorkItems | null>(null);
+  const [workItemsError, setWorkItemsError] = useState(false);
   const [lessons, setLessons] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,16 +90,20 @@ export default function TeacherDashboard() {
 
   const loadAll = async () => {
     setLoading(true);
+    setWorkItems(null);
+    setWorkItemsError(false);
+    let workItemsHandled = false;
     try {
       // Each request degrades on its own: one failing endpoint must never blank
       // the dashboard or leave it stuck on skeletons forever.
-      const [planR, anaR, lesR, bkR, appR, domR] = await Promise.all([
+      const [planR, anaR, lesR, bkR, appR, domR, dashboardR] = await Promise.all([
         fetch(`${API}/teacher/plan`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }).catch(() => null),
-        fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
+        fetch(`${API}/teacher/scheduled-lessons?upcoming=1`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/domain`, { headers: headers() }).catch(() => null),
+        user?.is_super_admin ? Promise.resolve(null) : fetch(`${API}/dashboard`, { headers: headers() }).catch(() => null),
       ]);
 
       if (planR?.ok) {
@@ -119,6 +133,38 @@ export default function TeacherDashboard() {
       if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
       if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
       if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
+      if (user?.is_super_admin) {
+        setWorkItems(null);
+        setWorkItemsError(false);
+        workItemsHandled = true;
+      } else if (dashboardR?.ok) {
+        try {
+          const d = await dashboardR.json();
+          const values = [
+            d.pending_assignment_submissions,
+            d.pending_exam_reviews,
+            d.pending_bookings,
+            d.unread_admin_notifications,
+          ];
+          if (values.every((value) => Number.isSafeInteger(value) && value >= 0)) {
+            setWorkItems({
+              pending_assignment_submissions: d.pending_assignment_submissions,
+              pending_exam_reviews: d.pending_exam_reviews,
+              pending_bookings: d.pending_bookings,
+              unread_admin_notifications: d.unread_admin_notifications,
+            });
+          } else {
+            setWorkItemsError(true);
+          }
+          workItemsHandled = true;
+        } catch {
+          setWorkItemsError(true);
+          workItemsHandled = true;
+        }
+      } else if (!user?.is_super_admin) {
+        setWorkItemsError(true);
+        workItemsHandled = true;
+      }
 
       let platformInfo = domR?.ok ? buildPlatform(await domR.json()) : null;
       if (!platformInfo) {
@@ -136,6 +182,7 @@ export default function TeacherDashboard() {
       setPlatform(platformInfo);
     } catch {
       // Malformed payloads etc. — render whatever we have instead of locking up.
+      if (!user?.is_super_admin && !workItemsHandled) setWorkItemsError(true);
     } finally {
       setLoading(false);
     }
@@ -181,9 +228,14 @@ export default function TeacherDashboard() {
     { key: 'teachers', label: t('المعلمون', 'Teachers') },
   ];
 
+  const bookingTimestamp = (booking: any) => {
+    const raw = booking.starts_at || (booking.date ? `${booking.date}${booking.time ? `T${booking.time}` : ''}` : '');
+    return raw ? new Date(raw).getTime() : Number.NaN;
+  };
+
   const upcomingBookings = (bookings || [])
-    .filter((b) => b.status !== 'cancelled')
-    .filter((b) => b.date && new Date(b.date + (b.time ? 'T' + b.time : '')) >= new Date(Date.now() - 3600e3))
+    .filter((b) => b.status !== 'cancelled' && Number.isFinite(bookingTimestamp(b)) && bookingTimestamp(b) >= Date.now() - 3600e3)
+    .sort((a, b) => bookingTimestamp(a) - bookingTimestamp(b))
     .slice(0, 3);
 
   const perf = [
@@ -207,6 +259,39 @@ export default function TeacherDashboard() {
   ];
 
   const hasData = !analyticsUnknown && ((analytics?.total_attempts ?? 0) > 0 || (analytics?.watch_seconds ?? 0) > 0);
+  const canReviewExams = !!user?.is_super_admin || !!user?.permissions?.includes('exams.manage');
+  const workQueue = [
+    ...(workItems && canReviewExams && workItems.pending_exam_reviews > 0 ? [{
+      key: 'exam-reviews',
+      count: workItems.pending_exam_reviews,
+      href: '/teacher/exams',
+      icon: ClipboardList,
+      label: t('اختبارات تحتاج تصحيحاً', 'Exams need grading'),
+    }] : []),
+    ...(workItems && workItems.pending_assignment_submissions > 0 ? [{
+      key: 'assignment-reviews',
+      count: workItems.pending_assignment_submissions,
+      href: '/courses',
+      icon: ClipboardCheck,
+      label: t('واجبات تحتاج مراجعة', 'Assignments need review'),
+    }] : []),
+    ...(workItems && workItems.pending_bookings > 0 ? [{
+      key: 'booking-requests',
+      count: workItems.pending_bookings,
+      href: '/teacher/appointments',
+      icon: CalendarClock,
+      label: t('طلبات حجز معلقة', 'Pending booking requests'),
+    }] : []),
+    ...(workItems && workItems.unread_admin_notifications > 0 ? [{
+      key: 'admin-notifications',
+      count: workItems.unread_admin_notifications,
+      href: '/teacher/notifications',
+      icon: BellRing,
+      label: t('إشعارات إدارة غير مقروءة', 'Unread platform notices'),
+    }] : []),
+  ];
+  const nextLesson = lessons.find((lesson) => !lesson.is_past) || null;
+  const nextBooking = upcomingBookings.find((booking) => booking.status === 'confirmed') || null;
 
   if (loading) {
     return (
@@ -286,6 +371,94 @@ export default function TeacherDashboard() {
           </Button>
         </div>
       )}
+
+      {/* ─── مهام ومواعيد تحتاج متابعة ──────────────── */}
+      {!user?.is_super_admin && <section
+        className="rounded-2xl border border-slate-100 bg-card p-4 shadow-sm sm:p-5"
+        aria-labelledby="teacher-work-items-title"
+        data-testid="teacher-work-items"
+      >
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="teacher-work-items-title" className="font-bold">{t('مهام تحتاج متابعتك', 'Needs your attention')}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{t('أعمال فعلية من منصتك، مرتبة لتصل إليها بسرعة.', 'Real work from your workspace, with direct links.')}</p>
+          </div>
+          <a href="/teacher/follow-up" className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-semibold text-teal-700 hover:bg-teal-50">
+            {t('متابعة الطلاب', 'Student follow-up')}<Arrow className="h-4 w-4" />
+          </a>
+        </div>
+
+        {workItemsError ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3" role="alert">
+            <p className="text-sm text-amber-900">{t('تعذر تحميل المهام الآن؛ لم نعرض أعداداً تقديرية.', 'Could not load tasks; no estimated counts are shown.')}</p>
+            <Button size="sm" variant="outline" onClick={loadAll} disabled={loading} className="min-h-11 gap-2">
+              {t('إعادة المحاولة', 'Retry')}
+            </Button>
+          </div>
+        ) : (
+          <>
+            {workQueue.length > 0 && (
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                {workQueue.map((task) => (
+                  <a key={task.key} href={task.href} className="flex min-h-[76px] items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-teal-200 hover:bg-teal-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/10 text-teal-700">
+                      <task.icon className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">{task.label}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{task.count}</span>
+                    </span>
+                    <Arrow className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+            )}
+
+            {(nextLesson || nextBooking) && (
+              <div className={cn('grid gap-2.5 sm:grid-cols-2', workQueue.length > 0 && 'mt-2.5')}>
+                {nextLesson && (
+                  <a href="/teacher/schedule" className="flex min-h-[76px] items-center gap-3 rounded-xl border border-slate-100 p-3 transition hover:border-teal-200 hover:bg-teal-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-700">
+                      <CalendarClock className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-semibold text-muted-foreground">{t('الدرس القادم', 'Next lesson')}</span>
+                      <span className="block truncate text-sm font-semibold">{nextLesson.title}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {nextLesson.instance_date
+                          ? new Date(`${nextLesson.instance_date}T${nextLesson.start_time || '00:00'}`).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+                          : ''}
+                      </span>
+                    </span>
+                    <Arrow className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+                  </a>
+                )}
+                {nextBooking && (
+                  <a href="/teacher/appointments" className="flex min-h-[76px] items-center gap-3 rounded-xl border border-slate-100 p-3 transition hover:border-teal-200 hover:bg-teal-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-700">
+                      <Users className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-semibold text-muted-foreground">{t('الموعد القادم', 'Next appointment')}</span>
+                      <span className="block truncate text-sm font-semibold">{nextBooking.student?.name || nextBooking.title || t('طالب', 'Student')}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {new Date(bookingTimestamp(nextBooking)).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </span>
+                    <Arrow className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {workQueue.length === 0 && !nextLesson && !nextBooking && (
+              <p className="rounded-xl bg-emerald-50/70 px-3 py-4 text-sm text-emerald-800" role="status">
+                {t('لا توجد مهام أو مواعيد قادمة تحتاج متابعة الآن.', 'No pending work or upcoming events right now.')}
+              </p>
+            )}
+          </>
+        )}
+      </section>}
 
       {/* ─── الإحصائيات الرئيسية (2×2 على الهاتف) ────── */}
       <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" data-testid="stats-grid">
@@ -456,52 +629,6 @@ export default function TeacherDashboard() {
           </div>
         </div>
       </SectionCard>
-
-      {/* ─── القادم: دروس + مواعيد ──────────────────── */}
-      <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-        <SectionCard icon={CalendarClock} title={t('الدروس القادمة', 'Upcoming lessons')} forceOpen={isDesktop}>
-          {lessons.length === 0 ? (
-            <div className="space-y-2 py-4 text-center">
-              <p className="text-sm text-gray-400">{t('لا توجد دروس مجدولة', 'No scheduled lessons')}</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {lessons.slice(0, 3).map((l, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50"><Clock className="h-4 w-4 text-teal-600" /></span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{l.title}</p>
-                    <p className="truncate text-xs text-gray-400">{l.scheduled_at ? new Date(l.scheduled_at).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard icon={CalendarClock} title={t('المواعيد القادمة', 'Upcoming appointments')} forceOpen={isDesktop}>
-          {upcomingBookings.length === 0 ? (
-            <div className="py-4 text-center">
-              <p className="text-sm text-gray-400">{t('لا توجد مواعيد قادمة', 'No upcoming appointments')}</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {upcomingBookings.map((b, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-50"><Users className="h-4 w-4 text-violet-600" /></div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{b.student?.name || b.title || t('طالب', 'Student')}</p>
-                    <p className="truncate text-xs text-gray-400">{b.date ? new Date(b.date + (b.time ? 'T' + b.time : '')).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''}</p>
-                  </div>
-                  <Badge className={cn('shrink-0 border-0', b.status === 'confirmed' ? 'bg-emerald-50 text-emerald-600' : b.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-500')}>
-                    {b.status === 'confirmed' ? t('مؤكد', 'Confirmed') : b.status === 'pending' ? t('معلق', 'Pending') : b.status}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-      </div>
 
       {/* ─── الأداء ──────────────────────────────────── */}
       <SectionCard icon={Activity} title={t('الأداء', 'Performance')} forceOpen={isDesktop}>

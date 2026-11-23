@@ -18,6 +18,7 @@ import {
   Coins, Trophy, Activity as ActivityIcon, History, Ticket,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -62,7 +63,7 @@ function StudentsPageInner() {
       const res = await fetch(`${API}/teacher/students/${s.id}`, { headers: headers() });
       if (!res.ok) throw new Error();
       setProfile((await res.json()).student);
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحميل ملف الطالب', 'Could not load the student profile'))); }
     setProfileLoading(false);
   };
 
@@ -86,7 +87,7 @@ function StudentsPageInner() {
       if (!res.ok) throw new Error();
       toast.success(t(`تم منح ${limitTarget.name} الدخول من ${limitVal} أجهزة`, `Granted ${limitTarget.name} ${limitVal} device(s)`));
       setLimitTarget(null); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ حد الأجهزة', 'Could not save the device limit'))); }
     setBusyId('');
   };
 
@@ -98,7 +99,7 @@ function StudentsPageInner() {
       toast.success(t(`تم إعادة تعيين أجهزة ${s.name} — يمكنه الدخول من جهاز جديد الآن`, `Devices reset for ${s.name} — they can log in from a new device now`));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
     setBusyId('');
   };
 
@@ -111,7 +112,7 @@ function StudentsPageInner() {
       toast.success(t('تمت إزالة الصلاحية — عاد للحد الافتراضي', 'Override removed — back to default'));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة الصلاحية', 'Could not remove the override'))); }
     setBusyId('');
   };
 

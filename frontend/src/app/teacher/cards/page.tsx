@@ -15,6 +15,7 @@ import {
   QrCode, Layers, Users, CalendarDays, Ban, Package,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import QRCode from 'qrcode';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -83,7 +84,7 @@ export default function TeacherCardsPage() {
         body: JSON.stringify({ course_id: courseId, count: Number(count), expires_at: expiresAt || null, batch_id: batchName || undefined }),
       });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إنشاء البطاقات', 'Could not generate the cards')); return; }
       toast.success(t(`تم إنشاء ${d.cards?.length || count} بطاقة`, `Generated ${d.cards?.length || count} cards`, locale));
       setCourseId(''); setExpiresAt(''); setBatchName(''); setCount('5');
       load();
@@ -166,7 +167,7 @@ export default function TeacherCardsPage() {
     try {
       const res = await fetch(`${API}/cards/${id}/cancel`, { method: 'POST', headers: headers() });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إلغاء البطاقة', 'Could not cancel the card')); return; }
       toast.success(t('تم الإلغاء', 'Cancelled'));
       load();
     } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }

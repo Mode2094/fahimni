@@ -16,6 +16,7 @@ import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { HandCoins, Plus, Trash2, Loader2, Pencil, Clock, Coins, MessageSquareQuote, GraduationCap } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import { useSettings } from '@/store/settings';
 import AppointmentsTabs from '@/components/teacher/appointments-tabs';
 
@@ -60,10 +61,10 @@ export default function TeacherServicesPage() {
     try {
       const body = { ...form, price: Number(form.price) };
       const res = await fetch(`${API}/teacher/services${editing ? `/${editing.id}` : ''}`, { method: editing ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ الخدمة', 'Could not save the service')); return; }
       toast.success(editing ? t('تم تحديث الخدمة', 'Service updated') : t('تمت إضافة الخدمة — ستظهر في صفحتك العامة', 'Service added — it now appears on your public page'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الخدمة', 'Could not save the service'))); }
     setBusyId('');
   };
 
@@ -72,7 +73,7 @@ export default function TeacherServicesPage() {
       const res = await fetch(`${API}/teacher/services/${s.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ is_active: !s.is_active }) });
       if (!res.ok) throw new Error();
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحديث حالة الخدمة', 'Could not update the service status'))); }
   };
 
   const remove = async (id: string) => {
@@ -82,7 +83,7 @@ export default function TeacherServicesPage() {
       const res = await fetch(`${API}/teacher/services/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الخدمة', 'Could not delete the service'))); }
     setRemoving('');
   };
 

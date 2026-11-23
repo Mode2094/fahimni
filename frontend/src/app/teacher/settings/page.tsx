@@ -22,6 +22,7 @@ import SiteDesignEditor from '@/components/site/design-editor';
 import DomainManager from '@/components/site/domain-manager';
 import PageBuilder from '@/components/site/page-builder';
 import { dashboardApi } from '@/services/endpoints';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -102,7 +103,7 @@ export default function TeacherSettingsPage() {
       const res = await fetch(`${API}/teacher/device-policy`, { method: 'PUT', headers: headers(), body: JSON.stringify(policy) });
       if (!res.ok) throw new Error();
       toast.success(t('تم حفظ سياسة الأجهزة — تطبق على كل طلابك فوراً', 'Device policy saved — applies to all your students now'));
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ سياسة الأجهزة', 'Could not save the device policy'))); }
     setSavingPolicy(false);
   };
 
@@ -113,7 +114,7 @@ export default function TeacherSettingsPage() {
       const res = await fetch(`${API}/teacher/file-policy`, { method: 'PUT', headers: headers(), body: JSON.stringify(filePolicy) });
       if (!res.ok) throw new Error();
       toast.success(t('تم حفظ إعدادات الملفات — تطبق على كل دروسك فوراً', 'File policy saved — applies to all your lessons now'));
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ إعدادات الملفات', 'Could not save the file policy'))); }
     setSavingFilePolicy(false);
   };
 

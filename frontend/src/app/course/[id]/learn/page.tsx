@@ -11,7 +11,7 @@ import LessonNotesPanel from '@/components/notes/lesson-notes-panel';
 import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { parsePreviewQuery, buildExamUrl } from '@/lib/course-preview';
+import { parsePreviewQuery, parseLearnTaskQuery, buildExamUrl } from '@/lib/course-preview';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -150,6 +150,8 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const [contentError, setContentError] = useState<string | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const [viewTab, setViewTab] = useState<'lessons' | 'assignments' | 'exams'>('lessons');
+  const requestedAssignmentId = useRef<string | null>(null);
+  const requestedExamId = useRef<string | null>(null);
   const [exams, setExams] = useState<any[]>([]);
   const [examsLoading, setExamsLoading] = useState(false);
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -224,6 +226,26 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   };
   useEffect(() => { if (viewTab === 'assignments' && assignments.length === 0) loadAssignments(); }, [viewTab]);
   useEffect(() => { if (viewTab === 'exams' && exams.length === 0) loadExams(); }, [viewTab]);
+  useEffect(() => {
+    const query = parseLearnTaskQuery(window.location.search);
+    if (query.tab) setViewTab(query.tab);
+    requestedAssignmentId.current = query.assignmentId;
+    requestedExamId.current = query.examId;
+  }, []);
+  useEffect(() => {
+    if (viewTab !== 'assignments' || assignLoading || !requestedAssignmentId.current) return;
+    const target = document.getElementById(`assignment-${requestedAssignmentId.current}`);
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    requestedAssignmentId.current = null;
+  }, [viewTab, assignments, assignLoading]);
+  useEffect(() => {
+    if (viewTab !== 'exams' || examsLoading || !requestedExamId.current) return;
+    const target = document.getElementById(`exam-${requestedExamId.current}`);
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    requestedExamId.current = null;
+  }, [viewTab, exams, examsLoading]);
 
   useEffect(() => {
     fetch(`${API}/public/courses/${id}/sections`, { headers: authHeaders() })
@@ -366,11 +388,11 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
           submission_text: s || '', file_url: f?.url || null, file_name: f?.name || null,
         }),
       });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || (locale === 'ar' ? 'تعذر تسليم الواجب' : 'Could not submit the assignment')); return; }
       toast.success(locale === 'ar' ? 'تم تسليم الواجب' : 'Assignment submitted');
       setSubmitText((x) => ({ ...x, [a.id]: '' })); setSubmitFile((x) => ({ ...x, [a.id]: undefined }));
       loadAssignments();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(locale === 'ar' ? 'تعذر تسليم الواجب' : 'Could not submit the assignment'); }
     setSubmittingId(null);
   };
   const addComment = async (a: any) => {
@@ -385,7 +407,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
       if (!res.ok) throw new Error();
       setCommentVals((c) => ({ ...c, [a.id]: '' }));
       loadAssignments();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(locale === 'ar' ? 'تعذر إضافة التعليق' : 'Could not add the comment'); }
     setCommentingId(null);
   };
   const fmtDue = (iso: string | null) => {
@@ -534,7 +556,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     {exams.map((ex) => {
                       const done = (ex.attempts_count || 0) > 0;
                       return (
-                        <div key={ex.id} className="bg-white border rounded-2xl p-5 flex flex-wrap items-center gap-4">
+                        <div key={ex.id} id={`exam-${ex.id}`} className="bg-white border rounded-2xl p-5 flex flex-wrap items-center gap-4">
                           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-50 shrink-0"><ClipboardList className="h-5 w-5 text-teal-700" /></div>
                           <div className="flex-1 min-w-[180px]">
                             <p className="font-semibold">{ex.title}</p>
@@ -571,7 +593,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                   const duePast = a.due_at && new Date(a.due_at).getTime() < Date.now();
                   const canSubmit = a.is_published && (!duePast || a.allow_late);
                   return (
-                    <div key={a.id} className="bg-white border rounded-2xl p-6 space-y-4">
+                    <div key={a.id} id={`assignment-${a.id}`} className="bg-white border rounded-2xl p-6 space-y-4">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 shrink-0"><ClipboardCheck className="h-5 w-5 text-amber-600" /></div>
                         <div className="flex-1 min-w-[200px]">

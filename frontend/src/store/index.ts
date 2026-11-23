@@ -330,6 +330,18 @@ export const useAuth = create<AuthState>((set, get) => ({
     loggingOut = true;
     lastAuthAt = 0;
 
+    // Drop this device's web-push subscription for the signing-out account
+    // FIRST (while the session is still valid) so a shared device never keeps
+    // receiving the previous student's notifications. Best-effort only.
+    try {
+      const [{ unsubscribeFromPush }, { pushTokens }] = await Promise.all([
+        import('@/lib/push'),
+        import('@/services/endpoints'),
+      ]);
+      const token = await unsubscribeFromPush();
+      if (token) await pushTokens.remove(token).catch(() => {});
+    } catch { /* push is optional and must never block sign-out */ }
+
     try {
       await authFetch('/api/session/logout', { method: 'POST' });
     } catch { /* the BFF expires cookies even when the upstream is unreachable */ }

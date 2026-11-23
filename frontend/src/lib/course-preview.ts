@@ -41,3 +41,35 @@ export function buildLearnUrl(
 export function buildExamUrl(examId: string, opts: { preview?: boolean } = {}): string {
   return `/exam/${examId}${opts.preview ? '?preview=1' : ''}`;
 }
+
+export interface LearnTaskQuery {
+  /** The course-player tab the caller asked to open, if it is one we support. */
+  tab: 'assignments' | 'exams' | null;
+  /** A specific assignment to focus once the assignments tab has loaded. */
+  assignmentId: string | null;
+  /** A specific exam to focus once the exams tab has loaded. */
+  examId: string | null;
+}
+
+/**
+ * Parse the task deep-link hints from a course-player location search string.
+ *
+ * This is only a client hint: it selects a tab and scroll target, and grants no
+ * access on its own — the server still authorises every assignment and exam
+ * independently, so an unknown id simply finds nothing to focus.
+ */
+export function parseLearnTaskQuery(search: string): LearnTaskQuery {
+  const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
+  const tab = params.get('tab');
+  return {
+    tab: tab === 'assignments' || tab === 'exams' ? tab : null,
+    assignmentId: params.get('assignment') || null,
+    examId: params.get('exam') || null,
+  };
+}
+
+/** Build the course-player URL that opens the assignments tab focused on one task. */
+export function buildLearnAssignmentUrl(courseId: string, assignmentId: string): string {
+  const params = new URLSearchParams({ tab: 'assignments', assignment: assignmentId });
+  return `/course/${encodeURIComponent(courseId)}/learn?${params.toString()}`;
+}

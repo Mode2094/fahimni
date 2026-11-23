@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { TEACHER_NAV, ADMIN_NAV, isTeacherRoute, navLabelFor } from './nav-config';
+import {
+  TEACHER_NAV,
+  ADMIN_NAV,
+  STUDENT_NAV,
+  STUDENT_BOTTOM_NAV,
+  filterNavGroups,
+  isMoreNavRoute,
+  isTeacherRoute,
+  navLabelFor,
+} from './nav-config';
 
 /**
  * The AI assistant lives in the teacher sidebar (not a floating button):
@@ -42,6 +51,57 @@ describe('teacher nav plan gating', () => {
     for (const item of gated) {
       expect(item.gate).toMatch(/^[a-z_]+_enabled$|^export_reports$/);
     }
+  });
+});
+
+describe('student mobile navigation', () => {
+  it('keeps the daily destinations visible and leaves secondary links in More', () => {
+    expect(STUDENT_BOTTOM_NAV.map((item) => item.href)).toEqual([
+      '/my-learning',
+      '/exams',
+      '/messages',
+      '/my-bookings',
+    ]);
+    expect(STUDENT_BOTTOM_NAV.find((item) => item.href === '/messages')?.badge).toBe('messages');
+    expect(STUDENT_BOTTOM_NAV.find((item) => item.href === '/my-bookings')?.gate).toBe('appointments_enabled');
+
+    const allStudentLinks = STUDENT_NAV.flatMap((group) => group.items.map((item) => item.href));
+    expect(allStudentLinks).toEqual(expect.arrayContaining([
+      '/notifications',
+      '/community',
+      '/announcements',
+      '/results',
+      '/certificates',
+      '/leaderboard',
+      '/profile',
+      '/my-notes',
+    ]));
+    expect(isMoreNavRoute('/notifications', STUDENT_BOTTOM_NAV)).toBe(true);
+    expect(isMoreNavRoute('/course/course-1/learn', STUDENT_BOTTOM_NAV)).toBe(false);
+  });
+});
+
+describe('role-aware teacher navigation', () => {
+  it('makes conversations reachable from the teacher panel', () => {
+    const messages = TEACHER_NAV.flatMap((group) => group.items).filter((item) => item.href === '/messages');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].badge).toBe('messages');
+    expect(isTeacherRoute('/messages')).toBe(true);
+  });
+});
+
+describe('navigation search', () => {
+  it('filters by the selected locale and keeps matching groups only', () => {
+    const arabic = filterNavGroups(TEACHER_NAV, 'الرسائل', 'ar');
+    expect(arabic).toHaveLength(1);
+    expect(arabic[0].items.map((item) => item.href)).toEqual(['/messages']);
+
+    const english = filterNavGroups(TEACHER_NAV, 'settings', 'en');
+    expect(english.flatMap((group) => group.items.map((item) => item.href))).toContain('/teacher/settings');
+  });
+
+  it('does not hide or reorder links when the query is blank', () => {
+    expect(filterNavGroups(TEACHER_NAV, '   ', 'ar')).toBe(TEACHER_NAV);
   });
 });
 
