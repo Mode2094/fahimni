@@ -102,6 +102,28 @@ class CourseController extends Controller
         return response()->json(['message' => 'Course deleted successfully.']);
     }
 
+    /**
+     * إنشاء نسخة (مسودة) من كورس — الهيكل والدروس والمحتوى والاختبارات
+     * والواجبات فقط، بلا أي بيانات طلاب. الوسائط الثقيلة تُعاد بالمرجع.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $course = Course::findOrFail($id);
+
+        $this->authorize('view', $course);
+        $this->authorize('create', Course::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateCourse($course, $validated['title'] ?? null);
+
+        return response()->json([
+            'course' => new CourseResource($result['model']),
+            'report' => $result['report'],
+        ], 201);
+    }
+
     public function publish(string $id): JsonResponse
     {
         $course = Course::findOrFail($id);

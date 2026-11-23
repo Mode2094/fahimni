@@ -210,6 +210,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('courses/{course}', [CourseController::class, 'destroy']);
             Route::post('courses/{course}/publish', [CourseController::class, 'publish']);
             Route::post('courses/{course}/unpublish', [CourseController::class, 'unpublish']);
+            Route::post('courses/{course}/duplicate', [CourseController::class, 'duplicate']);
 
             // Sections
             Route::get('sections', [SectionController::class, 'index']);
@@ -225,6 +226,7 @@ Route::prefix('v1')->group(function () {
             Route::get('lessons/{lesson}', [LessonController::class, 'show']);
             Route::put('lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('lessons/{lesson}', [LessonController::class, 'destroy']);
+            Route::post('lessons/{lesson}/duplicate', [LessonController::class, 'duplicate']);
 
             // ─── Course groups (مجموعات الطلاب داخل الكورس) ───────────
             // Separate from community/forum groups and from academic terms.
@@ -308,6 +310,7 @@ Route::prefix('v1')->group(function () {
             Route::put('exams/{exam}', [ExamController::class, 'update']);
             Route::delete('exams/{exam}', [ExamController::class, 'destroy']);
             Route::post('exams/{exam}/publish', [ExamController::class, 'publish']);
+            Route::post('exams/{exam}/duplicate', [ExamController::class, 'duplicate']);
             Route::post('exams/{exam}/add-questions', [ExamController::class, 'addQuestions']);
             Route::post('exams/{exam}/questions/reorder', [ExamController::class, 'reorderQuestions']);
             Route::delete('exams/{exam}/questions/{question}', [ExamController::class, 'removeQuestion']);

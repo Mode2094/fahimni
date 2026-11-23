@@ -129,6 +129,28 @@ class ExamController extends Controller
         return response()->json(['message' => 'Exam deleted successfully.']);
     }
 
+    /**
+     * إنشاء نسخة (مسودة) من اختبار — الإعدادات والأقسام والأسئلة (من بنك
+     * الأسئلة) فقط، بلا محاولات أو درجات أو أي بيانات طلاب.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $exam = Exam::findOrFail($id);
+
+        $this->authorize('view', $exam);
+        $this->authorize('create', Exam::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateExam($exam, $validated['title'] ?? null);
+
+        return response()->json([
+            'exam' => new ExamResource($result['model']->load(['sections', 'questions.options'])),
+            'report' => $result['report'],
+        ], 201);
+    }
+
     public function publish(string $id): JsonResponse
     {
         $exam = Exam::findOrFail($id);

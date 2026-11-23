@@ -6,9 +6,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, CheckCircle2, ClipboardList, FileCheck2, Clock, X, Sparkles, HelpCircle, ExternalLink, Plus } from 'lucide-react';
+import { Loader2, CheckCircle2, ClipboardList, FileCheck2, Clock, X, Sparkles, HelpCircle, ExternalLink, Plus, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-question';
+import { DuplicateDialog } from '@/components/content/duplicate-dialog';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -126,6 +127,7 @@ export default function TeacherExamsPage() {
   const [loadingAttempt, setLoadingAttempt] = useState(false);
   const [grades, setGrades] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [dup, setDup] = useState<{ id: string; title: string } | null>(null);
 
   const headers = () => ({
     'Content-Type': 'application/json',
@@ -255,6 +257,9 @@ export default function TeacherExamsPage() {
                       </div>
                     </div>
                   </div>
+                  <Button size="sm" variant="outline" className="gap-1.5 rounded-full text-xs" onClick={() => setDup({ id: exam.id, title: exam.title })} title={t('إنشاء نسخة مسودة من الاختبار', 'Create a draft copy of the exam')}>
+                    <Copy className="h-3.5 w-3.5" />{t('إنشاء نسخة', 'Duplicate')}
+                  </Button>
                 </div>
 
                 {list.length === 0 ? (
@@ -374,6 +379,15 @@ export default function TeacherExamsPage() {
           </div>
         </div>
       )}
+
+      <DuplicateDialog
+        open={!!dup}
+        onOpenChange={(v) => { if (!v) setDup(null); }}
+        kind="exam"
+        id={dup?.id || null}
+        originalTitle={dup?.title || ''}
+        onDuplicated={load}
+      />
     </div>
   );
 }

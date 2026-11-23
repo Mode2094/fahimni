@@ -169,6 +169,28 @@ class LessonController extends Controller
         return response()->json(['message' => 'Lesson deleted successfully.']);
     }
 
+    /**
+     * إنشاء نسخة (مسودة) من درس داخل نفس الوحدة — المحتوى فقط، بلا تقدّم
+     * أو أي بيانات طلاب. الوسائط الثقيلة تُعاد بالمرجع.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $lesson = Lesson::findOrFail($id);
+
+        $this->authorize('view', $lesson);
+        $this->authorize('create', Lesson::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateLesson($lesson, $validated['title'] ?? null);
+
+        return response()->json([
+            'lesson' => new LessonResource($result['model']),
+            'report' => $result['report'],
+        ], 201);
+    }
+
     private function syncContent(Lesson $lesson, Request $request): void
     {
         // Clean up child rows of replaced content so nothing is orphaned.
