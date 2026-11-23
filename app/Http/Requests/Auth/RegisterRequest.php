@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Rules\ValidPhoneNumber;
+use App\Support\PhoneNumber;
 use Illuminate\Foundation\Http\FormRequest;
 
 class RegisterRequest extends FormRequest
@@ -19,7 +21,22 @@ class RegisterRequest extends FormRequest
             'password' => 'required|string|min:8|confirmed',
             'locale' => 'sometimes|string|in:ar,en',
             'tenant_slug' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|nullable|string|max:20',
+            'role' => 'sometimes|string|in:Student,Teacher',
+            // Teachers MUST provide a phone; students may omit it.
+            'phone' => ['required_if:role,Teacher', 'nullable', 'string', 'max:25', new ValidPhoneNumber],
         ];
+    }
+
+    /**
+     * Store one canonical E.164 form. Validating and normalizing on the way in
+     * means the DB never holds a raw, country-ambiguous number.
+     */
+    protected function prepareForValidation(): void
+    {
+        $phone = $this->input('phone');
+
+        if (is_string($phone) && trim($phone) !== '') {
+            $this->merge(['phone' => PhoneNumber::toE164($phone) ?? $phone]);
+        }
     }
 }

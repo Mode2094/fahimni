@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Mail\PlatformNotification;
 use App\Models\QuranTeacherRequest;
 use App\Models\SubscriptionPlan;
+use App\Rules\ValidPhoneNumber;
+use App\Support\PhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -20,13 +22,18 @@ class QuranTeacherRequestController extends Controller
         $validated = $request->validate([
             'name'            => 'required|string|max:255',
             'email'           => ['required', 'string', 'max:255', new Email],
-            'phone'           => 'nullable|string|max:50',
+            // A Quran teacher account is a teacher account: a phone number is
+            // mandatory so it can never be activated without one.
+            'phone'           => ['required', 'string', 'max:25', new ValidPhoneNumber],
             'city'            => 'nullable|string|max:255',
             'country'         => 'nullable|string|max:2',
             'memorized_juz'   => 'nullable|integer|between:1,30',
             'tajweed_level'   => 'nullable|string|in:beginner,intermediate,advanced,proficient,ijazah',
             'message'         => 'nullable|string|max:2000',
         ]);
+
+        // Store the canonical E.164 form (Jordan default) like every account.
+        $validated['phone'] = PhoneNumber::toE164($validated['phone']) ?? $validated['phone'];
 
         $existing = QuranTeacherRequest::where('email', $validated['email'])
             ->whereIn('status', [QuranTeacherRequest::STATUS_PENDING, QuranTeacherRequest::STATUS_APPROVED])
@@ -132,7 +139,7 @@ class QuranTeacherRequestController extends Controller
         } else {
             $user = \App\Models\User::create([
                 'name'      => $qr->name,
-                'phone'     => $qr->phone,
+                'phone'     => PhoneNumber::toE164($qr->phone),
                 'email'     => \App\Models\User::normalizeEmail((string) $qr->email),
                 'password'  => bcrypt('quran-' . substr(md5($qr->email), 0, 8)),
                 'is_active' => true,

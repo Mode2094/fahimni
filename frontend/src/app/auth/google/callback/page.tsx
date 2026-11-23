@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/store';
 import { track } from '@/lib/analytics';
+import { dashboardPathFor } from '@/lib/auth-routes';
 
 type Stage = 'working' | '2fa' | 'error';
 
@@ -50,9 +51,10 @@ function GoogleCallbackInner() {
 
     if (!user) return false;
 
-    if (user.is_super_admin) router.replace('/admin/dashboard');
-    else if (user.roles?.includes('Teacher')) router.replace('/teacher/dashboard');
-    else router.replace('/my-learning');
+    // Single source of truth: super admin → admin, teacher → dashboard (or the
+    // «أكمل بيانات حسابك» step when the mandatory phone is still missing),
+    // student → my-learning.
+    router.replace(dashboardPathFor(user));
 
     return true;
   }, [router]);
@@ -93,6 +95,14 @@ function GoogleCallbackInner() {
 
     if (step === '2fa') {
       setStage('2fa');
+      return;
+    }
+
+    // A teacher who signed up with Google but has no phone yet: the account
+    // exists and is signed in, but the workspace/trial start only after the
+    // profile is completed. hydrateSession routes them to the completion step.
+    if (step === 'profile_required') {
+      void hydrateSession();
       return;
     }
 

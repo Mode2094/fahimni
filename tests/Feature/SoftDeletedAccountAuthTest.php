@@ -54,7 +54,10 @@ class SoftDeletedAccountAuthTest extends TenantTestCase
         $payload = array_merge([
             'role' => 'teacher',
             'name' => null,
-            'phone' => null,
+            // A valid phone by default: the phone requirement has its own
+            // coverage in TeacherPhoneRequirementTest, so these fixtures are
+            // fully provisioned.
+            'phone' => '+962790000000',
             'exp' => time() + 600,
             'n' => Str::random(16),
         ], $overrides);

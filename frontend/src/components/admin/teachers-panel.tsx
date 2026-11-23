@@ -16,7 +16,7 @@ import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
   Wallet, TrendingUp, ClipboardList, FileText, Percent, Layers, Timer, Award, Star, Play,
-  ExternalLink, Copy,
+  ExternalLink, Copy, Phone, MessageCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -35,7 +35,7 @@ export default function AdminTeachersPanel() {
   const [showForm, setShowForm] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [detailTab, setDetailTab] = useState<'overview' | 'courses' | 'students' | 'sales'>('overview');
-  const [form, setForm] = useState({ name: '', email: '', password: '', plan_id: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', plan_id: '' });
   const [generatedPassword, setGeneratedPassword] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -68,17 +68,18 @@ export default function AdminTeachersPanel() {
 
   const create = async () => {
     if (!form.name || !form.email) { toast.error(t('أكمل الاسم والبريد', 'Fill name & email')); return; }
+    if (!form.phone.trim()) { toast.error(t('رقم الهاتف مطلوب', 'Phone number is required')); return; }
     setBusy(true);
     try {
       const res = await fetch(`${API}/admin/teachers`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...headers() },
-        body: JSON.stringify({ name: form.name, email: form.email, password: form.password || undefined, plan_id: form.plan_id || undefined }),
+        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone, password: form.password || undefined, plan_id: form.plan_id || undefined }),
       });
       const d = await res.json();
       if (!res.ok) { toast.error(d.message || 'Failed'); return; }
       setGeneratedPassword(d.generated_password || '');
       toast.success(t('تم إنشاء المعلم', 'Teacher created'));
-      setShowForm(false); setForm({ name: '', email: '', password: '', plan_id: '' });
+      setShowForm(false); setForm({ name: '', email: '', phone: '', password: '', plan_id: '' });
       load();
     } catch { toast.error('Failed'); } finally { setBusy(false); }
   };
@@ -140,6 +141,9 @@ export default function AdminTeachersPanel() {
   const platformUrl = (slug?: string) => (slug ? `${window.location.origin}/t/${slug}` : '');
   const teacherLoginUrl = () => `${window.location.origin}/teacher/login`;
 
+  const hasPhone = (value?: string | null) => !!(value && String(value).trim());
+  const whatsappUrl = (value: string) => `https://wa.me/${String(value).replace(/\D/g, '')}`;
+
   const copyText = async (text: string, msg: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -182,7 +186,7 @@ export default function AdminTeachersPanel() {
       <div className="flex flex-wrap gap-3 items-center">
         <div className="relative max-w-md flex-1 min-w-[220px]">
           <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input placeholder={t('بحث بالاسم أو البريد...', 'Search name or email...')} value={search} onChange={(e) => setSearch(e.target.value)} className="ps-9 h-10" />
+          <Input placeholder={t('بحث بالاسم أو البريد أو الهاتف...', 'Search name, email or phone...')} value={search} onChange={(e) => setSearch(e.target.value)} className="ps-9 h-10" />
         </div>
         <div className="flex gap-1.5">
           {[{ v: '', l: t('الكل', 'All') }, { v: 'active', l: t('نشط', 'Active') }, { v: 'inactive', l: t('موقوف', 'Suspended') }].map((f) => (
@@ -209,6 +213,23 @@ export default function AdminTeachersPanel() {
                 </div>
                 <h3 className="font-semibold">{teach.name}</h3>
                 <p className="text-sm text-gray-500 mt-1 flex items-center gap-1 truncate"><Mail className="h-3 w-3 shrink-0" /> {teach.email}</p>
+                <div className="text-sm mt-1 flex items-center gap-1">
+                  <Phone className="h-3 w-3 shrink-0 text-gray-400" />
+                  {hasPhone(teach.phone) ? (
+                    <span className="flex items-center gap-1 min-w-0">
+                      <span dir="ltr" className="truncate">{teach.phone}</span>
+                      <button title={t('نسخ الرقم', 'Copy number')} className="text-gray-400 hover:text-teal-600 shrink-0"
+                        onClick={() => copyText(teach.phone, t('تم نسخ رقم الهاتف', 'Phone copied'))}>
+                        <Copy className="h-3 w-3" />
+                      </button>
+                      <a title="WhatsApp" className="text-emerald-600 hover:text-emerald-700 shrink-0" href={whatsappUrl(teach.phone)} target="_blank" rel="noopener noreferrer">
+                        <MessageCircle className="h-3.5 w-3.5" />
+                      </a>
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">{t('غير متوفر', 'Not provided')}</span>
+                  )}
+                </div>
                 {teach.tenant && (
                   <a href={platformUrl(teach.tenant.slug)} target="_blank" rel="noopener noreferrer"
                     className="text-xs text-teal-700 mt-1 font-mono flex items-center gap-1 hover:underline" dir="ltr"
@@ -241,6 +262,7 @@ export default function AdminTeachersPanel() {
           <div className="space-y-4">
             <div className="space-y-2"><Label>{t('الاسم', 'Name')}</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="h-11" /></div>
             <div className="space-y-2"><Label>{t('البريد الإلكتروني', 'Email')}</Label><Input type="email" dir="ltr" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="h-11" /></div>
+            <div className="space-y-2"><Label>{t('رقم الهاتف', 'Phone number')}</Label><Input type="tel" inputMode="tel" dir="ltr" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="h-11" placeholder="+962791234567" /></div>
             <div className="space-y-2">
               <Label>{t('كلمة المرور (اختياري — تُولّد تلقائيًا)', 'Password (optional — auto-generated)')}</Label>
               <Input dir="ltr" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="h-11" placeholder="••••••••" />
@@ -316,6 +338,59 @@ export default function AdminTeachersPanel() {
               <div className="flex-1 overflow-y-auto pr-1 space-y-4">
                 {detailTab === 'overview' && (
                   <>
+                    {/* Contact & account data — name, phone and email are the
+                        mandatory teacher identifiers; both values are copyable
+                        and the phone opens a WhatsApp chat. Missing values are
+                        shown explicitly instead of being hidden. */}
+                    <div className="p-4 rounded-xl border bg-white">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Phone className="h-4 w-4 text-teal-600" />
+                        <div className="text-sm font-semibold">{t('بيانات التواصل', 'Contact details')}</div>
+                      </div>
+                      <div className="grid sm:grid-cols-3 gap-3 text-sm">
+                        <div className="p-3 rounded-xl bg-gray-50 min-w-0">
+                          <div className="text-[11px] text-gray-400">{t('الاسم الكامل', 'Full name')}</div>
+                          <div className="font-medium mt-0.5 truncate">{detail.teacher?.name || '—'}</div>
+                        </div>
+                        <div className="p-3 rounded-xl bg-gray-50 min-w-0">
+                          <div className="text-[11px] text-gray-400">{t('رقم الهاتف', 'Phone number')}</div>
+                          {hasPhone(detail.teacher?.phone) ? (
+                            <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                              <span dir="ltr" className="font-medium truncate">{detail.teacher.phone}</span>
+                              <button title={t('نسخ الرقم', 'Copy number')} className="text-gray-400 hover:text-teal-600 shrink-0"
+                                onClick={() => copyText(detail.teacher.phone, t('تم نسخ رقم الهاتف', 'Phone copied'))}>
+                                <Copy className="h-3.5 w-3.5" />
+                              </button>
+                              <a title="WhatsApp" className="text-emerald-600 hover:text-emerald-700 shrink-0" href={whatsappUrl(detail.teacher.phone)} target="_blank" rel="noopener noreferrer">
+                                <MessageCircle className="h-4 w-4" />
+                              </a>
+                            </div>
+                          ) : (
+                            <div className="font-medium mt-0.5 text-gray-400">{t('غير متوفر', 'Not provided')}</div>
+                          )}
+                        </div>
+                        <div className="p-3 rounded-xl bg-gray-50 min-w-0">
+                          <div className="text-[11px] text-gray-400">{t('البريد الإلكتروني', 'Email')}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                            <span dir="ltr" className="font-medium truncate">{detail.teacher?.email}</span>
+                            <button title={t('نسخ البريد', 'Copy email')} className="text-gray-400 hover:text-teal-600 shrink-0"
+                              onClick={() => copyText(detail.teacher.email, t('تم نسخ البريد الإلكتروني', 'Email copied'))}>
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-3 text-[11px] text-gray-500">
+                        <span className="flex items-center gap-1.5">
+                          {t('حالة الحساب', 'Account status')}:
+                          <Badge className={detail.teacher?.is_active ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-600 border-0'}>
+                            {detail.teacher?.is_active ? t('نشط', 'Active') : t('موقوف', 'Suspended')}
+                          </Badge>
+                        </span>
+                        <span>{t('تاريخ التسجيل', 'Registered')}: <b className="font-medium">{detail.teacher?.created_at ? new Date(detail.teacher.created_at).toLocaleDateString() : '—'}</b></span>
+                        <span>{t('آخر نشاط', 'Last activity')}: <b className="font-medium">{detail.teacher?.last_login_at ? new Date(detail.teacher.last_login_at).toLocaleString() : t('غير متوفر', 'Not provided')}</b></span>
+                      </div>
+                    </div>
                     {detail.tenant && (
                       <div className="p-4 rounded-xl border bg-gray-50/60">
                         <div className="flex items-center gap-2 mb-2">

@@ -24,6 +24,7 @@ type AuthState = {
   lastValidatedAt: number;
   login: (e: string, p: string, extra?: Record<string, unknown>) => Promise<LoginOutcome>;
   login2fa: (code: string) => Promise<void>;
+  completeProfile: (name: string, phone: string) => Promise<{ tenantId: string | null; trialStarted: boolean }>;
   loginAndRedirect: (e: string, p: string) => Promise<string>;
   logout: () => Promise<void>;
   load: () => Promise<void>;
@@ -274,6 +275,42 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ loading: false });
       throw error;
     }
+  },
+
+  completeProfile: async (name, phone) => {
+    const { ok, data } = await postJson('/api/session/complete-profile', { name, phone });
+
+    if (!ok) {
+      throw Object.assign(new Error(data?.message || 'Failed'), { response: { data } });
+    }
+
+    const user = (data?.user ?? null) as User | null;
+
+    if (user) {
+      cacheUser(user);
+      await healTenant(user);
+      set({
+        user,
+        loading: false,
+        initialized: true,
+        status: 'authenticated',
+        lastValidatedAt: Date.now(),
+      });
+    }
+
+    if (data?.tenant_id && typeof window !== 'undefined') {
+      localStorage.setItem('tenant_id', data.tenant_id);
+    }
+
+    try {
+      await import('@/store/settings').then((m) => m.useSettings.getState().load());
+      await import('@/store/plan').then((m) => m.usePlan.getState().load());
+    } catch { /* non-blocking */ }
+
+    return {
+      tenantId: (data?.tenant_id as string) ?? null,
+      trialStarted: !!data?.trial_started,
+    };
   },
 
   loginAndRedirect: async (email, password) => {

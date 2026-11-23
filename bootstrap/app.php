@@ -5,6 +5,7 @@ use App\Http\Middleware\CheckFeature;
 use App\Http\Middleware\DeviceSessionMiddleware;
 use App\Http\Middleware\EnsureAccountActive;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\EnsureTeacherProfileComplete;
 use App\Http\Middleware\MaintenanceMiddleware;
 use App\Http\Middleware\MetricsMiddleware;
 use App\Http\Middleware\RequireSubscription;
@@ -28,6 +29,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => AdminMiddleware::class,
             'role' => EnsureRole::class,
             'subscription' => RequireSubscription::class,
+            'profile' => EnsureTeacherProfileComplete::class,
         ]);
 
         // All traffic enters through our own nginx (or, once deployed, the

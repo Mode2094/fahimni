@@ -4,9 +4,11 @@ import type { User } from '@/types/api';
  * Where an authenticated account belongs after login / PWA launch.
  * Single source of truth for every redirect (login pages, /app, shells).
  */
-export function dashboardPathFor(user: Pick<User, 'is_super_admin' | 'roles'> | null): string {
+export function dashboardPathFor(user: Pick<User, 'is_super_admin' | 'roles'> & Partial<Pick<User, 'requires_profile_completion'>> | null): string {
   if (!user) return '/student/login';
   if (user.is_super_admin) return '/admin/dashboard';
+  // A teacher who has not supplied a phone yet must finish their profile first.
+  if (user.requires_profile_completion) return '/teacher/complete-profile';
   if (user.roles?.includes('Teacher')) return '/teacher/dashboard';
 
   return '/my-learning';

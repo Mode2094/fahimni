@@ -38,6 +38,7 @@ export default function TeacherRegisterPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (form.password !== form.confirm) { toast.error(locale === 'ar' ? 'كلمة المرور غير متطابقة' : 'Passwords mismatch'); return; }
+    if (!form.phone.trim()) { toast.error(locale === 'ar' ? 'رقم الهاتف مطلوب' : 'Phone number is required'); return; }
     setLoad(true);
     try {
       const res = await authFetch('/api/session/register', {
@@ -98,7 +99,7 @@ export default function TeacherRegisterPage() {
         <form onSubmit={submit} className="space-y-4 bg-white p-6 rounded-2xl border shadow-sm">
           <div className="space-y-2"><Label>{locale === 'ar' ? 'الاسم الكامل' : 'Full name'}</Label><Input value={form.name} onChange={u('name')} required className="h-11" /></div>
           <div className="space-y-2"><Label>{locale === 'ar' ? 'البريد الإلكتروني' : 'Email'}</Label><Input type="email" value={form.email} onChange={u('email')} required className="h-11" /></div>
-          <div className="space-y-2"><Label>{locale === 'ar' ? 'رقم الهاتف (اختياري)' : 'Phone (optional)'}</Label><Input type="tel" value={form.phone} onChange={u('phone')} className="h-11" /></div>
+          <div className="space-y-2"><Label>{locale === 'ar' ? 'رقم الهاتف' : 'Phone number'}</Label><Input type="tel" inputMode="tel" dir="ltr" required value={form.phone} onChange={u('phone')} placeholder="+962791234567" className="h-11" /><p className="text-xs text-gray-400">{locale === 'ar' ? 'مع رمز الدولة (الأردن +962 افتراضيًا)' : 'Include the country code (Jordan +962 by default)'}</p></div>
           <div className="space-y-2"><Label>{locale === 'ar' ? 'كلمة المرور' : 'Password'}</Label><Input type="password" value={form.password} onChange={u('password')} required className="h-11" /></div>
           <div className="space-y-2"><Label>{locale === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm password'}</Label><Input type="password" value={form.confirm} onChange={u('confirm')} required className="h-11" /></div>
           <Button type="submit" disabled={load} className="w-full h-12 rounded-xl text-white" style={{ background: 'linear-gradient(135deg, #0d9488, #0d9488)' }}>
