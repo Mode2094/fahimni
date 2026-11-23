@@ -704,8 +704,12 @@ Route::prefix('v1')->group(function () {
             // ─── Teacher: Plan & Limits ───────────────────
             Route::get('teacher/plan', [TeacherPlanController::class, 'index']);
 
-            // ─── Teacher: Getting-started checklist ───────
-            Route::middleware('role:teacher,owner,admin')->get('teacher/onboarding', [OnboardingController::class, 'index']);
+            // ─── Teacher: Getting-started guide ───────────
+            Route::middleware('role:teacher,owner,admin')->prefix('teacher/onboarding')->group(function () {
+                Route::get('/', [OnboardingController::class, 'index']);
+                Route::post('dismiss', [OnboardingController::class, 'dismiss']);
+                Route::post('restore', [OnboardingController::class, 'restore']);
+            });
 
             // ─── Teacher: Site Design ─────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/site-design')->group(function () {
