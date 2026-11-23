@@ -7,6 +7,7 @@ import { useFocus } from '@/store/focus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import ProtectedVideoPlayer from '@/components/video/protected-video-player';
+import LessonNotesQuestions from '@/components/lesson/lesson-notes-questions';
 import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -162,6 +163,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   // Progress: how far the student actually watched, keyed by lesson id. Kept in
   // a ref so the 15s autosave timer always sees the latest value.
   const watchTimeRef = useRef<Record<string, number>>({});
+  // Latest playhead (seconds) of the active host video — used to pin a note to
+  // the exact moment the student is looking at.
+  const playheadRef = useRef<number>(0);
   const autosaveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
 
@@ -732,6 +736,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                       videoId={videoContent.video.id ?? videoContent.id}
                       onTimeUpdate={(s) => {
                         if (!active?.id || active.completed) return;
+                        playheadRef.current = s;
                         watchTimeRef.current[active.id] = Math.max(watchTimeRef.current[active.id] || 0, s);
                       }}
                       onEnded={() => { if (active?.id && !active.completed) void completeLesson(active.id); }}
@@ -790,6 +795,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <CheckCircle2 className="h-4 w-4" /> {locale === 'ar' ? 'تم إكمال الدرس' : 'Lesson completed'}
                   </span>
                 </div>
+              )}
+              {!contentFs && !pageBlurred && enrollmentId && (
+                <LessonNotesQuestions lessonId={active.id} getTimestamp={() => playheadRef.current} />
               )}
               {!contentFs && !pageBlurred && (prevLesson || nextLesson) && (
                 <nav className="flex items-center justify-between gap-3 pt-2" aria-label={locale === 'ar' ? 'التنقل بين الدروس' : 'Lesson navigation'}>

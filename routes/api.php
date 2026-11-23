@@ -36,7 +36,9 @@ use App\Http\Controllers\Api\FreemiusWebhookController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\LessonContentController;
 use App\Http\Controllers\Api\LessonController;
+use App\Http\Controllers\Api\LessonNoteController;
 use App\Http\Controllers\Api\LessonProgressController;
+use App\Http\Controllers\Api\LessonQuestionController;
 use App\Http\Controllers\Api\LiveSessionController;
 use App\Http\Controllers\Api\MediaAdminController;
 use App\Http\Controllers\Api\MediaAssetController;
@@ -248,6 +250,19 @@ Route::prefix('v1')->group(function () {
             Route::get('lesson-contents/{content}', [LessonContentController::class, 'show']);
             Route::put('lesson-contents/{content}', [LessonContentController::class, 'update']);
             Route::delete('lesson-contents/{content}', [LessonContentController::class, 'destroy']);
+
+            // ─── Student notes on lessons (ملاحظات الطالب) ────────────
+            Route::get('lesson-notes', [LessonNoteController::class, 'index']);
+            Route::post('lessons/{lesson}/notes', [LessonNoteController::class, 'store']);
+            Route::put('lesson-notes/{note}', [LessonNoteController::class, 'update']);
+            Route::delete('lesson-notes/{note}', [LessonNoteController::class, 'destroy']);
+
+            // ─── Lesson Q&A (أسئلة الطلاب داخل الدرس) ─────────────────
+            Route::get('lesson-questions', [LessonQuestionController::class, 'teacherIndex']);
+            Route::post('lesson-questions/{question}/answer', [LessonQuestionController::class, 'answer']);
+            Route::get('lessons/{lesson}/questions', [LessonQuestionController::class, 'index']);
+            Route::post('lessons/{lesson}/questions', [LessonQuestionController::class, 'store']);
+            Route::delete('lesson-questions/{question}', [LessonQuestionController::class, 'destroy']);
 
             // Enrollments
             Route::get('enrollments', [EnrollmentController::class, 'index']);

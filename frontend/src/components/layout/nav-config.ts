@@ -5,6 +5,7 @@ import {
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
   BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
   ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Package,
+  MessageCircleQuestion,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -106,6 +107,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/teacher/live', icon: Radio, ar: 'البث المباشر', en: 'Live Sessions', gate: 'live_stream_enabled' },
       { href: '/teacher/schedule', icon: CalendarDays, ar: 'الدروس المجدولة', en: 'Scheduled Lessons', gate: 'scheduled_lessons_enabled' },
       { href: '/teacher/exams', icon: ClipboardList, ar: 'الاختبارات', en: 'Exams' },
+      { href: '/teacher/qa', icon: MessageCircleQuestion, ar: 'أسئلة الطلاب', en: 'Student Questions' },
       { href: '/teacher/staff', icon: UsersRound, ar: 'فريق العمل', en: 'Team', gate: 'multi_teacher_enabled' },
     ],
   },
