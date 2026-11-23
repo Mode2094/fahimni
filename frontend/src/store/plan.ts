@@ -57,7 +57,9 @@ export const usePlan = create<PlanState>((set, get) => ({
   storageLabel: () => {
     const u = get().usage?.storage;
     if (!u) return '';
-    if (u.unlimited) return `${u.used_mb} MB ∞`;
-    return `${u.used_mb} / ${u.limit_mb} MB`;
+    // `used`/`limit` arrive in bytes from /teacher/plan (same shape as
+    // usageLabel) — never the legacy `used_mb`/`limit_mb` names.
+    if (u.unlimited) return `${u.used} / ∞`;
+    return `${u.used} / ${u.limit}`;
   },
 }));

@@ -367,6 +367,11 @@ export default function TeacherSettingsPage() {
                   </div>
                 </div>
 
+                <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-2.5">
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <p className="text-xs font-bold text-emerald-800">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
+                </div>
+
                 {!videoSecurity ? (
                   <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-teal-600" /></div>
                 ) : !videoSecurity.feature_available ? (

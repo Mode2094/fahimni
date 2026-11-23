@@ -25,7 +25,7 @@ class FeatureCatalog
             ['key' => 'live_sessions_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد البث المباشر', 'en' => 'Live sessions limit', 'desc_ar' => 'عدد جلسات البث المباشر المتاحة لك', 'desc_en' => 'Number of live streaming sessions available'],
             ['key' => 'assignments_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الواجبات', 'en' => 'Assignments limit', 'desc_ar' => 'عدد الواجبات التي يمكنك إنشاؤها لطلابك', 'desc_en' => 'Number of assignments you can create'],
             ['key' => 'teachers_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد المعلمين', 'en' => 'Teachers limit', 'desc_ar' => 'عدد المعلمين الذين يمكنك إضافتهم لفريقك', 'desc_en' => 'Number of teachers you can add to your team'],
-            ['key' => 'videos_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الفيديوهات', 'en' => 'Videos limit', 'desc_ar' => 'عدد الفيديوهات المرفوعة في كل كورساتك', 'desc_en' => 'Number of uploaded videos across your courses'],
+            ['key' => 'videos_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'عدد الفيديوهات', 'en' => 'Videos', 'desc_ar' => 'عدد الفيديوهات المرفوعة — بلا حد عددي، والضابط هو مساحة التخزين', 'desc_en' => 'Number of uploaded videos — no numeric limit, bounded by your storage'],
             ['key' => 'files_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الملفات', 'en' => 'Files limit', 'desc_ar' => 'عدد الملفات المرفوعة (PDF، مستندات وغيرها)', 'desc_en' => 'Number of uploaded files (PDF, documents, etc.)'],
             ['key' => 'pdfs_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد ملفات PDF', 'en' => 'PDFs limit', 'desc_ar' => 'عدد ملفات PDF التي يمكنك رفعها', 'desc_en' => 'Number of PDF files you can upload'],
             ['key' => 'blog_posts_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد مقالات المدونة', 'en' => 'Blog posts limit', 'desc_ar' => 'عدد المقالات التي يمكنك نشرها في مدونتك', 'desc_en' => 'Number of posts you can publish on your blog'],
@@ -124,10 +124,15 @@ class FeatureCatalog
                 $raw = (string) $f->feature_value;
                 $unit = $meta['unit'] ?? null;
 
-                $display = function (bool $ar) use ($type, $raw, $meta, $unit) {
+                $display = function (bool $ar) use ($type, $raw, $meta, $unit, $f) {
                     $lang = $ar ? 'ar' : 'en';
 
                     if ($raw === 'unlimited') {
+                        // الفيديوهات: لا حدّ عددي — الرفع مفتوح ضمن مساحة التخزين.
+                        if ($f->feature_key === 'videos_limit') {
+                            return $ar ? 'بلا حد عددي' : 'No numeric limit';
+                        }
+
                         return $ar ? 'غير محدود' : 'Unlimited';
                     }
 
@@ -150,6 +155,17 @@ class FeatureCatalog
                     if ($type === 'numeric') {
                         if ($unit === 'GB' && is_numeric($raw)) {
                             $mb = (float) $raw;
+
+                            // Terabytes for large quotas: 1.5 TB → "1.5 تيرا"
+                            // (not "1536 جيجا"), whole TB shown without decimals.
+                            if ($mb >= 1048576) {
+                                $tb = $mb / 1048576;
+                                $tbStr = $tb == (int) $tb
+                                    ? (string) (int) $tb
+                                    : rtrim(rtrim(number_format($tb, 1, '.', ''), '0'), '.');
+
+                                return $tbStr.' '.($ar ? 'تيرا' : 'TB');
+                            }
 
                             // Whole-number display: 5120 → "5 جيجا", not "5120".
                             if ($mb >= 1024) {

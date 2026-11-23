@@ -70,7 +70,7 @@ export default function AdminPlansPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [profitWarning, setProfitWarning] = useState<any>(null);
   const [showAllFeatures, setShowAllFeatures] = useState(false);
-  const [form, setForm] = useState<any>({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false });
+  const [form, setForm] = useState<any>({ name: '', description: '', monthly_price: '29', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false });
   const [feats, setFeats] = useState<Record<string, { enabled: boolean; value: string }>>({});
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -230,7 +230,7 @@ export default function AdminPlansPage() {
   };
 
   const resetForm = () => {
-    setForm({ name: '', description: '', monthly_price: '99', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false, freemius_monthly_plan_id: '', freemius_yearly_plan_id: '', freemius_monthly_pricing_id: '', freemius_yearly_pricing_id: '' });
+    setForm({ name: '', description: '', monthly_price: '29', yearly_price: '', currency: 'USD', trial_days: '7', is_active: true, is_popular: false, freemius_monthly_plan_id: '', freemius_yearly_plan_id: '', freemius_monthly_pricing_id: '', freemius_yearly_pricing_id: '' });
     setPriceForm({ monthly_price: '', yearly_price: '' });
     setSync(null);
     setFeats({});
@@ -245,7 +245,7 @@ export default function AdminPlansPage() {
       monthly_price: p.monthly_price ?? '',
       yearly_price: p.yearly_price ?? '',
       currency: p.currency || 'USD',
-      trial_days: p.trial_days ?? '14',
+      trial_days: p.trial_days ?? '7',
       is_active: p.is_active ?? true,
       is_popular: p.is_popular ?? false,
       freemius_monthly_plan_id: p.freemius_monthly_plan_id || '',
@@ -449,7 +449,7 @@ export default function AdminPlansPage() {
         ) : (
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
             {plans.map((p) => (
-              <Card key={p.id} className={`border-0 shadow-sm overflow-hidden card-hover ${p.name === 'Professional' ? 'ring-2 ring-teal-600 shadow-xl' : ''}`}>
+              <Card key={p.id} className={`border-0 shadow-sm overflow-hidden card-hover ${p.is_popular ? 'ring-2 ring-teal-600 shadow-xl' : ''}`}>
                 <div className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-2">

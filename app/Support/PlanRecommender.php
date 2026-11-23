@@ -186,7 +186,18 @@ class PlanRecommender
         $number = (float) $value;
 
         if ($featureKey === 'storage_limit_mb') {
-            $gb = $number / 1024;
+            $mb = $number;
+
+            if ($mb >= 1048576) {
+                $tb = $mb / 1048576;
+                $whole = $tb == (int) $tb
+                    ? (string) (int) $tb
+                    : rtrim(rtrim(number_format($tb, 1, '.', ''), '0'), '.');
+
+                return $whole.' '.($locale === 'ar' ? 'تيرا' : 'TB');
+            }
+
+            $gb = $mb / 1024;
             $whole = $gb == (int) $gb
                 ? (string) (int) $gb
                 : rtrim(rtrim(number_format($gb, 1, '.', ''), '0'), '.');
