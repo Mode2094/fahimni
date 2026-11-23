@@ -10,7 +10,9 @@ use App\Models\StudentAchievement;
 use App\Models\StudentActivity;
 use App\Models\StudentFavorite;
 use App\Models\StudentPoint;
+use App\Models\StudentStreak;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
@@ -80,6 +82,66 @@ class StudentGamificationService
             'metadata' => $metadata,
             'created_at' => now(),
         ]);
+
+        // Any real activity extends the daily streak.
+        $this->touchStreak($user, $tenantId);
+    }
+
+    /**
+     * Advance the daily streak for the current day. Idempotent: repeated
+     * activity on the same day never inflates the count. A gap of more than
+     * one day restarts the streak at 1.
+     */
+    public function touchStreak(User $user, string $tenantId, ?Carbon $day = null): StudentStreak
+    {
+        $day = ($day ?? Carbon::now())->startOfDay();
+
+        $streak = StudentStreak::firstOrNew([
+            'tenant_id' => $tenantId,
+            'user_id' => $user->id,
+        ]);
+
+        $last = $streak->last_activity_date?->startOfDay();
+
+        if ($last && $last->equalTo($day)) {
+            // Already counted today — idempotent.
+            return $streak;
+        }
+
+        if ($last && $last->equalTo($day->copy()->subDay())) {
+            $streak->current_streak = (int) $streak->current_streak + 1;
+        } else {
+            $streak->current_streak = 1;
+        }
+
+        $streak->longest_streak = max((int) $streak->longest_streak, (int) $streak->current_streak);
+        $streak->last_activity_date = $day;
+        $streak->save();
+
+        return $streak;
+    }
+
+    /**
+     * Read the streak, resolving a stale one to zero without writing. A streak
+     * is "alive" when the last activity is today or yesterday.
+     */
+    public function streakFor(User $user, string $tenantId): array
+    {
+        $streak = StudentStreak::where('tenant_id', $tenantId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        $current = (int) ($streak->current_streak ?? 0);
+        $last = $streak?->last_activity_date?->startOfDay();
+        $today = Carbon::now()->startOfDay();
+        $alive = $last !== null && ($last->equalTo($today) || $last->equalTo($today->copy()->subDay()));
+
+        return [
+            'current' => $alive ? $current : 0,
+            'longest' => (int) ($streak->longest_streak ?? 0),
+            'last_activity_date' => $streak?->last_activity_date?->toDateString(),
+            'active_today' => $last !== null && $last->equalTo($today),
+        ];
     }
 
     public function toggleFavorite(User $user, string $tenantId, string $courseId): array
@@ -228,6 +290,7 @@ class StudentGamificationService
             'lessons_completed' => $completedLessons,
             'exams_passed' => $passedExams,
             'favorites_count' => StudentFavorite::where('tenant_id', $tenantId)->where('user_id', $user->id)->count(),
+            'streak' => $this->streakFor($user, $tenantId),
         ];
     }
 

@@ -207,4 +207,17 @@ class StudentProfileController extends Controller
             'stats' => $this->gamification->statsFor($request->user(), $tenantId),
         ]);
     }
+
+    public function streak(Request $request): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+
+        if (! $tenantId) {
+            return response()->json(['message' => 'No active tenant found.'], 400);
+        }
+
+        return response()->json([
+            'streak' => $this->gamification->streakFor($request->user(), $tenantId),
+        ]);
+    }
 }

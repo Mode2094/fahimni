@@ -178,6 +178,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('student')->group(function () {
             Route::get('profile', [StudentProfileController::class, 'profile']);
             Route::get('stats', [StudentProfileController::class, 'stats']);
+            Route::get('streak', [StudentProfileController::class, 'streak']);
             Route::get('leaderboard', [StudentProfileController::class, 'leaderboard']);
             Route::get('achievements', [StudentProfileController::class, 'achievements']);
             Route::get('points', [StudentProfileController::class, 'points']);
