@@ -262,6 +262,25 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   };
   const toggle = (sid: string) => { const n = new Set(expanded); n.has(sid) ? n.delete(sid) : n.add(sid); setExpanded(n); };
 
+  // ─── Prev / next lesson navigation ─────────────
+  // The curriculum is a tree (sections → lessons) but a student moves through
+  // it linearly, so we flatten it once to find the neighbours of the current
+  // lesson. A locked/unlockable neighbour is navigable but shows the standard
+  // lock screen when opened — we never silently skip a student past content.
+  const flatLessons = (data.sections || []).flatMap((s: any) =>
+    (s.lessons || []).map((l: any) => ({ ...l, sectionId: s.id })),
+  );
+  const currentIndex = active ? flatLessons.findIndex((l: any) => l.id === active.id) : -1;
+  const prevLesson = currentIndex > 0 ? flatLessons[currentIndex - 1] : null;
+  const nextLesson = currentIndex >= 0 && currentIndex < flatLessons.length - 1 ? flatLessons[currentIndex + 1] : null;
+  const goLesson = (l: any) => {
+    if (!l) return;
+    const sec = (data.sections || []).find((s: any) => s.id === l.sectionId);
+    setExpanded((prev) => { const n = new Set(prev); n.add(l.sectionId); return n; });
+    setActive(sec?.lessons?.find((x: any) => x.id === l.id) || l);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   // ─── Search inside course ──────────────────────
   const searchCourse = async (q: string) => {
     setSearchQ(q);
@@ -681,6 +700,22 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     pageBlurred ? null : <ExerciseCard exercise={exercise} />
                   )}
                 </>
+              )}
+              {!contentFs && !pageBlurred && (prevLesson || nextLesson) && (
+                <nav className="flex items-center justify-between gap-3 pt-2" aria-label={locale === 'ar' ? 'التنقل بين الدروس' : 'Lesson navigation'}>
+                  {prevLesson ? (
+                    <Button variant="outline" className="max-w-[47%] gap-2 rounded-full" onClick={() => goLesson(prevLesson)}>
+                      {locale === 'ar' ? <ArrowRight className="h-4 w-4 shrink-0" /> : <ArrowLeft className="h-4 w-4 shrink-0" />}
+                      <span className="truncate">{locale === 'ar' ? 'السابق' : 'Previous'}: {prevLesson.title}</span>
+                    </Button>
+                  ) : <span aria-hidden />}
+                  {nextLesson ? (
+                    <Button className="ms-auto max-w-[47%] gap-2 rounded-full" style={{ background: '#0d9488' }} onClick={() => goLesson(nextLesson)}>
+                      <span className="truncate">{locale === 'ar' ? 'التالي' : 'Next'}: {nextLesson.title}</span>
+                      {locale === 'ar' ? <ArrowLeft className="h-4 w-4 shrink-0" /> : <ArrowRight className="h-4 w-4 shrink-0" />}
+                    </Button>
+                  ) : null}
+                </nav>
               )}
             </div>
           )) : (
