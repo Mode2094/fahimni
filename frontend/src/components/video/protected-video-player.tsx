@@ -66,9 +66,10 @@ const SPEED_CONFIG: Record<string, { interval: number; transition: number }> = {
 /**
  * العلامة المائية المتحركة + حاجز خفيف ضد إزالتها من أدوات المطوّر.
  *
- * صراحةً: هذا لا يمنع تسجيل الشاشة ولا يضمن منع نسخ المحتوى — يرفع فقط كلفة
- * إزالة العلامة عبر التلاعب بالواجهة (إخفاء/حذف العنصر). تعمل فوق عناصر
- * <video> و<iframe> على حد سواء.
+ * نصريحٌ لا ادّعاء: هذا لا يمنع تسجيل الشاشة ولا يضمن منع نسخ المحتوى. وظيفته
+ * أنه يطبع اسم الطالب ووقت المشاهدة على الصورة نفسها، فيصبح أي تسجيل أو لقطة
+ * شاشة قابلاً للتتبّع. كما يرفع كلفة إزالة العلامة عبر التلاعب بالواجهة
+ * (إخفاء/حذف العنصر). تعمل فوق عناصر <video> و<iframe> على حد سواء.
  */
 function WatermarkOverlay({
   text, opacity, size, speed,
@@ -79,6 +80,7 @@ function WatermarkOverlay({
   speed: string;
 }) {
   const [pos, setPos] = useState(0);
+  const [stamp, setStamp] = useState(() => new Date());
   const ref = useRef<HTMLDivElement | null>(null);
   const lastRestore = useRef(0);
 
@@ -87,6 +89,12 @@ function WatermarkOverlay({
     const id = setInterval(() => setPos((p) => (p + 1) % WATERMARK_POSITIONS.length), cfg.interval);
     return () => clearInterval(id);
   }, [speed]);
+
+  // طابع زمني يتحرك مع العلامة — يجعل كل تسجيل/لقطة قابلاً للتتبّع.
+  useEffect(() => {
+    const id = setInterval(() => setStamp(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -113,6 +121,7 @@ function WatermarkOverlay({
 
   const p = WATERMARK_POSITIONS[pos];
   const cfg = SPEED_CONFIG[speed] ?? SPEED_CONFIG.slow;
+  const stampText = `${stamp.getFullYear()}-${String(stamp.getMonth() + 1).padStart(2, '0')}-${String(stamp.getDate()).padStart(2, '0')} ${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`;
 
   return (
     <div
@@ -132,7 +141,8 @@ function WatermarkOverlay({
         letterSpacing: '0.02em',
       }}
     >
-      {text}
+      <span>{text}</span>
+      <span className="ms-2 font-normal opacity-80" dir="ltr">{stampText}</span>
     </div>
   );
 }
@@ -427,7 +437,7 @@ export default function ProtectedVideoPlayer({
           <WatermarkOverlay text={wmText} opacity={wmOpacity} size={wmFontSize} speed={wmSpeed} />
         )}
         <div className="absolute bottom-2 end-2 px-2 py-0.5 rounded bg-black/50 text-[10px] text-white/70 pointer-events-none">
-          محتوى محمي
+          علامة مائية باسمك
         </div>
       </div>
     );
@@ -480,7 +490,7 @@ export default function ProtectedVideoPlayer({
       )}
 
       <div className="absolute top-2 end-2 px-2 py-0.5 rounded bg-black/50 text-[10px] text-white/70 pointer-events-none">
-        محتوى محمي — يحظر التنزيل أو التصوير
+        محتوى مُرخّص لك — يحمل اسمك ووقت المشاهدة
       </div>
     </div>
   );

@@ -70,4 +70,43 @@ describe('ProtectedVideoPlayer — watermark coverage', () => {
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy());
     expect(document.querySelector('[data-watermark]')).toBeNull();
   });
+
+  it('stamps the watermark with a traceable date/time', async () => {
+    global.fetch = vi.fn(() => playbackResponse({
+      id: 'v4',
+      type: 'external',
+      provider: 'youtube',
+      provider_video_id: 'dQw4w9WgXcQ',
+      protection: {},
+      watermark: { enabled: true, text: 'سارة', opacity: 0.35, speed: 'slow', size: '1rem' },
+    })) as any;
+
+    render(<ProtectedVideoPlayer videoId="v4" />);
+
+    const wm = await waitFor(() => {
+      const el = document.querySelector('[data-watermark]');
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(wm.textContent).toContain('سارة');
+    expect(wm.textContent).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+  });
+
+  it('never claims recording is impossible', async () => {
+    global.fetch = vi.fn(() => playbackResponse({
+      id: 'v5',
+      type: 'external',
+      provider: 'youtube',
+      provider_video_id: 'dQw4w9WgXcQ',
+      protection: {},
+      watermark: { enabled: true, text: 'سارة', opacity: 0.35, speed: 'slow', size: '1rem' },
+    })) as any;
+
+    render(<ProtectedVideoPlayer videoId="v5" />);
+    await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy());
+
+    // No absolute anti-recording / anti-screenshot promise anywhere in the UI.
+    expect(document.body.textContent).not.toMatch(/يحظر التنزيل|يمنع التصوير|منع تسجيل/);
+    expect(document.body.textContent).toContain('علامة مائية باسمك');
+  });
 });
