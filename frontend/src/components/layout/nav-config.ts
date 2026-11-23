@@ -4,7 +4,7 @@ import {
   ClipboardList, Video, CalendarDays, CalendarClock, HandCoins,
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
   BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
-  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Puzzle,
+  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Puzzle, NotebookPen,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -140,6 +140,7 @@ export const STUDENT_NAV: NavGroup[] = [
     title: { ar: 'التعلم', en: 'Learning' },
     items: [
       { href: '/my-learning', icon: BookOpen, ar: 'تعليمي', en: 'My Learning' },
+      { href: '/my-notes', icon: NotebookPen, ar: 'ملاحظاتي', en: 'My Notes' },
       { href: '/exams', icon: ClipboardList, ar: 'الاختبارات', en: 'Exams', match: ['/exam'] },
       { href: '/results', icon: Award, ar: 'النتائج', en: 'Results' },
       { href: '/certificates', icon: BookMarked, ar: 'الشهادات', en: 'Certificates', gate: 'certificates_enabled' },
@@ -181,7 +182,7 @@ export const STUDENT_BOTTOM_NAV: NavItem[] = [
 /* ── Route classification (used by the route-aware shell) ── */
 
 const STUDENT_ROUTES: { exact?: string[]; prefix?: string[] } = {
-  exact: ['/my-learning', '/exams', '/results', '/certificates', '/leaderboard', '/messages', '/notifications', '/announcements', '/my-bookings', '/profile', '/checkout/success'],
+  exact: ['/my-learning', '/my-notes', '/exams', '/results', '/certificates', '/leaderboard', '/messages', '/notifications', '/announcements', '/my-bookings', '/profile', '/checkout/success'],
   prefix: ['/community', '/course/', '/exam/', '/live/', '/book/'],
 };
 

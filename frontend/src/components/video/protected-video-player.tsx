@@ -1,12 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { ShieldAlert, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { getDeviceId } from '@/lib/device';
 import { canResume, shouldPersist, formatClock } from '@/lib/watch-position';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+/**
+ * واجهة تحكّم مكشوفة للمشغّل المحمي: تتيح للملاحظات قراءة الزمن الحالي
+ * والقفز إلى لحظة محفوظة. القفز يستخدم عنصر `<video>` الموجود نفسه — لا نتجاوز
+ * الحماية ولا نجلب أي نسخة من الفيديو.
+ */
+export type ProtectedVideoHandle = {
+  /** الزمن الحالي بالثواني، أو null إن لم يصبح المشغّل جاهزاً بعد. */
+  getCurrentTime: () => number | null;
+  /** مدة الفيديو بالثواني، أو null إن لم تُعرف بعد. */
+  getDuration: () => number | null;
+  /** يقفز إلى الثواني المطلوبة ويبدأ التشغيل؛ يعيد هل نجح القفز. */
+  seekTo: (seconds: number) => boolean;
+};
+
+export type ProtectedVideoPlayerProps = {
+  videoId: string;
+};
 
 /** Extract the 11-char video id from any YouTube URL (watch, youtu.be, shorts, embed). */
 function youtubeId(input: string): string {
@@ -69,7 +87,8 @@ const SPEED_CONFIG: Record<string, { interval: number; transition: number }> = {
   fast: { interval: 3500, transition: 2000 },
 };
 
-export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
+const ProtectedVideoPlayer = forwardRef<ProtectedVideoHandle, ProtectedVideoPlayerProps>(
+function ProtectedVideoPlayer({ videoId }, ref) {
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [blurred, setBlurred] = useState(false);
@@ -324,6 +343,34 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
     applyPendingSource();
   }, [playback, applyPendingSource]);
 
+  // واجهة التحكّم المكشوفة للملاحظات: قراءة الزمن الحالي والقفز للّحظات المحفوظة.
+  useImperativeHandle(ref, () => ({
+    getCurrentTime: () => {
+      const v = videoRef.current;
+      if (!v || v.readyState < 1 || !isFinite(v.currentTime)) return null;
+      return v.currentTime;
+    },
+    getDuration: () => {
+      const v = videoRef.current;
+      if (!v || !isFinite(v.duration) || v.duration <= 0) return null;
+      return v.duration;
+    },
+    seekTo: (seconds: number) => {
+      const v = videoRef.current;
+      if (!v || !Number.isFinite(seconds) || seconds < 0) return false;
+      const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+      // لا نقفز إلى ما بعد نهاية الفيديو نفسه.
+      const target = dur > 0 ? Math.min(seconds, Math.max(0, dur - 0.5)) : seconds;
+      try {
+        v.currentTime = target;
+      } catch {
+        return false;
+      }
+      v.play().catch(() => {});
+      return true;
+    },
+  }), []);
+
   const protection = playback?.protection ?? {};
   const blockPip = protection.block_picture_in_picture ?? true;
   const pauseOnHidden = protection.pause_on_hidden ?? true;
@@ -572,4 +619,6 @@ export default function ProtectedVideoPlayer({ videoId }: { videoId: string }) {
       </div>
     </div>
   );
-}
+});
+
+export default ProtectedVideoPlayer;

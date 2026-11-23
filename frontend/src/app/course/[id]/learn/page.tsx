@@ -6,7 +6,8 @@ import { useLocale } from '@/store/locale';
 import { useFocus } from '@/store/focus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import ProtectedVideoPlayer from '@/components/video/protected-video-player';
+import ProtectedVideoPlayer, { type ProtectedVideoHandle } from '@/components/video/protected-video-player';
+import LessonNotesPanel from '@/components/notes/lesson-notes-panel';
 import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -166,6 +167,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const [commentVals, setCommentVals] = useState<Record<string, string>>({});
   const [commentingId, setCommentingId] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<ProtectedVideoHandle | null>(null);
   const [contentFs, setContentFs] = useState(false);
   const [pageBlurred, setPageBlurred] = useState(false);
 
@@ -307,6 +309,10 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const textContent = content?.contents?.find((c: any) => c.content_type === 'text');
   const fileContent = content?.contents?.find((c: any) => c.content_type === 'file');
   const exercise = content?.exercise;
+  // الملاحظات/العلامات المرجعية: القفز الزمني ممكن فقط عبر المشغّل المحمي
+  // (عنصر <video> أصلي) — لا الفيديو الخارجي (YouTube/Vimeo) الذي لا نتحكّم به.
+  const notesVideoId = videoContent?.video?.id ?? videoContent?.id ?? null;
+  const notesCanSeek = !!videoContent?.video && (videoContent.video.type === 'stream' || videoContent.video.type === 'provider');
   // Only a staff viewer gets `preview: true` from the API; combined with the
   // query hint this means the banner and write-guards apply to staff only.
   const preview = previewMode && !!data?.preview;
@@ -686,7 +692,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <LiveLessonView live={liveContent.live} />
                   )}
                   {videoContent?.video ? (
-                    <ProtectedVideoPlayer videoId={videoContent.video.id ?? videoContent.id} />
+                    <ProtectedVideoPlayer ref={playerRef} videoId={videoContent.video.id ?? videoContent.id} />
                   ) : (
                     <div className="flex items-center gap-3 p-4 rounded-xl bg-white border"><FileText className="h-6 w-6 text-green-500" /><span className="font-medium">{locale === 'ar' ? 'درس نصي' : 'Text lesson'}</span></div>
                   )}
@@ -716,6 +722,16 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                   )}
                   {exercise && exercise.position === 'after_content' && (
                     pageBlurred ? null : <ExerciseCard exercise={exercise} preview={preview} />
+                  )}
+                  {!preview && !pageBlurred && (
+                    <LessonNotesPanel
+                      lessonId={active.id}
+                      videoId={notesVideoId}
+                      canUsePlayer={notesCanSeek}
+                      getCurrentTime={() => playerRef.current?.getCurrentTime() ?? null}
+                      getDuration={() => playerRef.current?.getDuration() ?? null}
+                      onSeek={(seconds) => { playerRef.current?.seekTo(seconds); }}
+                    />
                   )}
                 </>
               )}

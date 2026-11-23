@@ -35,6 +35,7 @@ use App\Http\Controllers\Api\FreemiusWebhookController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\LessonContentController;
 use App\Http\Controllers\Api\LessonController;
+use App\Http\Controllers\Api\LessonNoteController;
 use App\Http\Controllers\Api\LessonProgressController;
 use App\Http\Controllers\Api\LiveSessionController;
 use App\Http\Controllers\Api\MediaAdminController;
@@ -192,6 +193,15 @@ Route::prefix('v1')->group(function () {
             Route::get('activity', [StudentProfileController::class, 'activity']);
             Route::get('favorites', [StudentProfileController::class, 'favorites']);
             Route::post('favorites/{course}', [StudentProfileController::class, 'toggleFavorite']);
+
+            // ─── ملاحظات الطالب والعلامات المرجعية (خاصة بصاحبها) ──
+            // لا مشاركة افتراضية: لا يقرأ/يعدّل ملاحظات الطالب إلا هو. كل كتابة
+            // تتحقّق من ملكية الدرس وصلاحية الوصول (تسجيل/فتح تدريجي/مجموعة).
+            Route::get('notes', [LessonNoteController::class, 'index'])->middleware('throttle:notes-read');
+            Route::get('notes/summary', [LessonNoteController::class, 'summary'])->middleware('throttle:notes-read');
+            Route::post('notes', [LessonNoteController::class, 'store'])->middleware('throttle:notes-write');
+            Route::put('notes/{note}', [LessonNoteController::class, 'update'])->middleware('throttle:notes-write');
+            Route::delete('notes/{note}', [LessonNoteController::class, 'destroy'])->middleware('throttle:notes-write');
         });
 
         Route::prefix('tenants')->group(function () {
