@@ -4,7 +4,8 @@ import {
   ClipboardList, Video, CalendarDays, CalendarClock, HandCoins,
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
   BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
-  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Puzzle, NotebookPen,
+  ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Package,
+  MessageCircleQuestion, Eye, Puzzle, NotebookPen,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -41,6 +42,7 @@ export const ADMIN_NAV: NavGroup[] = [
     title: { ar: 'المستخدمون', en: 'Users' },
     items: [
       { href: '/admin/students', icon: GraduationCap, ar: 'الطلاب', en: 'Students' },
+      { href: '/admin/view-as', icon: Eye, ar: 'معاينة حساب', en: 'Preview Account' },
       { href: '/admin/quran-requests', icon: BookOpen, ar: 'مدرسو القرءان', en: 'Quran Teachers' },
     ],
   },
@@ -90,6 +92,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/teacher/follow-up', icon: Activity, ar: 'متابعة الطلاب', en: 'Student Follow-up' },
       { href: '/teacher/terms', icon: CalendarDays, ar: 'الفصول الدراسية', en: 'Academic Terms', match: ['/teacher/terms'] },
       { href: '/teacher/cards', icon: Ticket, ar: 'البطاقات', en: 'Cards' },
+      { href: '/teacher/bundles', icon: Package, ar: 'الحزم', en: 'Bundles' },
       { href: '/teacher/student-app', icon: Smartphone, ar: 'تطبيق الطلاب', en: 'Student App', hideWithApp: true },
     ],
   },
@@ -106,6 +109,7 @@ export const TEACHER_NAV: NavGroup[] = [
       { href: '/teacher/live', icon: Radio, ar: 'البث المباشر', en: 'Live Sessions', gate: 'live_stream_enabled' },
       { href: '/teacher/schedule', icon: CalendarDays, ar: 'الدروس المجدولة', en: 'Scheduled Lessons', gate: 'scheduled_lessons_enabled' },
       { href: '/teacher/exams', icon: ClipboardList, ar: 'الاختبارات', en: 'Exams' },
+      { href: '/teacher/qa', icon: MessageCircleQuestion, ar: 'أسئلة الطلاب', en: 'Student Questions' },
       { href: '/teacher/questions', icon: Puzzle, ar: 'بنك الأسئلة', en: 'Question Bank' },
       { href: '/teacher/staff', icon: UsersRound, ar: 'فريق العمل', en: 'Team', gate: 'multi_teacher_enabled' },
     ],

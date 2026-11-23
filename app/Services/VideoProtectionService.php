@@ -115,6 +115,13 @@ class VideoProtectionService
                 'provider_video_id' => $video->provider_video_id,
                 'title' => $video->title,
                 'duration' => (int) $video->duration,
+                'watermark' => $watermark['enabled'] ? [
+                    'enabled' => true,
+                    'text' => $this->watermarkText($user, (bool) ($watermark['show_id'] ?? false)),
+                    'opacity' => $watermark['opacity'],
+                    'speed' => $watermark['speed'],
+                    'size' => $watermark['size'],
+                ] : ['enabled' => false],
                 'protection' => $protection,
             ];
         }
@@ -332,6 +339,7 @@ class VideoProtectionService
     public function providerPlaybackPayload(VideoContent $video, User $user, ?string $deviceHash = null): array
     {
         $protection = $this->protectionConfig($video);
+        $watermark = $this->watermarkFor($video);
 
         if ($video->status !== 'ready') {
             return [
@@ -369,6 +377,13 @@ class VideoProtectionService
             'stream_url' => $driver->signedPlaybackUrl($video->provider_video_id, (string) $user->id, $ttl),
             'thumbnail_url' => $driver->thumbnailUrl($video->provider_video_id, (string) $user->id, $ttl),
             'expires_in' => $ttl,
+            'watermark' => $watermark['enabled'] ? [
+                'enabled' => true,
+                'text' => $this->watermarkText($user, (bool) ($watermark['show_id'] ?? false)),
+                'opacity' => $watermark['opacity'],
+                'speed' => $watermark['speed'],
+                'size' => $watermark['size'],
+            ] : ['enabled' => false],
             'protection' => $protection,
         ];
 

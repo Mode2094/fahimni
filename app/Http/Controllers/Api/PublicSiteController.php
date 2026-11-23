@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivationCard;
+use App\Models\Bundle;
 use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
@@ -149,6 +150,83 @@ class PublicSiteController extends Controller
 
         return response()->json([
             'courses' => $courses->map(fn (Course $c) => $this->coursePayload($c)),
+        ]);
+    }
+
+    /**
+     * Public course detail for a teacher's own site (/t/{slug}/courses/{course}).
+     * Only a PUBLISHED course that belongs to the active tenant slug is ever
+     * returned, so a course id from another academy can never be rendered under
+     * this teacher's brand, and an unpublished course simply 404s — a deleted
+     * or hidden course never leaves a page exposing private content.
+     *
+     * The curriculum payload itself is produced by `sections()`, so the public
+     * course page and the enrolled lesson player never drift apart.
+     */
+    public function course(Request $request, string $slug, string $courseId): JsonResponse
+    {
+        $tenant = Tenant::where('slug', $slug)->where('status', 'active')->first();
+
+        if (! $tenant) {
+            return response()->json(['message' => 'Site not found.'], 404);
+        }
+
+        $owned = Course::where('tenant_id', $tenant->id)
+            ->where('is_published', true)
+            ->whereKey($courseId)
+            ->exists();
+
+        if (! $owned) {
+            return response()->json(['message' => 'Course not found.'], 404);
+        }
+
+        return $this->sections($request, $courseId);
+    }
+
+    /**
+     * Published course bundles for a teacher's public site. Only courses that
+     * are themselves published are exposed inside a bundle, so an unpublished
+     * draft course can never leak through the package listing.
+     */
+    public function bundles(string $slug): JsonResponse
+    {
+        $tenant = Tenant::where('slug', $slug)->where('status', 'active')->first();
+
+        if (! $tenant) {
+            return response()->json(['message' => 'Site not found.'], 404);
+        }
+
+        $bundles = Bundle::where('tenant_id', $tenant->id)
+            ->where('is_published', true)
+            ->withCount(['courses' => fn ($q) => $q->where('courses.is_published', true)])
+            ->with(['courses' => fn ($q) => $q
+                ->where('courses.is_published', true)
+                ->select('courses.id', 'courses.title', 'courses.slug', 'courses.thumbnail_url', 'courses.price', 'courses.level'),
+            ])
+            ->orderBy('sort_order')
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json([
+            'bundles' => $bundles->map(fn (Bundle $b) => [
+                'id' => $b->id,
+                'title' => $b->title,
+                'slug' => $b->slug,
+                'description' => $b->description,
+                'short_description' => $b->short_description,
+                'thumbnail_url' => $b->thumbnail_url,
+                'price' => $b->price,
+                'currency' => $b->currency,
+                'courses_count' => $b->courses_count,
+                'courses' => $b->courses->map(fn (Course $c) => [
+                    'id' => $c->id,
+                    'title' => $c->title,
+                    'slug' => $c->slug,
+                    'thumbnail_url' => $c->thumbnail_url,
+                    'price' => $c->price,
+                    'level' => $c->level,
+                ])->values(),
+            ])->values(),
         ]);
     }
 
@@ -415,7 +493,7 @@ class PublicSiteController extends Controller
         $settings = TenantSetting::where('tenant_id', $course->tenant_id)->first();
         $downloadsEnabled = (bool) ($settings?->file_downloads_enabled ?? true);
 
-        $contents = $lesson->contents->map(function ($content) use ($user, $protection, $downloadsEnabled) {
+        $contents = $lesson->contents->map(function ($content) use ($user, $protection, $downloadsEnabled, $lesson) {
             $payload = [
                 'id' => $content->id,
                 'content_type' => $content->content_type,
@@ -437,6 +515,19 @@ class PublicSiteController extends Controller
                     'title' => $content->video->title,
                     'duration' => (int) $content->video->duration,
                 ];
+
+                // A free-preview lesson can be watched by a guest. When the
+                // video lives on an external public host (YouTube/Vimeo) the
+                // provider id is already part of the public embed URL, so
+                // exposing it leaks nothing and lets the storefront preview it.
+                // A hosted (Bunny) stream stays hidden — only a "requires
+                // login" flag is sent, never a stream URL.
+                if (in_array($content->video->provider, ['youtube', 'vimeo'], true)) {
+                    $payload['video']['provider_video_id'] = $content->video->provider_video_id;
+                    $payload['video']['requires_login'] = ! $lesson->is_free_preview;
+                } else {
+                    $payload['video']['requires_login'] = true;
+                }
             }
 
             if ($content->text) {

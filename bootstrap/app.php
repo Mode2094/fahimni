@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\BlockViewAsWrites;
 use App\Http\Middleware\CheckFeature;
 use App\Http\Middleware\DeviceSessionMiddleware;
 use App\Http\Middleware\EnsureAccountActive;
@@ -50,6 +51,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // Revoke web sessions after password changes / deactivation. Must run
         // after StartSession (statefulApi) and before route auth middleware.
         $middleware->appendToGroup('api', EnsureAccountActive::class);
+        // Runs on every API request (after the session is started) so the
+        // read-only view-as guard also covers authenticated routes registered
+        // outside the main group — bookings, uploads, cancellations. A write
+        // during a preview is refused no matter which route it targets.
+        $middleware->appendToGroup('api', BlockViewAsWrites::class);
 
         // API-only app: unauthenticated requests must return 401 JSON,
         // never redirect to a non-existent web "login" route.

@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Models\ActivationCard;
 use App\Models\Backup;
+use App\Models\Bundle;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
@@ -30,6 +31,7 @@ use App\Observers\SubscriptionPlanObserver;
 use App\Observers\TenantSubscriptionObserver;
 use App\Policies\ActivationCardPolicy;
 use App\Policies\BackupPolicy;
+use App\Policies\BundlePolicy;
 use App\Policies\CoursePolicy;
 use App\Policies\EnrollmentPolicy;
 use App\Policies\ExamPolicy;
@@ -73,6 +75,7 @@ class AppServiceProvider extends ServiceProvider
         Transaction::class => TransactionPolicy::class,
         TenantSetting::class => TenantSettingPolicy::class,
         Backup::class => BackupPolicy::class,
+        Bundle::class => BundlePolicy::class,
     ];
 
     public function boot(): void

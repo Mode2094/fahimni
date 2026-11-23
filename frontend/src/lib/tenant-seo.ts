@@ -108,6 +108,38 @@ export function tenantCoursesLd(slug: string, site: TenantSite, courses: any[]):
   };
 }
 
+/** Course structured data for a single public course page. */
+export function tenantCourseLd(
+  slug: string,
+  site: TenantSite,
+  course: Record<string, any> | null,
+): object | null {
+  if (!course?.title) return null;
+  const { name } = tenantInfo(site);
+  const url = `${tenantOrigin(slug)}/courses/${course.id}`;
+  const price = Number(course.price) || 0;
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Course',
+    name: course.title,
+    description: course.short_description || course.description || undefined,
+    url,
+    inLanguage: 'ar',
+    provider: { '@type': 'EducationalOrganization', name, url: tenantOrigin(slug) },
+    ...(price > 0
+      ? {
+          offers: {
+            '@type': 'Offer',
+            price: String(price),
+            priceCurrency: course.currency || 'USD',
+            availability: 'https://schema.org/InStock',
+            url,
+          },
+        }
+      : {}),
+  };
+}
+
 /** FAQPage structured data (only for questions the teacher actually published). */
 export function tenantFaqLd(site: TenantSite): object | null {
   const cfg = site?.site_config;

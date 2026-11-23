@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
+use App\Http\Controllers\Api\Admin\ViewAsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
 use App\Http\Controllers\Api\AdminTeacherNotificationController;
@@ -14,6 +15,7 @@ use App\Http\Controllers\Api\Auth\GoogleAuthController;
 use App\Http\Controllers\Api\Auth\MobileAuthController;
 use App\Http\Controllers\Api\BackupController;
 use App\Http\Controllers\Api\BiController;
+use App\Http\Controllers\Api\BundleController;
 use App\Http\Controllers\Api\CommunityCommentController;
 use App\Http\Controllers\Api\CommunityController;
 use App\Http\Controllers\Api\CommunityGroupController;
@@ -37,6 +39,7 @@ use App\Http\Controllers\Api\LessonContentController;
 use App\Http\Controllers\Api\LessonController;
 use App\Http\Controllers\Api\LessonNoteController;
 use App\Http\Controllers\Api\LessonProgressController;
+use App\Http\Controllers\Api\LessonQuestionController;
 use App\Http\Controllers\Api\LiveSessionController;
 use App\Http\Controllers\Api\MediaAdminController;
 use App\Http\Controllers\Api\MediaAssetController;
@@ -169,6 +172,16 @@ Route::prefix('v1')->group(function () {
             Route::post('email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:email-verification');
         });
 
+        // ─── Admin: read-only View-As (معاينة حساب كقراءة فقط) ──
+        // `start` re-checks super-admin in the controller; `stop` only needs an
+        // active view-as marker so the admin can always exit. All three are
+        // whitelisted for writes so exit works while read-only mode is on.
+        Route::prefix('admin/view-as')->group(function () {
+            Route::get('/', [ViewAsController::class, 'show'])->name('admin.view-as.show');
+            Route::post('{user}', [ViewAsController::class, 'start'])->name('admin.view-as.start');
+            Route::delete('/', [ViewAsController::class, 'stop'])->name('admin.view-as.stop');
+        });
+
         // `profile` blocks a teacher whose mandatory phone is still missing from
         // editing an account around the completion step (students / super admins
         // are unaffected). The completion endpoint itself stays outside.
@@ -187,6 +200,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('student')->group(function () {
             Route::get('profile', [StudentProfileController::class, 'profile']);
             Route::get('stats', [StudentProfileController::class, 'stats']);
+            Route::get('streak', [StudentProfileController::class, 'streak']);
             Route::get('leaderboard', [StudentProfileController::class, 'leaderboard']);
             Route::get('achievements', [StudentProfileController::class, 'achievements']);
             Route::get('points', [StudentProfileController::class, 'points']);
@@ -227,6 +241,15 @@ Route::prefix('v1')->group(function () {
             Route::post('courses/{course}/unpublish', [CourseController::class, 'unpublish']);
             Route::post('courses/{course}/duplicate', [CourseController::class, 'duplicate']);
 
+            // ─── Course bundles (حزم الكورسات) ────────────────────────
+            // A bundle groups existing courses; it never copies content.
+            Route::get('bundles', [BundleController::class, 'index']);
+            Route::post('bundles', [BundleController::class, 'store']);
+            Route::get('bundles/{bundle}', [BundleController::class, 'show']);
+            Route::put('bundles/{bundle}', [BundleController::class, 'update']);
+            Route::delete('bundles/{bundle}', [BundleController::class, 'destroy']);
+            Route::post('bundles/{bundle}/enroll', [BundleController::class, 'enroll']);
+
             // Sections
             Route::get('sections', [SectionController::class, 'index']);
             Route::post('sections', [SectionController::class, 'store']);
@@ -261,6 +284,13 @@ Route::prefix('v1')->group(function () {
             Route::get('lesson-contents/{content}', [LessonContentController::class, 'show']);
             Route::put('lesson-contents/{content}', [LessonContentController::class, 'update']);
             Route::delete('lesson-contents/{content}', [LessonContentController::class, 'destroy']);
+
+            // ─── Lesson Q&A (أسئلة الطلاب داخل الدرس) ─────────────────
+            Route::get('lesson-questions', [LessonQuestionController::class, 'teacherIndex']);
+            Route::post('lesson-questions/{question}/answer', [LessonQuestionController::class, 'answer']);
+            Route::get('lessons/{lesson}/questions', [LessonQuestionController::class, 'index']);
+            Route::post('lessons/{lesson}/questions', [LessonQuestionController::class, 'store']);
+            Route::delete('lesson-questions/{question}', [LessonQuestionController::class, 'destroy']);
 
             // Enrollments
             Route::get('enrollments', [EnrollmentController::class, 'index']);
@@ -843,6 +873,8 @@ Route::prefix('v1')->group(function () {
         Route::get('courses/{course}/lessons/{lesson}', [PublicSiteController::class, 'lesson']);
         Route::get('{slug}', [PublicSiteController::class, 'show']);
         Route::get('{slug}/courses', [PublicSiteController::class, 'courses']);
+        Route::get('{slug}/courses/{course}', [PublicSiteController::class, 'course']);
+        Route::get('{slug}/bundles', [PublicSiteController::class, 'bundles']);
         Route::get('{slug}/posts', [TeacherBlogController::class, 'publicPosts']);
         Route::get('{slug}/posts/{post}', [TeacherBlogController::class, 'publicPost']);
     });

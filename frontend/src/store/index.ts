@@ -5,6 +5,16 @@ import { dashboardPathFor } from '@/lib/auth-routes';
 
 type LoginOutcome = { requires2fa: boolean };
 
+export type ViewAsState = {
+  active: boolean;
+  read_only: boolean;
+  actor_id?: string | null;
+  actor_name?: string | null;
+  user_id: string;
+  user_name?: string | null;
+  started_at?: string | null;
+};
+
 /**
  * `unknown`     — boot: the HttpOnly session has not been checked yet.
  * `authenticated` — a live session (or a cached profile during a transient
@@ -17,6 +27,8 @@ export type AuthStatus = 'unknown' | 'authenticated' | 'unauthenticated' | 'unav
 
 type AuthState = {
   user: User | null;
+  /** Active admin "view-as (read-only)" state, resolved from the session. */
+  viewAs: ViewAsState | null;
   loading: boolean;
   initialized: boolean;
   status: AuthStatus;
@@ -28,6 +40,7 @@ type AuthState = {
   loginAndRedirect: (e: string, p: string) => Promise<string>;
   logout: () => Promise<void>;
   load: () => Promise<void>;
+  stopViewAs: () => Promise<void>;
   refreshSession: () => Promise<boolean>;
   handleUnauthorized: (at?: number) => void;
   check: () => boolean;
@@ -130,12 +143,14 @@ function validateSession(): Promise<boolean> {
       if (res.ok) {
         const data = await res.json().catch(() => null);
         const user = (data?.user ?? null) as User | null;
+        const viewAs = (data?.view_as ?? null) as ViewAsState | null;
 
         if (user) {
           cacheUser(user);
           await healTenant(user);
           useAuth.setState({
             user,
+            viewAs,
             status: 'authenticated',
             loading: false,
             initialized: true,
@@ -150,6 +165,7 @@ function validateSession(): Promise<boolean> {
         cacheUser(null);
         useAuth.setState({
           user: null,
+          viewAs: null,
           status: 'unauthenticated',
           loading: false,
           initialized: true,
@@ -184,6 +200,7 @@ function validateSession(): Promise<boolean> {
 
 export const useAuth = create<AuthState>((set, get) => ({
   user: null,
+  viewAs: null,
   loading: false,
   initialized: false,
   status: 'unknown',
@@ -219,6 +236,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       await healTenant(user);
       set({
         user,
+        viewAs: null,
         loading: false,
         initialized: true,
         status: 'authenticated',
@@ -261,6 +279,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       await healTenant(user);
       set({
         user,
+        viewAs: null,
         loading: false,
         initialized: true,
         status: 'authenticated',
@@ -358,6 +377,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 
     set({
       user: null,
+      viewAs: null,
       loading: false,
       initialized: true,
       status: 'unauthenticated',
@@ -368,6 +388,15 @@ export const useAuth = create<AuthState>((set, get) => ({
       // replace() so the back button cannot reopen a protected page.
       window.location.replace(target);
     }
+  },
+
+  stopViewAs: async () => {
+    try {
+      await authFetch(`${API_BASE}/admin/view-as`, { method: 'DELETE' });
+    } catch { /* fall through to reload — the session decides */ }
+
+    // A full reload re-resolves the restored admin session everywhere.
+    if (typeof window !== 'undefined') window.location.href = '/admin/dashboard';
   },
 
   load: async () => {
@@ -392,6 +421,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     cacheUser(null);
     set({
       user: null,
+      viewAs: null,
       loading: false,
       initialized: true,
       status: 'unauthenticated',

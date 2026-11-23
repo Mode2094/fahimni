@@ -13,6 +13,7 @@ import { GraduationCap, Loader2, CheckCircle, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { authFetch, setSessionHint } from '@/lib/auth-client';
 import { track } from '@/lib/analytics';
+import { setPendingRedirect, consumePendingRedirect } from '@/lib/post-auth-redirect';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -25,12 +26,24 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
   const [load, setLoad] = useState(false);
   const [done, setDone] = useState(false);
   const [brand, setBrand] = useState<any>(null);
+  const [courseParam, setCourseParam] = useState('');
   const u = (f: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [f]: e.target.value });
 
   // The teacher's own branding, so the sign-up continues the same experience.
   useEffect(() => {
     fetch(`${API}/public/${slug}`).then((r) => r.json()).then((d) => setBrand(d.site || null)).catch(() => {});
   }, [slug]);
+
+  // The course the visitor came from. Remembered locally so the SAME course is
+  // restored after the password flow OR a Google sign-in round-trip, and never
+  // dropped between sign-up and login.
+  useEffect(() => {
+    const course = new URLSearchParams(window.location.search).get('course') || '';
+    setCourseParam(course);
+    if (course) setPendingRedirect(`/t/${slug}/courses/${course}`);
+  }, [slug]);
+
+  const courseHref = courseParam ? `/t/${slug}/courses/${courseParam}` : `/my-learning`;
 
   const primary = brand?.primary_color || '#0d9488';
   const accent = brand?.accent_color || '#14b8a6';
@@ -53,7 +66,9 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
       useAuth.setState({ user: data.user, loading: false, initialized: true });
       track('CompleteRegistration', { content_name: 'student_signup', tenant: slug }, 'sign_up');
       setDone(true);
-      setTimeout(() => router.push('/my-learning'), 500);
+      // Return to the course the student came from, if any.
+      const next = consumePendingRedirect();
+      setTimeout(() => router.push(next || courseHref), 500);
     } catch { toast.error(locale === 'ar' ? 'فشل التسجيل' : 'Failed'); }
     setLoad(false);
   };
@@ -97,7 +112,7 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
         </CardContent></Card>
         <p className="text-center text-sm text-slate-500">
           {locale === 'ar' ? 'لديك حساب؟' : 'Have an account?'}{' '}
-          <a href={`/student/login?tenant_slug=${slug}`} className="font-medium underline" style={{ color: primary }}>
+          <a href={`/student/login?tenant_slug=${slug}${courseParam ? `&from=${encodeURIComponent(`/t/${slug}/courses/${courseParam}`)}` : ''}`} className="font-medium underline" style={{ color: primary }}>
             {locale === 'ar' ? 'سجل دخول' : 'Log in'}
           </a>
         </p>

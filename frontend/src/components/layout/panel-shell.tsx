@@ -16,6 +16,7 @@ import {
   type NavGroup, type NavItem,
 } from './nav-config';
 import { TeacherNotificationBell } from './teacher-notification-bell';
+import ViewAsBanner from './view-as-banner';
 
 type UnreadCounts = { notifications: number; messages: number; adminNotifications: number };
 
@@ -482,6 +483,7 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
 
       {/* ── Content column ── */}
       <div className={cn('flex min-w-0 flex-1 flex-col transition-all duration-200', collapsed ? 'lg:ms-[76px]' : 'lg:ms-[264px]')}>
+        <ViewAsBanner />
         <header className="sticky top-0 z-30 flex min-h-14 items-center gap-2 border-b bg-background/85 px-3 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-4">
           {!isStudent && (
             <button

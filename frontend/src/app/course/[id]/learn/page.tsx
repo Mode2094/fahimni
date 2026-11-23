@@ -8,7 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import ProtectedVideoPlayer, { type ProtectedVideoHandle } from '@/components/video/protected-video-player';
 import LessonNotesPanel from '@/components/notes/lesson-notes-panel';
-import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio, Pencil } from 'lucide-react';
+import ProtectedFileViewer from '@/components/file/protected-file-viewer';
+import LessonQuestions from '@/components/lesson/lesson-questions';
+import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Eye, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { parsePreviewQuery, parseLearnTaskQuery, buildExamUrl } from '@/lib/course-preview';
@@ -148,7 +150,6 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const [content, setContent] = useState<any>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
-  const [fileBusy, setFileBusy] = useState(false);
   const [viewTab, setViewTab] = useState<'lessons' | 'assignments' | 'exams'>('lessons');
   const requestedAssignmentId = useRef<string | null>(null);
   const requestedExamId = useRef<string | null>(null);
@@ -339,26 +340,14 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   // query hint this means the banner and write-guards apply to staff only.
   const preview = previewMode && !!data?.preview;
 
-  const openFile = async (mode: 'download' | 'preview') => {
-    if (!fileContent?.file?.url || fileBusy) return;
-    setFileBusy(true);
-    try {
-      const res = await fetch(`${API}${fileContent.file.url}`, { headers: authHeaders() });
-      const d = await res.json().catch(() => null);
-      if (!res.ok || !d?.url) {
-        toast.error(locale === 'ar' ? 'لا يمكن الوصول إلى الملف' : 'Cannot access the file');
-        return;
-      }
-      if (mode === 'download') {
-        window.location.href = d.url;
-      } else {
-        window.open(d.url, '_blank');
-      }
-    } catch {
-      toast.error(locale === 'ar' ? 'فشل تحميل الملف' : 'Failed');
-    }
-    setFileBusy(false);
-  };
+  // ─── Prev / next lesson navigation ─────────────
+  // Flat, curriculum-ordered list so "next" means next in the course, not next
+  // in a section. Locked lessons are still counted so the order stays truthful,
+  // but the buttons are disabled on them.
+  const flatLessons: any[] = (data?.sections || []).flatMap((s: any) => s.lessons || []);
+  const currentIndex = active ? flatLessons.findIndex((l) => l.id === active.id) : -1;
+  const prevLesson = currentIndex > 0 ? flatLessons[currentIndex - 1] : null;
+  const nextLesson = currentIndex >= 0 && currentIndex < flatLessons.length - 1 ? flatLessons[currentIndex + 1] : null;
 
   // ─── Assignments (student) ─────────────────────
   // Never called in preview (the form is hidden), but this is a hard guard so
@@ -725,21 +714,11 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <div className={`bg-white border rounded-2xl leading-relaxed whitespace-pre-wrap select-none ${contentFs ? 'max-w-3xl w-full mx-auto p-6 sm:p-10 text-lg' : 'p-6 sm:p-8'}`} onCopy={(e) => e.preventDefault()}>{textContent.text.body}</div>
                   )}
                   {fileContent?.file?.url && (
-                    <div className={`flex flex-wrap items-center gap-3 ${contentFs ? 'max-w-3xl w-full mx-auto justify-center' : ''}`}>
-                      {fileContent.file.is_downloadable ? (
-                        <Button onClick={() => openFile('download')} disabled={fileBusy} className="gap-2 rounded-full" style={{ background: '#0d9488' }}>
-                          {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} {locale === 'ar' ? 'تحميل الملف' : 'Download'} {fileContent.file.name}
-                        </Button>
-                      ) : fileContent.file.previewable ? (
-                        <>
-                          <Button variant="outline" onClick={() => openFile('preview')} disabled={fileBusy} className="gap-2 rounded-full">
-                            {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} {locale === 'ar' ? 'معاينة الملف (بدون تنزيل)' : 'Preview (no download)'} {fileContent.file.name}
-                          </Button>
-                          <span className="flex items-center gap-1.5 text-xs text-amber-600"><Ban className="h-3.5 w-3.5" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم' : 'Downloads disabled by your teacher'}</span>
-                        </>
-                      ) : (
-                        <span className="flex items-center gap-1.5 text-xs text-amber-600 p-3 rounded-xl bg-amber-50 border border-amber-100"><Ban className="h-4 w-4" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم — هذا النوع من الملفات لا يمكن معاينته' : 'Downloads disabled by your teacher — this file type cannot be previewed'} ({fileContent.file.name})</span>
-                      )}
+                    <div className={contentFs ? 'max-w-3xl w-full mx-auto' : ''}>
+                      <ProtectedFileViewer
+                        file={fileContent.file}
+                        headers={authHeaders()}
+                      />
                     </div>
                   )}
                   {exercise && exercise.position === 'after_content' && (
@@ -754,6 +733,31 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                       getDuration={() => playerRef.current?.getDuration() ?? null}
                       onSeek={(seconds) => { playerRef.current?.seekTo(seconds); }}
                     />
+                  )}
+                  {!preview && !pageBlurred && (
+                    <LessonQuestions lessonId={active.id} />
+                  )}
+                  {!preview && !pageBlurred && (prevLesson || nextLesson) && (
+                    <div className="flex items-center justify-between gap-3 pt-2">
+                      <Button
+                        variant="outline"
+                        className="gap-2 rounded-full"
+                        disabled={!prevLesson || prevLesson.locked}
+                        onClick={() => { if (prevLesson && !prevLesson.locked) setActive(prevLesson); }}
+                      >
+                        {locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+                        {locale === 'ar' ? 'الدرس السابق' : 'Previous lesson'}
+                      </Button>
+                      <Button
+                        className="gap-2 rounded-full text-white"
+                        style={{ background: '#0d9488' }}
+                        disabled={!nextLesson || nextLesson.locked}
+                        onClick={() => { if (nextLesson && !nextLesson.locked) setActive(nextLesson); }}
+                      >
+                        {locale === 'ar' ? 'الدرس التالي' : 'Next lesson'}
+                        {locale === 'ar' ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+                      </Button>
+                    </div>
                   )}
                 </>
               )}

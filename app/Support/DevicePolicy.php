@@ -10,6 +10,20 @@ use App\Models\UserDevice;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * Device-binding policy: a soft cap on how many browsers a single student may
+ * watch from within one tenant.
+ *
+ * Privacy posture (deliberate):
+ *  - The only signal used is a client-generated random `X-Device-Id` (a UUID
+ *    minted in the browser and mirrored to a first-party cookie). No canvas,
+ *    WebGL, audio, font or hardware fingerprinting is performed, and no data
+ *    is collected beyond the optional human device name and the last-seen IP.
+ *  - The id is therefore forgeable and clearable. This is a friction raiser
+ *    against casual account sharing — never an identity guarantee, and never
+ *    a reason to lock a legitimate student out permanently (teachers can reset
+ *    a student's devices).
+ */
 class DevicePolicy
 {
     public static function policyEnabled(string $tenantId): bool

@@ -7,6 +7,7 @@ use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -85,5 +86,12 @@ class Course extends Model
     public function activationCards(): HasMany
     {
         return $this->hasMany(ActivationCard::class);
+    }
+
+    public function bundles(): BelongsToMany
+    {
+        return $this->belongsToMany(Bundle::class, 'bundle_courses')
+            ->withPivot('sort_order')
+            ->withTimestamps();
     }
 }

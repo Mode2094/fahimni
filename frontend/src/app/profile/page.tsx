@@ -11,7 +11,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Star, Trophy, Medal, Rocket, Play, BookOpen, GraduationCap, CheckCircle2,
   Lock, Coins, History, Heart, Activity as ActivityIcon, CalendarDays, ArrowLeft,
-  BookMarked, Target, Award, TrendingUp, User,
+  BookMarked, Target, Award, TrendingUp, User, Flame,
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -125,12 +125,18 @@ export default function ProfilePage() {
             </div>
             <div className="flex gap-2 pt-10">
               <Badge className="bg-amber-100 text-amber-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Coins className="h-3.5 w-3.5" />{s.points} {t('نقطة', 'pts')}</Badge>
+              {(s.streak?.current ?? 0) > 0 && (
+                <Badge data-testid="streak-badge" className="bg-orange-100 text-orange-700 border-0 gap-1 px-3 py-1.5 rounded-full">
+                  <Flame className="h-3.5 w-3.5" />{s.streak.current} {t('يوم متتالي', 'day streak')}
+                </Badge>
+              )}
               {myRank && <Badge className="bg-teal-100 text-teal-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Trophy className="h-3.5 w-3.5" />{t('الترتيب', 'Rank')} #{myRank}</Badge>}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-6">
             {[
+              { label: t('أيام متتالية', 'Day streak'), value: s.streak?.current ?? 0, icon: Flame, color: '#ea580c' },
               { label: t('كورسات', 'Courses'), value: `${s.courses_completed}/${s.courses_count}`, icon: GraduationCap, color: '#0d9488' },
               { label: t('متوسط التقدم', 'Avg progress'), value: `${s.avg_progress}%`, icon: TrendingUp, color: '#7c3aed' },
               { label: t('دروس مكتملة', 'Lessons'), value: s.lessons_completed, icon: BookOpen, color: '#059669' },
