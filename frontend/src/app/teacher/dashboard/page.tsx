@@ -9,21 +9,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dashboard-kit';
+import SetupGuide from '@/components/teacher/setup-guide';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Video, Film, Radio, Copy, Check, Construction, Ticket, CalendarDays, Sparkles, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight, HardDrive, AlertTriangle } from 'lucide-react';
+import { Users, BookOpen, ClipboardList, FileQuestion, Plus, Crown, CalendarClock, Clock, Film, Copy, Check, Construction, Globe, ExternalLink, LayoutGrid, Activity, Smartphone, ChevronLeft, ChevronRight, HardDrive, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
-
-const ONBOARDING_META: Record<string, { ar: string; en: string; icon: any; href: string }> = {
-  course: { ar: 'أنشئ كورسك الأول', en: 'Create your first course', icon: BookOpen, href: '/courses' },
-  lesson: { ar: 'أضف درساً داخل الكورس', en: 'Add a lesson to the course', icon: BookOpen, href: '/courses' },
-  video: { ar: 'ارفع فيديو تعليمياً', en: 'Upload a teaching video', icon: Video, href: '/courses' },
-  card: { ar: 'أنشئ بطاقة تسجيل لطلابك', en: 'Create a registration card', icon: Ticket, href: '/teacher/cards' },
-  assignment: { ar: 'أضف واجباً لطلابك', en: 'Add an assignment', icon: ClipboardList, href: '/courses' },
-  live: { ar: 'ابدأ بثاً مباشراً', en: 'Hold a live session', icon: Radio, href: '/teacher/live' },
-  schedule: { ar: 'جدوِل درساً بموعد ثابت', en: 'Schedule a lesson', icon: CalendarDays, href: '/teacher/schedule' },
-};
 
 export default function TeacherDashboard() {
   const { user, check } = useAuth();
@@ -40,7 +31,6 @@ export default function TeacherDashboard() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [studentApp, setStudentApp] = useState<any>(null);
-  const [onboarding, setOnboarding] = useState<any>(null);
   const [platform, setPlatform] = useState<{ url: string; slug: string; customDomain: string | null; verified: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -66,13 +56,12 @@ export default function TeacherDashboard() {
     try {
       // Each request degrades on its own: one failing endpoint must never blank
       // the dashboard or leave it stuck on skeletons forever.
-      const [planR, anaR, lesR, bkR, appR, onbR, domR] = await Promise.all([
+      const [planR, anaR, lesR, bkR, appR, domR] = await Promise.all([
         fetch(`${API}/teacher/plan`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/analytics?days=30`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/scheduled-lessons`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/bookings`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/student-app`, { headers: headers() }).catch(() => null),
-        fetch(`${API}/teacher/onboarding`, { headers: headers() }).catch(() => null),
         fetch(`${API}/teacher/domain`, { headers: headers() }).catch(() => null),
       ]);
 
@@ -81,7 +70,6 @@ export default function TeacherDashboard() {
       if (lesR?.ok) { const d = await lesR.json(); setLessons(d.lessons || d.scheduled_lessons || []); }
       if (bkR?.ok) { const d = await bkR.json(); setBookings(Array.isArray(d.bookings) ? d.bookings : d.bookings?.data || []); }
       if (appR?.ok) { const d = await appR.json(); setStudentApp(d.student_app || null); }
-      if (onbR?.ok) { const d = await onbR.json(); setOnboarding(d || null); }
 
       let platformInfo = domR?.ok ? buildPlatform(await domR.json()) : null;
       if (!platformInfo) {
@@ -326,42 +314,8 @@ export default function TeacherDashboard() {
         </Card>
       )}
 
-      {/* ─── خطوات البدء (تظهر فقط حتى يكتمل الإعداد) ─── */}
-      {onboarding && !onboarding.all_done && Array.isArray(onboarding.steps) && onboarding.steps.length > 0 && (
-        <SectionCard
-          icon={Sparkles}
-          title={t('خطواتك الأولى', 'Getting started')}
-          description={t('أكمل هذه الخطوات لتجهيز منصتك لطلابك.', 'Complete these steps to get your platform ready for students.')}
-          badge={<span className="shrink-0 rounded-full bg-teal-50 px-2.5 py-0.5 text-xs font-semibold text-teal-700">{onboarding.completed} / {onboarding.total}</span>}
-          defaultOpen
-          forceOpen={isDesktop}
-        >
-          <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full rounded-full bg-teal-500 transition-all" style={{ width: `${onboarding.total ? Math.round((onboarding.completed / onboarding.total) * 100) : 0}%` }} />
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {onboarding.steps.map((s: any) => {
-              const meta = ONBOARDING_META[s.key];
-              if (!meta) return null;
-              const Icon = meta.icon;
-              return (
-                <a
-                  key={s.key}
-                  href={meta.href}
-                  className={cn('flex items-center gap-3 rounded-xl border p-3 transition', s.done ? 'border-slate-100 bg-slate-50/50' : 'border-teal-100 bg-white hover:bg-teal-50/40')}
-                  aria-label={s.done ? `${t(meta.ar, meta.en)} — ${t('تم', 'Done')}` : t(meta.ar, meta.en)}
-                >
-                  <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', s.done ? 'bg-emerald-50' : 'bg-teal-500/10')}>
-                    {s.done ? <Check className="h-4 w-4 text-emerald-600" /> : <Icon className="h-4 w-4 text-teal-600" />}
-                  </span>
-                  <span className={cn('flex-1 text-sm font-medium', s.done ? 'text-gray-400 line-through' : 'text-gray-700')}>{t(meta.ar, meta.en)}</span>
-                  {!s.done && <Arrow className="h-4 w-4 shrink-0 text-teal-500" />}
-                </a>
-              );
-            })}
-          </div>
-        </SectionCard>
-      )}
+      {/* ─── دليل الإعداد (يظهر للحسابات الجديدة حتى يكتمل) ─── */}
+      <SetupGuide />
 
       {/* ─── استخدام خطتك (مصدر واحد موحد) ──────────── */}
       <SectionCard

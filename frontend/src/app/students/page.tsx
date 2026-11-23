@@ -14,7 +14,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Users, Loader2, MonitorSmartphone, RotateCcw, Settings2, Search, Mail, Calendar,
   BookOpen, Award, TrendingUp, XCircle, CheckCircle2, UserX, Clock, Smartphone, Star,
-  Coins, Trophy, Activity as ActivityIcon, History,
+  Coins, Trophy, Activity as ActivityIcon, History, Ticket,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -173,7 +173,18 @@ export default function StudentsPage() {
 
       {loading ? <TableSkeleton rows={6} cols={4} /> :
         filtered.length === 0 ? (
-          <EmptyState icon={search ? UserX : Users} title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')} />
+          <EmptyState
+            icon={search ? UserX : Users}
+            title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')}
+            description={!search ? t('شارك رابط منصتك، أو أنشئ بطاقة تسجيل برمز QR ليظهر طلابك هنا.', 'Share your platform link, or create a QR registration card to see your students here.') : undefined}
+            action={!search ? (
+              <a href="/teacher/cards">
+                <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                  <Ticket className="h-4 w-4" /> {t('أنشئ بطاقة تسجيل', 'Create a registration card')}
+                </Button>
+              </a>
+            ) : undefined}
+          />
         ) : (
           <div className="grid gap-4">
             {filtered.map((s) => (

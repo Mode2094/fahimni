@@ -259,7 +259,7 @@ export default function TeacherCardsPage() {
       </div>
 
       {/* ─── Generate ─── */}
-      <Card className="border-0 shadow-sm overflow-hidden"><CardContent className="p-6 space-y-4">
+      <Card id="generate-cards" className="border-0 shadow-sm overflow-hidden scroll-mt-24"><CardContent className="p-6 space-y-4">
         <div className="flex items-center gap-2.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-500/10"><Plus className="h-4.5 w-4.5 text-teal-600" /></span>
           <div>
@@ -321,7 +321,18 @@ export default function TeacherCardsPage() {
 
       {/* ─── Batches ─── */}
       {loading ? <CardSkeleton count={3} /> : batches.length === 0 ? (
-        <EmptyState icon={CreditCard} title={t('لا توجد بطاقات بعد', 'No cards yet')} description={t('أنشئ دفعة جديدة لبدء توليد بطاقات التسجيل', 'Create a new batch to start generating registration cards')} />
+        <EmptyState
+          icon={CreditCard}
+          title={t('لا توجد بطاقات بعد', 'No cards yet')}
+          description={t('أنشئ دفعة جديدة لبدء توليد بطاقات التسجيل لطلابك.', 'Create a new batch to start generating registration cards for your students.')}
+          action={
+            <a href="#generate-cards">
+              <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                <Plus className="h-4 w-4" /> {t('أنشئ دفعة', 'Create a batch')}
+              </Button>
+            </a>
+          }
+        />
       ) : (
         <>
           <Card className="border-0 shadow-sm overflow-hidden"><CardContent className="p-4">

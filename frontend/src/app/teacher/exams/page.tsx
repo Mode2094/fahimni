@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, CheckCircle2, ClipboardList, FileCheck2, Clock, X, Sparkles, HelpCircle, ExternalLink } from 'lucide-react';
+import { Loader2, CheckCircle2, ClipboardList, FileCheck2, Clock, X, Sparkles, HelpCircle, ExternalLink, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-question';
 
@@ -224,8 +224,13 @@ export default function TeacherExamsPage() {
             </div>
             <div className="text-center">
               <p className="font-bold">{t('لا توجد امتحانات بعد', 'No exams yet')}</p>
-              <p className="text-sm text-muted-foreground mt-1">{t('أنشئ امتحاناً من تبويب الكورسات', 'Create an exam from the Courses tab')}</p>
+              <p className="text-sm text-muted-foreground mt-1">{t('أنشئ امتحاناً من صفحة الكورس، ثم تابع محاولات طلابك هنا.', 'Create an exam from a course page, then follow your students’ attempts here.')}</p>
             </div>
+            <a href="/courses">
+              <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                <Plus className="h-4 w-4" /> {t('أنشئ امتحاناً', 'Create an exam')}
+              </Button>
+            </a>
           </CardContent>
         </Card>
       )}
