@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Assignment;
 use App\Models\AssignmentSubmission;
 use App\Models\Booking;
 use App\Models\Course;
@@ -120,6 +121,68 @@ class DashboardController extends Controller
 
     private function studentDashboard(string $tenantId, $user): JsonResponse
     {
+        $now = now();
+        $taskWindowEnd = $now->copy()->addDays(7);
+        $courseIds = Enrollment::byTenant($tenantId)
+            ->where('user_id', $user->id)
+            ->effective()
+            ->pluck('course_id');
+
+        $dueAssignments = collect();
+        $upcomingExams = collect();
+
+        if ($courseIds->isNotEmpty()) {
+            $dueAssignments = Assignment::byTenant($tenantId)
+                ->whereIn('course_id', $courseIds)
+                ->where('is_published', true)
+                ->whereNotNull('due_at')
+                ->where(function ($query) use ($now, $taskWindowEnd) {
+                    $query->whereBetween('due_at', [$now, $taskWindowEnd])
+                        ->orWhere(function ($overdue) use ($now) {
+                            $overdue->where('due_at', '<', $now)
+                                ->where('allow_late', true);
+                        });
+                })
+                ->whereDoesntHave('submissions', fn ($query) => $query
+                    ->where('user_id', $user->id)
+                    ->whereIn('status', ['submitted', 'late', 'graded']))
+                ->with('course:id,title')
+                ->orderBy('due_at')
+                ->limit(5)
+                ->get(['id', 'course_id', 'title', 'due_at', 'allow_late'])
+                ->map(fn (Assignment $assignment) => [
+                    'id' => $assignment->id,
+                    'course_id' => $assignment->course_id,
+                    'course_title' => $assignment->course?->title,
+                    'title' => $assignment->title,
+                    'due_at' => $assignment->due_at?->toIso8601String(),
+                    'allow_late' => (bool) $assignment->allow_late,
+                    'is_overdue' => $assignment->due_at?->lt($now) ?? false,
+                ])
+                ->values();
+
+            $upcomingExams = Exam::byTenant($tenantId)
+                ->whereIn('course_id', $courseIds)
+                ->where('is_published', true)
+                ->visibleToStudent($user->id)
+                ->whereNotNull('ends_at')
+                ->whereBetween('ends_at', [$now, $taskWindowEnd])
+                ->where(fn ($query) => $query->whereNull('starts_at')->orWhere('starts_at', '<=', $taskWindowEnd))
+                ->with('course:id,title')
+                ->orderBy('ends_at')
+                ->limit(5)
+                ->get(['id', 'course_id', 'title', 'starts_at', 'ends_at'])
+                ->map(fn (Exam $exam) => [
+                    'id' => $exam->id,
+                    'course_id' => $exam->course_id,
+                    'course_title' => $exam->course?->title,
+                    'title' => $exam->title,
+                    'starts_at' => $exam->starts_at?->toIso8601String(),
+                    'ends_at' => $exam->ends_at?->toIso8601String(),
+                ])
+                ->values();
+        }
+
         return response()->json([
             'enrolled_courses' => Enrollment::byTenant($tenantId)
                 ->where('user_id', $user->id)
@@ -131,6 +194,10 @@ class DashboardController extends Controller
             'upcoming_exams' => Exam::byTenant($tenantId)
                 ->where('is_published', true)
                 ->count(),
+            'learning_tasks' => [
+                'due_assignments' => $dueAssignments,
+                'upcoming_exams' => $upcomingExams,
+            ],
         ]);
     }
 }

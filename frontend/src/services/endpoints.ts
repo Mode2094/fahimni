@@ -152,8 +152,31 @@ export const chatApi = {
 
 export const dashboardApi = {
   teacherStats: () => api.get<any>('/dashboard').then(r => r.data),
+  studentOverview: () => api.get<StudentDashboardOverview>('/dashboard').then(r => r.data),
   teacherUpcomingLessons: () => api.get<{ lessons: any[] }>('/teacher/scheduled-lessons', { params: { upcoming: 1 } }).then(r => r.data.lessons),
   studentLessons: () => api.get<{ lessons: any[] }>('/scheduled-lessons').then(r => r.data.lessons),
+};
+
+export type StudentDashboardOverview = {
+  learning_tasks: {
+    due_assignments: {
+      id: string;
+      course_id: string;
+      course_title: string | null;
+      title: string;
+      due_at: string;
+      allow_late: boolean;
+      is_overdue: boolean;
+    }[];
+    upcoming_exams: {
+      id: string;
+      course_id: string;
+      course_title: string | null;
+      title: string;
+      starts_at: string | null;
+      ends_at: string;
+    }[];
+  };
 };
 
 export const favoritesApi = {
