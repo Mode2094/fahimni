@@ -5,7 +5,7 @@ import {
   UsersRound, Newspaper, MessagesSquare, BarChart3, Bell, Megaphone, Award,
   BookMarked, Medal, CalendarCheck, UserCircle2, Home, HelpCircle,
   ServerCog, Radio, Smartphone, Activity, Bug, Database, Bot, BellRing, Package,
-  MessageCircleQuestion,
+  MessageCircleQuestion, Eye,
 } from 'lucide-react';
 
 export type Locale = 'ar' | 'en';
@@ -42,6 +42,7 @@ export const ADMIN_NAV: NavGroup[] = [
     title: { ar: 'المستخدمون', en: 'Users' },
     items: [
       { href: '/admin/students', icon: GraduationCap, ar: 'الطلاب', en: 'Students' },
+      { href: '/admin/view-as', icon: Eye, ar: 'معاينة حساب', en: 'Preview Account' },
       { href: '/admin/quran-requests', icon: BookOpen, ar: 'مدرسو القرءان', en: 'Quran Teachers' },
     ],
   },

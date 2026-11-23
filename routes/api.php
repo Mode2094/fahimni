@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
+use App\Http\Controllers\Api\Admin\ViewAsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
 use App\Http\Controllers\Api\AdminTeacherNotificationController;
@@ -164,6 +165,16 @@ Route::prefix('v1')->group(function () {
             Route::post('2fa/disable', [SecurityController::class, 'twoFactorDisable']);
             Route::post('email/verify', [AuthController::class, 'verifyEmail']);
             Route::post('email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:email-verification');
+        });
+
+        // ─── Admin: read-only View-As (معاينة حساب كقراءة فقط) ──
+        // `start` re-checks super-admin in the controller; `stop` only needs an
+        // active view-as marker so the admin can always exit. All three are
+        // whitelisted for writes so exit works while read-only mode is on.
+        Route::prefix('admin/view-as')->group(function () {
+            Route::get('/', [ViewAsController::class, 'show'])->name('admin.view-as.show');
+            Route::post('{user}', [ViewAsController::class, 'start'])->name('admin.view-as.start');
+            Route::delete('/', [ViewAsController::class, 'stop'])->name('admin.view-as.stop');
         });
 
         Route::prefix('user')->group(function () {

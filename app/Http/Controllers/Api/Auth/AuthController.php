@@ -500,7 +500,34 @@ class AuthController extends Controller
 
         return response()->json([
             'user' => new UserResource($user),
+            'view_as' => $this->viewAsState($request),
         ]);
+    }
+
+    /**
+     * The admin view-as banner state, read from the server-side session so it
+     * survives a reload and cannot be spoofed from the client.
+     */
+    private function viewAsState(Request $request): ?array
+    {
+        if (! $request->hasSession()) {
+            return null;
+        }
+
+        $state = $request->session()->get('view_as');
+
+        if (! is_array($state) || empty($state['user_id'])) {
+            return null;
+        }
+
+        return [
+            'active' => true,
+            'read_only' => true,
+            'actor_id' => $state['actor_id'] ?? null,
+            'actor_name' => $state['actor_name'] ?? null,
+            'user_id' => $state['user_id'],
+            'started_at' => $state['started_at'] ?? null,
+        ];
     }
 
     /**

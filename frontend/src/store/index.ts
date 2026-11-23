@@ -4,8 +4,20 @@ import { API_BASE, authFetch, clearStoredUser, hasSessionHint, setSessionHint } 
 
 type LoginOutcome = { requires2fa: boolean };
 
+export type ViewAsState = {
+  active: boolean;
+  read_only: boolean;
+  actor_id?: string | null;
+  actor_name?: string | null;
+  user_id: string;
+  user_name?: string | null;
+  started_at?: string | null;
+};
+
 type AuthState = {
   user: User | null;
+  /** Active admin "view-as (read-only)" state, resolved from the session. */
+  viewAs: ViewAsState | null;
   loading: boolean;
   initialized: boolean;
   login: (e: string, p: string, extra?: Record<string, unknown>) => Promise<LoginOutcome>;
@@ -13,6 +25,7 @@ type AuthState = {
   loginAndRedirect: (e: string, p: string) => Promise<string>;
   logout: () => Promise<void>;
   load: () => Promise<void>;
+  stopViewAs: () => Promise<void>;
   check: () => boolean;
   hasRole: (...r: string[]) => boolean;
   hasPerm: (p: string) => boolean;
@@ -29,13 +42,16 @@ async function postJson(path: string, body: unknown): Promise<{ ok: boolean; dat
   return { ok: res.ok, data };
 }
 
-async function fetchCurrentUser(): Promise<User | null> {
+async function fetchCurrentUser(): Promise<{ user: User | null; viewAs: ViewAsState | null }> {
   const res = await authFetch('/api/session/me');
-  if (!res.ok) return null;
+  if (!res.ok) return { user: null, viewAs: null };
 
   const data = await res.json().catch(() => null);
 
-  return (data?.user ?? null) as User | null;
+  return {
+    user: (data?.user ?? null) as User | null,
+    viewAs: (data?.view_as ?? null) as ViewAsState | null,
+  };
 }
 
 /**
@@ -68,6 +84,7 @@ async function healTenant(user: User): Promise<void> {
 
 export const useAuth = create<AuthState>((set, get) => ({
   user: null,
+  viewAs: null,
   loading: false,
   initialized: false,
 
@@ -98,7 +115,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       localStorage.setItem('user', JSON.stringify(user));
       setSessionHint(true);
       await healTenant(user);
-      set({ user, loading: false, initialized: true });
+      set({ user, viewAs: null, loading: false, initialized: true });
 
       // إعادة تحميل إعدادات المنصة (اللوجو/الاسم) بعد الدخول — فالجلب كضيف
       // (بلا X-Tenant-Id) يعيد لوجو المنصة العام ويبقى عالقاً طوال الجلسة.
@@ -133,7 +150,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       localStorage.setItem('user', JSON.stringify(user));
       setSessionHint(true);
       await healTenant(user);
-      set({ user, loading: false, initialized: true });
+      set({ user, viewAs: null, loading: false, initialized: true });
 
       try {
         await import('@/store/settings').then((m) => m.useSettings.getState().load());
@@ -173,27 +190,36 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (locale) localStorage.setItem('locale', locale);
     if (deviceId) localStorage.setItem('lms_device_id', deviceId);
     if (rememberedEmail) localStorage.setItem('lms_remembered_email', rememberedEmail);
-    set({ user: null, loading: false, initialized: true });
+    set({ user: null, viewAs: null, loading: false, initialized: true });
     if (typeof window !== 'undefined') window.location.href = target;
+  },
+
+  stopViewAs: async () => {
+    try {
+      await authFetch(`${API_BASE}/admin/view-as`, { method: 'DELETE' });
+    } catch { /* fall through to reload — the session decides */ }
+
+    // A full reload re-resolves the restored admin session everywhere.
+    if (typeof window !== 'undefined') window.location.href = '/admin/dashboard';
   },
 
   load: async () => {
     set({ loading: true });
 
     try {
-      const user = await fetchCurrentUser();
+      const { user, viewAs } = await fetchCurrentUser();
 
       if (user) {
         localStorage.setItem('user', JSON.stringify(user));
         setSessionHint(true);
         await healTenant(user);
-        set({ user, loading: false, initialized: true });
+        set({ user, viewAs, loading: false, initialized: true });
 
         return;
       }
 
       clearStoredUser();
-      set({ user: null, loading: false, initialized: true });
+      set({ user: null, viewAs: null, loading: false, initialized: true });
     } catch {
       set({ loading: false, initialized: true });
     }
