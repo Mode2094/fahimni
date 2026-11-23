@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BookOpen, ArrowLeft, GraduationCap } from 'lucide-react';
 import Link from 'next/link';
-import { CourseCard, useEnrolledCourseIds } from '@/components/site/storefront';
+import { CourseCard, BundleCard, useEnrolledCourseIds } from '@/components/site/storefront';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -23,6 +23,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
 
   const [site, setSite] = useState<any>(null);
   const [courses, setCourses] = useState<any[]>([]);
+  const [bundles, setBundles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loggedIn, setLoggedIn] = useState(false);
   const enrolledIds = useEnrolledCourseIds(loggedIn);
@@ -32,6 +33,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
     Promise.all([
       fetch(`${API}/public/${slug}`).then((r) => r.json()).then((d) => setSite(d.site || null)).catch(() => {}),
       fetch(`${API}/public/${slug}/courses`).then((r) => r.json()).then((d) => setCourses(d.courses || [])).catch(() => {}),
+      fetch(`${API}/public/${slug}/bundles`).then((r) => r.json()).then((d) => setBundles(d.bundles || [])).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [slug]);
 
@@ -75,6 +77,28 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
             </p>
           )}
         </div>
+
+        {!loading && bundles.length > 0 && (
+          <section className="mb-12" data-testid="bundles-section">
+            <h2 className="mb-4 text-xl font-bold sm:text-2xl" style={{ fontFamily: headingFont }}>
+              {t('حزم الكورسات', 'Course bundles')}
+            </h2>
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {bundles.map((b) => (
+                <BundleCard
+                  key={b.id}
+                  bundle={b}
+                  slug={slug}
+                  primary={primary}
+                  accent={accent}
+                  radius="1rem"
+                  headingFont={headingFont}
+                  whatsapp={site?.whatsapp}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         {loading ? (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
