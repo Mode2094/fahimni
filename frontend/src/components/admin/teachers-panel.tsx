@@ -42,7 +42,8 @@ export default function AdminTeachersPanel() {
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [extendOpen, setExtendOpen] = useState(false);
-  const [extendDays, setExtendDays] = useState('30');
+  const [extendMode, setExtendMode] = useState<'trial' | 'access'>('access');
+  const [extendDays, setExtendDays] = useState('7');
   const [extendRequestId, setExtendRequestId] = useState('');
   const [extending, setExtending] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -182,39 +183,77 @@ export default function AdminTeachersPanel() {
   // across ALL rows server-side, so any row is a valid target).
   const extendTargetSub = () => detailSubscriptions().find((s: any) => s?.id) || null;
 
-  const openExtend = () => {
-    if (!extendTargetSub()) { toast.error(t('لا يوجد اشتراك لتمديده', 'No subscription to extend')); return; }
-    setExtendDays('30');
+  // The row that owns the FREE TRIAL (`trial_ends_at`). The trial endpoint
+  // must receive that specific row — not a provider-owned mirror — or it
+  // correctly refuses to touch a paid subscription.
+  const trialTargetSub = () => detailSubscriptions().find((s: any) => s?.trial_ends_at) || extendTargetSub();
+  const extendTarget = () => (extendMode === 'trial' ? trialTargetSub() : extendTargetSub());
+
+  // Date the extension is anchored on: the trial end (trial mode) or the
+  // current effective access end (admin-grant mode). Live preview only.
+  const extendCurrentEnd = (): string | null => {
+    if (extendMode === 'trial') return detail?.access?.trial_ends_at || trialTargetSub()?.trial_ends_at || null;
+    return detail?.access?.access_ends_at || extendTargetSub()?.admin_ends_at || extendTargetSub()?.ends_at || null;
+  };
+
+  const previewEnd = (): string | null => {
+    const days = Number(extendDays);
+    if (!Number.isFinite(days) || days < 1) return null;
+    const cur = extendCurrentEnd();
+    // Active window → add to its end; lapsed → start from now. Mirrors the
+    // server rule so the shown date equals the saved date.
+    const baseMs = cur ? Math.max(new Date(cur).getTime(), Date.now()) : Date.now();
+    return new Date(baseMs + days * 86400000).toISOString();
+  };
+
+  const fmtDateTime = (v?: string | null) => (v ? new Date(v).toLocaleString() : '—');
+
+  const openExtend = (mode: 'trial' | 'access') => {
+    const target = mode === 'trial' ? trialTargetSub() : extendTargetSub();
+    if (!target) { toast.error(t('لا يوجد اشتراك لتمديده', 'No subscription to extend')); return; }
+    setExtendMode(mode);
+    setExtendDays(mode === 'trial' ? '7' : '30');
     setExtendRequestId(newRequestId());
     setExtendOpen(true);
   };
 
   const extend = async () => {
     const days = Number(extendDays);
-    if (!Number.isFinite(days) || days < 1) { toast.error(t('أدخل عدد أيام صحيح', 'Enter a valid number of days')); return; }
-    const sub = extendTargetSub();
+    if (!Number.isInteger(days) || days < 1) { toast.error(t('أدخل عددًا صحيحًا موجبًا من الأيام', 'Enter a valid positive whole number of days')); return; }
+    const sub = extendTarget();
     if (!sub) { toast.error(t('لا يوجد اشتراك لتمديده', 'No subscription to extend')); return; }
 
+    const isTrial = extendMode === 'trial';
+
     if (!(await confirmDialog({
-      description: t(
-        `تمديد وصول هذا المعلم ${days} يومًا دون أي عملية دفع، وتفعيل حسابه فورًا؟`,
-        `Extend this teacher's access by ${days} days with no charge and activate the account immediately?`,
-      ),
+      description: isTrial
+        ? t(
+            `تمديد التجربة المجانية لهذا المعلم ${days} يومًا دون أي عملية دفع ودون تغيير خطته؟`,
+            `Extend this teacher's free trial by ${days} days with no charge and no plan change?`,
+          )
+        : t(
+            `تمديد وصول هذا المعلم ${days} يومًا دون أي عملية دفع، وتفعيل حسابه فورًا؟`,
+            `Extend this teacher's access by ${days} days with no charge and activate the account immediately?`,
+          ),
     }))) return;
 
     setExtending(true);
     try {
-      const res = await fetch(`${API}/admin/subscriptions/${sub.id}/extend`, {
+      const path = isTrial ? 'extend-trial' : 'extend';
+      const res = await fetch(`${API}/admin/subscriptions/${sub.id}/${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers() },
         body: JSON.stringify({ days, request_id: extendRequestId || undefined }),
       });
       const d = await res.json();
       if (!res.ok) { toast.error(d.message || t('تعذر تمديد الاشتراك', 'Could not extend the subscription')); return; }
-      const end = d.access_ends_at ? new Date(d.access_ends_at).toLocaleDateString() : '';
+      const raw = isTrial ? (d.trial_ends_at || d.access?.trial_ends_at) : d.access_ends_at;
+      const end = raw ? new Date(raw).toLocaleDateString() : '';
       toast.success(d.already_applied
         ? t('تم تطبيق هذا التمديد مسبقًا', 'This extension was already applied')
-        : t(`تم تمديد وصول المعلم حتى ${end} وفُعّل حسابه فورًا`, `Teacher access extended until ${end} and the account is active now`));
+        : isTrial
+          ? t(`تم تمديد التجربة المجانية حتى ${end}`, `Free trial extended until ${end}`)
+          : t(`تم تمديد وصول المعلم حتى ${end} وفُعّل حسابه فورًا`, `Teacher access extended until ${end} and the account is active now`));
       setExtendOpen(false);
       if (detail?.teacher?.id) await openDetail({ id: detail.teacher.id });
     } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
@@ -359,27 +398,58 @@ export default function AdminTeachersPanel() {
         </DialogContent>
       </Dialog>
 
-      {/* Extend-access dialog */}
+      {/* Extend (trial or admin access) dialog */}
       <Dialog open={extendOpen} onOpenChange={(o) => !extending && setExtendOpen(o)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{t('تمديد وصول المعلم', 'Extend teacher access')}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {extendMode === 'trial' ? t('تمديد التجربة المجانية', 'Extend free trial') : t('تمديد وصول المعلم', 'Extend teacher access')}
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-2">
-              <Label>{t('عدد الأيام', 'Days')}</Label>
-              <Input type="number" min={1} value={extendDays} onChange={(e) => setExtendDays(e.target.value)} className="h-11" data-testid="extend-days" />
+              <Label>{t('خيارات سريعة', 'Quick options')}</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {[1, 2, 7, 14, 30].map((d) => (
+                  <button key={d} type="button"
+                    onClick={() => setExtendDays(String(d))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${Number(extendDays) === d ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-600 hover:border-teal-400'}`}>
+                    {d === 1 ? t('يوم', '1 day') : d === 2 ? t('يومان', '2 days') : t(`${d} يومًا`, `${d} days`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('أو أدخل عدد الأيام', 'Or enter a number of days')}</Label>
+              <Input type="number" min={1} step={1} value={extendDays} onChange={(e) => setExtendDays(e.target.value)} className="h-11" data-testid="extend-days" />
+            </div>
+            <div className="p-3 rounded-xl bg-gray-50 border text-sm space-y-1.5" data-testid="extend-preview">
+              <div className="flex justify-between gap-2">
+                <span className="text-gray-500">{extendMode === 'trial' ? t('نهاية التجربة الحالية', 'Current trial end') : t('نهاية الوصول الحالية', 'Current access end')}</span>
+                <b dir="ltr" className="text-gray-700">{fmtDateTime(extendCurrentEnd())}</b>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-gray-500">{extendMode === 'trial' ? t('نهاية التجربة الجديدة', 'New trial end') : t('نهاية الوصول الجديدة', 'New access end')}</span>
+                <b dir="ltr" className="text-teal-700">{fmtDateTime(previewEnd())}</b>
+              </div>
             </div>
             <p className="text-xs text-gray-500">
-              {t(
-                'يمنح هذا التمديد وصولًا فوريًا لاستخدام المنصة حتى التاريخ الجديد، دون أي عملية دفع لدى Freemius ودون تغيير حالة الفوترة. تبقى المدة المدفوعة المتبقية كما هي ويُضاف التمديد بعدها.',
-                'This extension grants immediate platform access until the new date — with no Freemius charge and no change to the billing state. Any remaining paid period is preserved and the extension is added after it.',
-              )}
+              {extendMode === 'trial'
+                ? t(
+                    'يمدّد هذا التجربة المجانية لهذا المعلم فقط: تُضاف الأيام إلى نهاية التجربة الحالية، وإن كانت منتهية فتبدأ من الآن وتُعاد التهيئة. لا تحويل إلى اشتراك مدفوع، ولا فاتورة، ولا تغيير في الخطة أو حدودها أو بيانات المعلم وطلابه.',
+                    'This extends the free trial for this teacher only: days are added to the current trial end, or start from now if it lapsed. No paid conversion, no invoice, and no change to the plan, its limits, or the teacher/students data.',
+                  )
+                : t(
+                    'يمنح هذا التمديد وصولًا فوريًا لاستخدام المنصة حتى التاريخ الجديد، دون أي عملية دفع لدى Freemius ودون تغيير حالة الفوترة. تبقى المدة المدفوعة المتبقية كما هي ويُضاف التمديد بعدها.',
+                    'This extension grants immediate platform access until the new date — with no Freemius charge and no change to the billing state. Any remaining paid period is preserved and the extension is added after it.',
+                  )}
             </p>
           </div>
           <DialogFooter>
             <Button variant="outline" disabled={extending} onClick={() => setExtendOpen(false)}>{t('إلغاء', 'Cancel')}</Button>
-            <Button disabled={extending} className="gap-2" data-testid="extend-confirm" onClick={extend}>
+            <Button disabled={extending || !Number.isInteger(Number(extendDays)) || Number(extendDays) < 1} className="gap-2" data-testid="extend-confirm" onClick={extend}>
               {extending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
-              {t('تمديد', 'Extend')}
+              {extendMode === 'trial' ? t('تمديد التجربة', 'Extend trial') : t('تمديد', 'Extend')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -528,8 +598,10 @@ export default function AdminTeachersPanel() {
                         <div className="ms-auto flex items-center gap-2">
                           {detailSubscriptions()[0] ? subBadge(detailSubscriptions()[0]) : subBadge(null)}
                           {detail.tenant && (
-                            <Button size="sm" className="gap-1.5 rounded-full" data-testid="extend-access" onClick={openExtend}>
-                              <CalendarPlus className="h-3.5 w-3.5" /> {t('تمديد الوصول', 'Extend access')}
+                            <Button size="sm" className="gap-1.5 rounded-full" data-testid="extend-access"
+                              data-mode={detail.access?.can_extend_trial ? 'trial' : 'access'}
+                              onClick={() => openExtend(detail.access?.can_extend_trial ? 'trial' : 'access')}>
+                              <CalendarPlus className="h-3.5 w-3.5" /> {detail.access?.can_extend_trial ? t('تمديد التجربة', 'Extend trial') : t('تمديد الوصول', 'Extend access')}
                             </Button>
                           )}
                         </div>
@@ -537,7 +609,7 @@ export default function AdminTeachersPanel() {
 
                       {/* Real access state — deliberately separated from payment. */}
                       {detail.tenant && (
-                        <div className="grid sm:grid-cols-3 gap-3">
+                        <div className={`grid grid-cols-2 gap-3 ${detail.access?.trial_ends_at ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'}`}>
                           <div className="p-3 rounded-xl bg-white border text-sm">
                             <div className="text-xs text-gray-400">{t('حالة الوصول', 'Access')}</div>
                             <div className="font-bold mt-0.5 flex items-center gap-1" data-testid="access-status">
@@ -552,6 +624,17 @@ export default function AdminTeachersPanel() {
                             <div className="font-bold mt-0.5" dir="ltr">{fmtDate(detail.access?.access_ends_at)}</div>
                             <div className="text-[11px] text-gray-400 mt-1">{t('الأيام المتبقية', 'Days left')}: {detail.access?.days_left ?? '—'}</div>
                           </div>
+                          {detail.access?.trial_ends_at && (
+                            <div className="p-3 rounded-xl bg-white border text-sm" data-testid="trial-info">
+                              <div className="text-xs text-gray-400">{t('نهاية التجربة المجانية', 'Free trial ends')}</div>
+                              <div className="font-bold mt-0.5" dir="ltr">{fmtDate(detail.access.trial_ends_at)}</div>
+                              <div className="text-[11px] mt-1">
+                                {detail.access?.trial_active
+                                  ? <span className="text-gray-400">{t('الأيام المتبقية', 'Days left')}: {detail.access?.trial_days_left ?? '—'}</span>
+                                  : <span className="text-rose-500 font-medium">{t('انتهت التجربة — التمديد يبدأ من الآن', 'Trial ended — extension starts now')}</span>}
+                              </div>
+                            </div>
+                          )}
                           <div className="p-3 rounded-xl bg-white border text-sm">
                             <div className="text-xs text-gray-400">{t('حالة الدفع', 'Payment')}</div>
                             <div className="font-bold mt-0.5">{paymentStatusLabel(detailSubscriptions()[0]?.status)}</div>
