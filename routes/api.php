@@ -909,6 +909,8 @@ Route::prefix('v1')->group(function () {
     // ─── Platform Settings ─────────────────────────
     Route::get('platform-settings', [PlatformSettingController::class, 'show']);
     Route::get('public/domain/{domain}', [TeacherDomainController::class, 'lookup']);
+    // Caddy on-demand TLS `ask` gate: 200 only for a verified teacher domain.
+    Route::get('public/tls/ask', [TeacherDomainController::class, 'tlsAsk']);
 
     // ─── Quran Teacher Free Access Request (public) ──────────────────
     Route::post('quran-teacher-requests', [QuranTeacherRequestController::class, 'store']);
