@@ -745,11 +745,11 @@ step "switching the platform identity in $ENVF"
 tmp="$(mktemp)"
 sed -E \
   -e "s/^IMAGE_TAG=.*/IMAGE_TAG=$NEW_TAG/" \
-  -e "s/^APP_NAME=.*/APP_NAME=منصة فهمني/" \
+  -e "s/^APP_NAME=.*/APP_NAME=\"منصة فهمني\"/" \
   -e "s/^MAIL_FROM_NAME=.*/MAIL_FROM_NAME=\"منصة فهمني\"/" \
   "$ENVF" > "$tmp"
 grep -qE "^IMAGE_TAG=${NEW_TAG}$" "$tmp" || die "could not set IMAGE_TAG"
-grep -qE '^APP_NAME=منصة فهمني$' "$tmp" || die "could not set APP_NAME"
+grep -qE '^APP_NAME="منصة فهمني"$' "$tmp" || die "could not set APP_NAME"
 grep -qE '^MAIL_FROM_NAME="منصة فهمني"$' "$tmp" || die "could not set MAIL_FROM_NAME"
 chmod 600 "$tmp"; chown fahimni:fahimni "$tmp" 2>/dev/null || true
 install -m 600 -o fahimni -g fahimni "$tmp" "$ENVF"; rm -f "$tmp"
