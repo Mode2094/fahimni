@@ -10,7 +10,7 @@
 #      FAHIMNI_RELEASE_SHA=<sha|ref> and FAHIMNI_RELEASE_BRANCH=<branch> so the
 #      unified Release Candidate, which also carries the P0 Google/session fix
 #      from PR #24, is what gets deployed instead of a brand-only checkout),
-#    * builds images tagged prod-brand1 and replaces ONLY these four containers:
+#    * builds images tagged prod-brand2 and replaces ONLY these four containers:
 #        app  frontend  scheduler  horizon
 #    * BEFORE the cutover, runs a READ-ONLY preflight that compares the pending
 #      migrations reported by the new image against an explicit allowlist, then
@@ -75,7 +75,7 @@ REPO_URL=https://github.com/Mode2094/fahimni.git
 # release_sha_on_branch() then refuses to deploy when $SHA is not reachable
 # from this branch (see the FAHIMNI_LIB block).
 BRANCH="${FAHIMNI_RELEASE_BRANCH:-integration/launch-2026-11}"
-NEW_TAG=prod-brand1
+NEW_TAG=prod-brand2
 PORT="${APP_PORT:-8080}"
 BASE="http://127.0.0.1:$PORT"
 HOSTHDR=fahimni.me
