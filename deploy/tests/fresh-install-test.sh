@@ -132,6 +132,23 @@ open="$(tr -cd '{' < "$CADDYFILE" | wc -c | tr -d ' ')"
 close="$(tr -cd '}' < "$CADDYFILE" | wc -c | tr -d ' ')"
 if [ "$open" = "$close" ] && [ "$open" -gt 0 ]; then pass "Caddyfile braces balanced ($open)"; else fail "Caddyfile braces unbalanced ($open/$close)"; fi
 
+# ── T6b: custom teacher domains are served without a per-domain edit ─────────
+# The apex/www/api hosts are written literally, but a teacher's OWN domain is
+# unknown when the file is generated. It must therefore be served by an
+# on-demand-TLS catch-all whose `ask` gate is the platform (which only blesses a
+# VERIFIED domain), so connecting a new domain needs no server edit and no
+# reload — and no certificate is issued for a hostname nobody owns.
+printf '\n-- T6b custom domains are handled by an on-demand-TLS catch-all\n'
+if grep -q 'on_demand_tls {' "$CADDYFILE"; then pass "global on_demand_tls block present"; else fail "no on_demand_tls block (custom domains cannot get a cert)"; fi
+if grep -q 'public/tls/ask' "$CADDYFILE"; then pass "ask gate points at the platform endpoint"; else fail "no ask gate (any hostname could request a cert)"; fi
+if grep -qE '^:443 \{' "$CADDYFILE"; then pass ":443 catch-all present for unknown hosts"; else fail "no :443 catch-all (custom domains are never served)"; fi
+if awk '/^:443 \{/{f=1} f&&/on_demand/{print;exit}' "$CADDYFILE" | grep -q 'on_demand'; then
+  pass "catch-all issues certificates on demand"
+else
+  fail "catch-all has no on_demand TLS"
+fi
+if grep -qE '^:80 \{' "$CADDYFILE"; then pass ":80 catch-all redirects custom domains to HTTPS"; else fail "no :80 catch-all"; fi
+
 # ── T7: the Caddy edge is pinned and publishes only 80/443 ───────────────────
 printf '\n-- T7 the Caddy edge is pinned and minimal\n'
 if grep -Eq 'image: caddy@sha256:[0-9a-f]{64}' "$CADDY_COMPOSE"; then pass "Caddy image pinned by digest"; else fail "Caddy image is not pinned"; fi
