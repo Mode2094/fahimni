@@ -177,11 +177,14 @@ class PaymentAndFileSecurityTest extends TenantTestCase
         $this->assertDatabaseHas('activation_cards', ['id' => $card->id, 'status' => 'redeemed']);
     }
 
-    public function test_card_cannot_be_redeemed_by_a_student_of_another_tenant(): void
+    public function test_a_card_binds_the_student_to_the_cards_tenant_not_the_callers(): void
     {
+        // كود البطاقة صلاحية مُنطّقة بالمستأجر: من يحمل الكود يُضمّ إلى مستأجر
+        // البطاقة نفسه، ولا يُنفَّذ أي التحاق داخل مستأجر المتصل الأصلي.
         $student = $this->makeUser();
         $tenantA = $this->makeTenant();
         $tenantB = $this->makeTenant();
+        $this->attachSubscription($tenantB);
         $this->attachToTenant($student, $tenantA, 'student');
 
         $courseB = $this->makeCourse($tenantB->id);
@@ -196,8 +199,25 @@ class PaymentAndFileSecurityTest extends TenantTestCase
 
         $response = $this->postJson('/api/v1/cards/redeem', ['code' => $card->code], $this->authHeaders($student, $tenantA));
 
-        $this->assertContains($response->status(), [403, 404]);
-        $this->assertDatabaseHas('activation_cards', ['id' => $card->id, 'status' => 'generated']);
+        $response->assertOk();
+        $this->assertDatabaseHas('activation_cards', ['id' => $card->id, 'status' => 'redeemed']);
+
+        // العضوية والالتحاق في مستأجر البطاقة (B) حصرًا، لا في مستأجر المتصل (A).
+        $this->assertDatabaseHas('tenant_user', [
+            'tenant_id' => $tenantB->id,
+            'user_id' => $student->id,
+            'role' => 'student',
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('enrollments', [
+            'tenant_id' => $tenantB->id,
+            'course_id' => $courseB->id,
+            'user_id' => $student->id,
+        ]);
+        $this->assertDatabaseMissing('enrollments', [
+            'tenant_id' => $tenantA->id,
+            'user_id' => $student->id,
+        ]);
     }
 
     // ─── Subscription is only activated through gateway callbacks ────

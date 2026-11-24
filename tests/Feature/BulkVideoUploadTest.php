@@ -152,8 +152,14 @@ class BulkVideoUploadTest extends TenantTestCase
         $this->assertSame($first->json('upload.video_guid'), $second->json('upload.video_guid'));
         $this->assertTrue($second->json('upload.reused'));
 
-        // فيديو واحد فقط، وعدد الفيديوهات 1 (لا احتساب مزدوج).
-        $this->assertSame(1, MediaAsset::withoutTenant()->where('idempotency_key', 'same-key')->count());
+        // فيديو واحد فقط، وعدد الفيديوهات 1 (لا احتساب مزدوج). مفتاح
+        // الـidempotency صار مُنطّقًا بالمستأجر (SHA256 للمعرّف + المفتاح
+        // الخام) حتى لا يتصادم مفتاحان متطابقان بين مستأجرين مختلفين.
+        $scopedKey = hash('sha256', $tenant->id."\0".'same-key');
+        $this->assertSame(1, MediaAsset::withoutTenant()
+            ->where('tenant_id', $tenant->id)
+            ->where('idempotency_key', $scopedKey)
+            ->count());
         $this->assertSame(1, app(MediaUsageService::class)->current($tenant->id)['video_count']);
     }
 
