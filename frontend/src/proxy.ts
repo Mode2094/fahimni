@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { CSP_HEADER, NONCE_HEADER, SANDBOX_PATH, buildCsp, generateNonce, withNoTransform } from './lib/csp';
+import { tenantSitePath } from './lib/tenant-routing';
 
 // Server-side fetch: must be an absolute URL inside the Docker network
 // (nginx) or localhost in dev — never the browser-relative '/api/v1'.
@@ -107,9 +108,16 @@ export async function proxy(request: NextRequest) {
     if (res.ok) {
       const data = await res.json();
       const slug = data?.site?.slug;
-      if (slug) {
+      // Only the PUBLIC teacher-site pages are rewritten under /t/{slug}. The
+      // signed-in app routes (my-learning, course learn, exams, results, card,
+      // checkout, …) must keep their own path — otherwise every page becomes the
+      // teacher's home. Deep links therefore resolve to the real app route and a
+      // hard refresh never 404s or bounces to the landing page.
+      const rewritten = typeof slug === 'string' ? tenantSitePath(pathname, slug) : null;
+
+      if (rewritten) {
         const url = request.nextUrl.clone();
-        url.pathname = `/t/${slug}`;
+        url.pathname = rewritten;
 
         return withCsp(NextResponse.rewrite(url, { request: { headers: requestHeaders } }));
       }

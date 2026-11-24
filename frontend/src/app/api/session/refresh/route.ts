@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { jsonWithCookies, sessionGet } from '@/lib/bff';
-import { requestOrigin } from '@/lib/request-origin';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
  * XSRF cookie. Returns the current user, or 401 when the session ended.
  */
 export async function GET(request: NextRequest) {
-  const origin = requestOrigin(request);
+  const origin = await resolveRequestOrigin(request);
 
   try {
     const { status, data, cookies } = await sessionGet(

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { jsonWithCookies, statefulPost } from '@/lib/bff';
-import { requestOrigin } from '@/lib/request-origin';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
  * response), so the browser only sends the code + its session cookie.
  */
 export async function POST(request: NextRequest) {
-  const origin = requestOrigin(request);
+  const origin = await resolveRequestOrigin(request);
 
   const payload = await request.json().catch(() => null);
   if (!payload || typeof payload !== 'object') {

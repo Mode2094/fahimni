@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\PlatformSetting;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
 use App\Services\FeatureService;
+use App\Services\TenantDomainResolver;
 use App\Services\TenantSlugService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -33,7 +33,7 @@ class TeacherDomainController extends Controller
 
     private function platformDomain(): string
     {
-        return (string) PlatformSetting::get('platform_domain', 'lms.example.com');
+        return app(TenantDomainResolver::class)->platformDomain();
     }
 
     /** الرابط المجاني للمعلّم: /t/{slug} و {slug}.{platform_domain}. */
@@ -386,41 +386,14 @@ class TeacherDomainController extends Controller
             : response('forbidden', 403);
     }
 
-    /** Pure predicate behind tlsAsk() (unit-testable without HTTP). */
+    /**
+     * Pure predicate behind tlsAsk() (unit-testable without HTTP). Delegates to
+     * the shared resolver so the edge gate, the site lookup and the session
+     * trust middleware can never drift apart.
+     */
     public static function isAllowedTlsHost(string $host, string $platform): bool
     {
-        $platform = strtolower(rtrim($platform, '.'));
-
-        // The platform's own hosts always have explicit server blocks.
-        if ($host === $platform || $host === 'www.'.$platform || $host === 'api.'.$platform) {
-            return true;
-        }
-
-        // Teacher subdomain: {slug}.{platform}
-        if (str_ends_with($host, '.'.$platform)) {
-            $sub = substr($host, 0, -(strlen($platform) + 1));
-            if ($sub !== '' && $sub !== 'www' && ! str_contains($sub, '.')
-                && preg_match('/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/', $sub)) {
-                return Tenant::where('slug', $sub)->where('status', 'active')->exists();
-            }
-
-            return false;
-        }
-
-        // Verified custom domain, apex or www variant.
-        $apex = preg_replace('/^www\./', '', $host) ?? $host;
-
-        $setting = TenantSetting::withoutTenant()->where('custom_domain', $apex)->first();
-
-        if (! $setting || ($setting->metadata['domain_verified'] ?? false) !== true) {
-            return false;
-        }
-
-        // The setting must be the one that actually declares this exact host
-        // (apex or its www variant) — never a different tenant's name.
-        return $apex === $host || $host === 'www.'.$apex
-            ? Tenant::whereKey($setting->tenant_id)->where('status', 'active')->exists()
-            : false;
+        return app(TenantDomainResolver::class)->isAllowedEdgeHost($host, $platform);
     }
 
     public function lookup(string $domain): JsonResponse

@@ -112,22 +112,118 @@ function canonicalOrigin(): string {
   return `https://${platformHosts()[0]}`;
 }
 
-export function requestOrigin(request: OriginRequestLike): string {
+/** Build the public origin from the request's scheme + a chosen host. */
+function buildOrigin(request: OriginRequestLike, host: string): string {
+  const proto = sanitizeProtocol(
+    firstHeaderValue(request.headers.get('x-forwarded-proto')) || safeProtocol(request.url),
+  );
+
+  return `${proto}://${host}`;
+}
+
+/** The proxy host header we consider first (x-forwarded-host wins over host). */
+function candidateHost(request: OriginRequestLike): string {
   const candidates = [
     firstHeaderValue(request.headers.get('x-forwarded-host')),
     firstHeaderValue(request.headers.get('host')),
   ];
-  const host = candidates.find((candidate) => isTrustedHost(candidate));
 
-  if (host) {
-    const proto = sanitizeProtocol(
-      firstHeaderValue(request.headers.get('x-forwarded-proto')) || safeProtocol(request.url),
+  return candidates.find((candidate) => candidate) ?? '';
+}
+
+/**
+ * Internal base for the server-to-server tenant-domain lookup. Kept local (and
+ * dependency-free) so this module stays unit-testable without a Next runtime.
+ */
+const INTERNAL_API_BASE = (
+  process.env.INTERNAL_API_URL ||
+  process.env.NEXT_REWRITE_API_TARGET ||
+  'http://localhost:8080/api/v1'
+).replace(/\/+$/, '');
+
+/** A plain DNS name: no scheme, no path, no wildcard, at least one dot. */
+function isDnsHostname(host: string): boolean {
+  const name = hostnameOf(host);
+
+  return /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(name);
+}
+
+/**
+ * Server-side confirmation that a hostname is a LIVE teacher address (a
+ * VERIFIED custom domain of an ACTIVE tenant, or a live `{slug}.{platform}`
+ * subdomain). The backend is the single authority — the public lookup 200s for
+ * exactly those hosts and 404s for everything else.
+ */
+async function isVerifiedTenantHost(host: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${INTERNAL_API_BASE}/public/domain/${encodeURIComponent(hostnameOf(host))}`,
+      { headers: { Accept: 'application/json' }, cache: 'no-store' },
     );
 
-    return `${proto}://${host}`;
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function requestOrigin(request: OriginRequestLike): string {
+  const host = candidateHost(request);
+
+  if (host && isTrustedHost(host)) {
+    return buildOrigin(request, host);
   }
 
   // No trusted host header: a spoofed or unexpected Host must never decide the
   // origin we forward to Sanctum, so pin the canonical origin instead.
   return canonicalOrigin() || safeOrigin(request.url);
+}
+
+/**
+ * Like `requestOrigin`, but also trusts a foreign host once the backend has
+ * confirmed it is a live teacher domain.
+ *
+ * A teacher's own domain (`teacher.com`) is unknown at deploy time, so it can
+ * never sit in the static `SANCTUM_STATEFUL_DOMAINS` list. The BFF must forward
+ * the REAL origin for such a request (so Sanctum's stateful check — and the
+ * server-side trust middleware — can recognise it), but only after the domain
+ * has been verified server-side. `requestOrigin`'s host-spoofing protection is
+ * preserved: an arbitrary/unverified `Host`/`X-Forwarded-Host` still falls back
+ * to the canonical origin.
+ */
+export async function resolveRequestOrigin(request: OriginRequestLike): Promise<string> {
+  const host = candidateHost(request);
+
+  if (host && isTrustedHost(host)) {
+    return buildOrigin(request, host);
+  }
+
+  if (host && isDnsHostname(host) && (await isVerifiedTenantHost(host))) {
+    return buildOrigin(request, host);
+  }
+
+  return canonicalOrigin() || safeOrigin(request.url);
+}
+
+/**
+ * True when the browser is on a platform host (apex / `www.` / `api.`) or a
+ * loopback dev host — the only origins where the central Google OAuth callback
+ * can hand back a session cookie without a cross-domain handoff.
+ *
+ * A teacher's custom domain (or `{slug}.{platform}` subdomain) is NOT a platform
+ * host: Google sign-in there would land the student on the platform domain with
+ * no session, so the UI keeps it clearly unavailable there and the email/password
+ * flow remains the supported path.
+ */
+export function isPlatformBrowserHost(): boolean {
+  if (typeof window === 'undefined') return true;
+
+  const name = hostnameOf(window.location.hostname);
+
+  if (!name) return true;
+  if (LOCAL_HOSTS.includes(name)) return true;
+
+  return platformHosts().some(
+    (domain) => name === domain || name === `www.${domain}` || name === `api.${domain}`,
+  );
 }

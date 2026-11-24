@@ -1,13 +1,13 @@
 import { NextRequest } from 'next/server';
 import { jsonWithCookies, statefulPost, withExpiredCookies } from '@/lib/bff';
-import { requestOrigin } from '@/lib/request-origin';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /** POST /api/session/logout — destroys the server-side session. */
 export async function POST(request: NextRequest) {
-  const origin = requestOrigin(request);
+  const origin = await resolveRequestOrigin(request);
 
   try {
     const { status, data, cookies } = await statefulPost('/auth/logout', origin, {}, {

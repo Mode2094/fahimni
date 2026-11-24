@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { requestOrigin, isTrustedHost } from '../src/lib/request-origin.ts';
+import { requestOrigin, isTrustedHost, resolveRequestOrigin } from '../src/lib/request-origin.ts';
 
 // Pin the platform domain so the host allowlist is deterministic in CI (the
 // build step sets a *different* placeholder, and the unit step must not depend
@@ -79,11 +79,11 @@ test('without a host header it falls back to the resolved request url', () => {
   assert.equal(requestOrigin(req({}, 'https://fahimni.me/api/session/me')), 'https://fahimni.me');
 });
 
-test('every session route derives the origin from requestOrigin, not request.url', () => {
+test('every session route derives the origin from resolveRequestOrigin, not request.url', () => {
   for (const route of ['me', 'login', 'logout', 'register', '2fa', 'csrf', 'refresh']) {
     const file = src(`src/app/api/session/${route}/route.ts`);
 
-    assert.match(file, /requestOrigin\(request\)/, `${route} route must use requestOrigin(request)`);
+    assert.match(file, /resolveRequestOrigin\(request\)/, `${route} route must use resolveRequestOrigin(request)`);
     assert.doesNotMatch(
       file,
       /new URL\(request\.url\)\.origin/,
@@ -152,4 +152,115 @@ test('nginx overwrites X-Forwarded-Host on both Next.js proxy locations', () => 
     occurrences.length >= 2,
     'both /api/session/ and / must pin X-Forwarded-Host to the real $host',
   );
+});
+
+// ── Verified custom-domain origin (resolveRequestOrigin) ─────────────────
+// A teacher's own domain is unknown at deploy time. The BFF may forward its
+// real origin to Sanctum ONLY after the backend confirms it is a live teacher
+// domain — never on the strength of the (attacker-visible) Host header alone.
+
+const realFetch = globalThis.fetch;
+const internalLookup = (rel: string) => 'http://localhost:8080/api/v1' + rel;
+
+function stubLookup(handler: (url: string) => { ok: boolean } | Promise<{ ok: boolean }>) {
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: any) => {
+    const url = typeof input === 'string' ? input : String(input);
+    calls.push(url);
+
+    return (await handler(url)) as any;
+  }) as typeof fetch;
+
+  return calls;
+}
+
+test('resolveRequestOrigin keeps platform hosts off the network', async () => {
+  const calls = stubLookup(() => ({ ok: false }));
+
+  try {
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'fahimni.me', 'x-forwarded-proto': 'https' })),
+      'https://fahimni.me',
+    );
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'teacher.fahimni.me', 'x-forwarded-proto': 'https' })),
+      'https://teacher.fahimni.me',
+    );
+    assert.equal(calls.length, 0, 'a trusted host must not trigger a lookup');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('resolveRequestOrigin trusts a verified custom domain and forwards its real origin', async () => {
+  const calls = stubLookup(() => ({ ok: true }));
+
+  try {
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'teacher-ahmad.com', 'x-forwarded-proto': 'https' })),
+      'https://teacher-ahmad.com',
+    );
+    assert.equal(calls[0], internalLookup('/public/domain/teacher-ahmad.com'));
+
+    // www variant resolves through the same lookup.
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'www.teacher-ahmad.com', 'x-forwarded-proto': 'https' })),
+      'https://www.teacher-ahmad.com',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('resolveRequestOrigin falls back to canonical when the domain is not verified', async () => {
+  stubLookup(() => ({ ok: false }));
+
+  try {
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'attacker.example', 'x-forwarded-proto': 'https' })),
+      'https://fahimni.me',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('resolveRequestOrigin never trusts a non-DNS host and survives a lookup failure', async () => {
+  const calls = stubLookup(() => ({ ok: true }));
+
+  try {
+    // A malformed host is never even looked up.
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'not a host', 'x-forwarded-proto': 'https' })),
+      'https://fahimni.me',
+    );
+    assert.equal(calls.length, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  globalThis.fetch = (async () => {
+    throw new Error('network down');
+  }) as typeof fetch;
+
+  try {
+    assert.equal(
+      await resolveRequestOrigin(req({ host: 'teacher-ahmad.com', 'x-forwarded-proto': 'https' })),
+      'https://fahimni.me',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('every session route resolves the origin through resolveRequestOrigin', () => {
+  for (const route of ['me', 'login', 'logout', 'register', '2fa', 'csrf', 'refresh', 'complete-profile']) {
+    const file = src(`src/app/api/session/${route}/route.ts`);
+
+    assert.match(
+      file,
+      /const origin = await resolveRequestOrigin\(request\)/,
+      `${route} route must resolve the origin through resolveRequestOrigin`,
+    );
+  }
 });

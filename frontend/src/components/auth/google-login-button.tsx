@@ -1,6 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { safeInternalPath } from '@/lib/auth-routes';
+import { isPlatformBrowserHost } from '@/lib/request-origin';
 
 /** زر تسجيل الدخول عبر Google — يبدأ OAuth بالدور المطلوب. */
 export default function GoogleLoginButton({
@@ -22,7 +24,23 @@ export default function GoogleLoginButton({
 }) {
   const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
+  // Google OAuth runs a single central callback on the platform domain. On a
+  // teacher's own domain / subdomain the resulting session would land on the
+  // platform host with no cookie here, so the flow is kept clearly unavailable
+  // there — email/password stays the supported path. Default to available so
+  // SSR/hydration match; the real host is known only in the browser.
+  const [onPlatformHost, setOnPlatformHost] = useState(true);
+
+  useEffect(() => {
+    setOnPlatformHost(isPlatformBrowserHost());
+  }, []);
+
   const start = async () => {
+    if (!isPlatformBrowserHost()) {
+      alert('تسجيل الدخول عبر Google غير متاح على الدومين المخصص — استخدم البريد وكلمة المرور.');
+      return;
+    }
+
     if (onClick) {
       const ok = await onClick();
       if (ok === false) return;
@@ -50,15 +68,19 @@ export default function GoogleLoginButton({
     }
   };
 
+  const classes =
+    variant === 'primary'
+      ? 'flex w-full items-center justify-center gap-2.5 rounded-xl border-2 border-teal-500/70 bg-white px-4 py-3 text-base font-bold text-slate-800 shadow-md shadow-teal-500/10 ring-2 ring-teal-500/10 transition hover:bg-teal-50/40 hover:shadow-lg'
+      : 'flex w-full items-center justify-center gap-2.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50';
+
   return (
     <button
       type="button"
       onClick={start}
-      className={
-        variant === 'primary'
-          ? 'flex w-full items-center justify-center gap-2.5 rounded-xl border-2 border-teal-500/70 bg-white px-4 py-3 text-base font-bold text-slate-800 shadow-md shadow-teal-500/10 ring-2 ring-teal-500/10 transition hover:bg-teal-50/40 hover:shadow-lg'
-          : 'flex w-full items-center justify-center gap-2.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50'
-      }
+      disabled={!onPlatformHost}
+      aria-disabled={!onPlatformHost}
+      title={!onPlatformHost ? 'تسجيل Google غير متاح على الدومين المخصص — استخدم البريد وكلمة المرور.' : undefined}
+      className={`${classes}${!onPlatformHost ? ' cursor-not-allowed opacity-50' : ''}`}
     >
       <svg className="h-5 w-5" viewBox="0 0 48 48" aria-hidden="true">
         <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.3 6.5 29.4 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z" />
