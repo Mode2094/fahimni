@@ -15,6 +15,7 @@ use App\Models\TenantUser;
 use App\Models\User;
 use App\Plans\TeacherTrialProgram;
 use App\Rules\ValidPhoneNumber;
+use App\Services\NewTeacherNotifier;
 use App\Services\StudentGamificationService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
@@ -215,6 +216,12 @@ class AuthController extends Controller
             Log::warning('Welcome email failed to send', ['user_id' => $user->id, 'error' => $e->getMessage()]);
         }
 
+        // إشعار Super Admin بانضمام معلّم جديد — عبر الطابور وبعد نجاح حفظ
+        // التسجيل، مرة واحدة فقط لكل حساب معلّم.
+        if ($role === 'Teacher') {
+            app(NewTeacherNotifier::class)->announce($user, $tenantId, $trialGranted);
+        }
+
         // Web (cookie session) registration: sign the user in server-side and
         // never hand a bearer token to the browser.
         if ($request->hasSession()) {
@@ -313,6 +320,10 @@ class AuthController extends Controller
             // register/login. Only granted once — there is no tenant before.
             $trialStarted = app(TeacherTrialProgram::class)
                 ->grantTrial($user, $tenant->id, 'google', true) !== null;
+
+            // A teacher workspace is created here for the first time (Google
+            // sign-up completed later): tell the Super Admin exactly once.
+            app(NewTeacherNotifier::class)->announce($user, $tenantId, $trialStarted);
         }
 
         AuditLogger::log($request, 'auth.profile_completed', 'user', $user->id, [

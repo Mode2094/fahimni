@@ -10,6 +10,7 @@ use App\Models\TenantSetting;
 use App\Models\TenantUser;
 use App\Models\User;
 use App\Plans\TeacherTrialProgram;
+use App\Services\NewTeacherNotifier;
 use App\Services\TenantSlugService;
 use App\Support\PhoneNumber;
 use App\Support\WebSessionAuth;
@@ -208,7 +209,8 @@ class GoogleAuthController extends Controller
         //    tenant, no tenant without an owner membership. ────────────────
         try {
             $trialStarted = false;
-            [$user, $tenant] = DB::transaction(function () use ($email, $name, $phone, $regData, $role, $wantsStaffTenant, &$trialStarted) {
+            $createdWorkspace = false;
+            [$user, $tenant] = DB::transaction(function () use ($email, $name, $phone, $regData, $role, $wantsStaffTenant, &$trialStarted, &$createdWorkspace) {
                 // Re-read inside the transaction and take a row lock so
                 // concurrent callbacks converge on one row.
                 $user = User::withTrashed()->where('email', $email)->lockForUpdate()->first();
@@ -262,7 +264,7 @@ class GoogleAuthController extends Controller
                     return [$user, null];
                 }
 
-                return [$user, $this->ensureWorkspaceTenant($user, $name, $email, $wantsStaffTenant, $trialStarted)];
+                return [$user, $this->ensureWorkspaceTenant($user, $name, $email, $wantsStaffTenant, $trialStarted, $createdWorkspace)];
             });
         } catch (QueryException $e) {
             // A concurrent callback won the race: the unique index rejected the
@@ -271,6 +273,11 @@ class GoogleAuthController extends Controller
             if (! $this->isDuplicateKey($e)) {
                 throw $e;
             }
+
+            // This request's provisioning rolled back — it created nothing, so
+            // it must never claim credit for the new teacher. The winning
+            // callback owns the alert.
+            $createdWorkspace = false;
 
             $user = User::findByEmail($email);
 
@@ -281,6 +288,12 @@ class GoogleAuthController extends Controller
             }
 
             $tenant = $wantsStaffTenant ? Tenant::where('owner_id', $user->id)->first() : null;
+        }
+
+        // A brand-new teacher workspace was provisioned for the first time:
+        // alert the Super Admin once, now that the transaction has committed.
+        if ($createdWorkspace && $tenant) {
+            app(NewTeacherNotifier::class)->announce($user, $tenant->id, $trialStarted);
         }
 
         // A teacher still lacking a phone has no workspace/trial yet: send the
@@ -339,7 +352,7 @@ class GoogleAuthController extends Controller
      * Column names follow the real schema (tenants.owner_id / tenants.email /
      * tenants.status) — NOT owner_user_id / is_active, which do not exist.
      */
-    private function ensureWorkspaceTenant(User $user, string $name, string $email, bool $wantsStaffTenant, bool &$trialStarted = false): ?Tenant
+    private function ensureWorkspaceTenant(User $user, string $name, string $email, bool $wantsStaffTenant, bool &$trialStarted = false, bool &$created = false): ?Tenant
     {
         // Already a member of some tenant → that is the user's workspace.
         $membership = $user->tenantPivots()->first();
@@ -352,6 +365,8 @@ class GoogleAuthController extends Controller
         if (! $wantsStaffTenant) {
             return null;
         }
+
+        $created = true;
 
         $tenant = app(TenantSlugService::class)->createTenant([
             'id' => UuidV7::generate(),
