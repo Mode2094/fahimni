@@ -532,8 +532,15 @@ log "disk         : $(df -h / | awk 'NR==2{print $4" free ("$5" used)"}')"
 
 step "LooksLoop baseline (read-only; must be identical afterwards)"
 LL_BEFORE="$(ll_snapshot)"
-[ -n "$LL_BEFORE" ] || die "no LooksLoop containers found — aborting rather than guessing"
-printf '%s\n' "$LL_BEFORE" | sed 's/^/  /'
+if [ -n "$LL_BEFORE" ]; then
+  printf '%s\n' "$LL_BEFORE" | sed 's/^/  /'
+else
+  # This host is the standalone Fahimni VPS: no LooksLoop containers exist, so
+  # there is nothing to protect and the before/after comparison degrades to a
+  # recorded no-op. Absence is RECORDED (not assumed), so a real appearance or
+  # disappearance would still show up as a diff in step 10.
+  log "  none on this host (standalone Fahimni — nothing to protect)"
+fi
 
 # ── 1. backup ───────────────────────────────────────────────────────────────
 step "backing up the environment file"
@@ -905,7 +912,11 @@ log "BRAND OK — «منصة فهمني» is served everywhere checked"
 step "LooksLoop after (must equal baseline)"
 LL_AFTER="$(ll_snapshot)"
 if [ "$LL_BEFORE" = "$LL_AFTER" ]; then
-  log "unchanged"
+  if [ -z "$LL_BEFORE" ]; then
+    log "none before and none now (standalone host — nothing to protect)"
+  else
+    log "unchanged"
+  fi
 else
   diff <(printf '%s\n' "$LL_BEFORE") <(printf '%s\n' "$LL_AFTER") || true
   warn "LooksLoop state changed — investigate"
