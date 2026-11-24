@@ -27,6 +27,7 @@ const TYPE_LABELS: Record<string, { ar: string; en: string }> = {
   'enrollment.created': { ar: 'التسجيل في دورة', en: 'Course enrollment' },
   'lesson.completed': { ar: 'إكمال درس', en: 'Lesson completed' },
   'exam.graded': { ar: 'تصحيح امتحان', en: 'Exam graded' },
+  'exam.review_required': { ar: 'محاولة تحتاج تصحيح', en: 'Attempt needs review' },
   'subscription.activated': { ar: 'تفعيل اشتراك', en: 'Subscription activated' },
   'payment.completed': { ar: 'اكتمال دفعة', en: 'Payment completed' },
   'announcement.published': { ar: 'إعلانات عامة', en: 'Announcements' },

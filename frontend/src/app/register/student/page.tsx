@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { authFetch, setSessionHint } from '@/lib/auth-client';
+import { authFetch, setSessionHint, setStoredTenantId } from '@/lib/auth-client';
 import { track } from '@/lib/analytics';
 import PlatformLogo from '@/components/brand/platform-logo';
 
@@ -62,10 +62,10 @@ function StudentRegisterForm() {
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.message || 'Failed'); setCaptchaKey((k) => k + 1); return; }
-            localStorage.setItem('user', JSON.stringify(data.user));
+      try { localStorage.setItem('user', JSON.stringify(data.user)); } catch { /* session cookie remains authoritative */ }
       setSessionHint(true);
       useAuth.setState({ user: data.user, loading: false, initialized: true });
-      if (data.tenant_id) localStorage.setItem('tenant_id', data.tenant_id);
+      setStoredTenantId(data.tenant_id ? String(data.tenant_id) : null);
       track('CompleteRegistration', { content_name: 'student_signup' }, 'sign_up');
       toast.success(locale === 'ar' ? 'تم إنشاء حساب الطالب' : 'Student account created');
       const from = searchParams.get('from');
@@ -99,6 +99,8 @@ function StudentRegisterForm() {
           ) : (
             <GoogleLoginButton
               role="student"
+              tenantSlug={searchParams.get('tenant_slug') || searchParams.get('slug')}
+              redirectTo={searchParams.get('from')}
               variant="primary"
               label={locale === 'ar' ? 'التسجيل عبر Google' : 'Sign up with Google'}
               formData={{ name: form.name, phone: form.phone }}

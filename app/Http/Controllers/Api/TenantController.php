@@ -110,6 +110,10 @@ class TenantController extends Controller
             ]);
         }
 
+        if ($request->hasSession()) {
+            $request->session()->put('current_tenant_id', $tenant->id);
+        }
+
         return response()->json([
             'message' => 'Tenant switched successfully.',
             'tenant' => new TenantResource($tenant->load('settings')),

@@ -8,6 +8,7 @@ use App\Media\MediaSecurityService;
 use App\Media\MediaService;
 use App\Media\MediaUsageService;
 use App\Models\Lesson;
+use App\Models\LessonContent;
 use App\Models\MediaAsset;
 use App\Models\UsageWarningRule;
 use App\Models\VideoContent;
@@ -114,14 +115,27 @@ class MediaAssetController extends Controller
         $validated = $request->validate([
             'title' => 'nullable|string|max:190',
             'lesson_id' => 'nullable|string',
+            'replace_content_id' => 'nullable|string|max:64',
             'file_size' => 'required|integer|min:1|max:5368709120',
             'original_filename' => 'nullable|string|max:255',
             'mime_type' => 'nullable|string|max:100',
             'idempotency_key' => 'nullable|string|max:100',
         ]);
 
+        if (! empty($validated['replace_content_id']) && empty($validated['lesson_id'])) {
+            return response()->json(['message' => 'A lesson is required when replacing its video.'], 422);
+        }
+
         if (! empty($validated['lesson_id'])) {
             Lesson::where('tenant_id', $tenantId)->findOrFail($validated['lesson_id']);
+        }
+
+        if (! empty($validated['replace_content_id'])) {
+            LessonContent::withoutTenant()
+                ->where('tenant_id', $tenantId)
+                ->where('lesson_id', $validated['lesson_id'])
+                ->where('content_type', 'video')
+                ->findOrFail($validated['replace_content_id']);
         }
 
         try {
@@ -131,6 +145,8 @@ class MediaAssetController extends Controller
                 'original_filename' => $validated['original_filename'] ?? null,
                 'mime_type' => $validated['mime_type'] ?? null,
                 'idempotency_key' => $validated['idempotency_key'] ?? null,
+                'replacement_lesson_content_id' => $validated['replace_content_id'] ?? null,
+                'replacement_lesson_id' => $validated['lesson_id'] ?? null,
             ]);
 
             return response()->json([
@@ -191,19 +207,24 @@ class MediaAssetController extends Controller
         }
 
         $asset = $this->media->attachToLesson($asset->id, $lesson->id);
+        $replacementPending = ! empty($asset->metadata['replacement_lesson_content_id']);
 
-        $video = VideoContent::withoutTenant()
-            ->where('lesson_content_id', $asset->lesson_content_id)
-            ->first();
+        $video = $asset->lesson_content_id
+            ? VideoContent::withoutTenant()->where('lesson_content_id', $asset->lesson_content_id)->first()
+            : null;
 
         return response()->json([
             'video' => [
                 'id' => $video?->id,
-                'lesson_id' => $video?->lesson_id,
+                'lesson_id' => $video?->lesson_id ?? $lesson->id,
                 'asset_id' => $asset->id,
-                'status' => $video?->status ?? MediaAsset::STATUS_PROCESSING,
+                'status' => $video?->status ?? $asset->status,
             ],
-            'message' => 'Upload complete — processing now.',
+            'message' => $asset->status === MediaAsset::STATUS_PROCESSING
+                ? ($replacementPending
+                    ? 'Replacement uploaded — processing now; the current lesson video remains active until ready.'
+                    : 'Upload complete — processing now.')
+                : 'Upload complete.',
         ], 201);
     }
 

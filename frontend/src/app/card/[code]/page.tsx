@@ -5,7 +5,9 @@ import { useParams } from 'next/navigation';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useLocale } from '@/store/locale';
+import { useAuth } from '@/store';
 import { Loader2, QrCode, GraduationCap, CheckCircle2, XCircle, ArrowLeft, Sparkles, Zap, UserPlus, LogIn } from 'lucide-react';
+import { setStoredTenantId } from '@/lib/auth-client';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -25,6 +27,8 @@ const CARD_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
 
 export default function CardRedeemPage() {
   const { locale } = useLocale();
+  const user = useAuth((state) => state.user);
+  const loadSession = useAuth((state) => state.load);
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const params = useParams<{ code: string }>();
   const router = useRouter();
@@ -37,15 +41,15 @@ export default function CardRedeemPage() {
   const [isTeacher, setIsTeacher] = useState(false);
 
   const redeem = async (cd: string, tenantId: string) => {
-    const token = localStorage.getItem('lms_authed');
     setPhase('redeeming');
     setMessage('');
     try {
       // The card belongs to the teacher's tenant — switch context so the
       // redeem call validates against the right tenant.
-      localStorage.setItem('tenant_id', tenantId);
+      setStoredTenantId(tenantId);
       const res = await fetch(`${API}/cards/redeem`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenantId, Accept: 'application/json' },
         body: JSON.stringify({ code: cd }),
       });
@@ -68,33 +72,54 @@ export default function CardRedeemPage() {
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('lms_authed');
-    let user: any = null;
-    try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* */ }
-    setIsTeacher(!!user && !user.is_super_admin && (user.roles || []).includes('Teacher'));
+    let cancelled = false;
 
-    fetch(`${API}/public/cards/${encodeURIComponent(code)}`)
-      .then(async (r) => {
-        if (!r.ok) { setNotFound(true); setPhase('error'); return null; }
-        return r.json();
-      })
-      .then((d) => {
-        if (!d) return;
-        setCard(d.card);
-        if (!token) { setPhase('idle'); return; }
+    const loadCard = async () => {
+      // Resolve the HttpOnly session from the server. localStorage is only a
+      // UI hint and may be empty in a private window or newly installed PWA.
+      await loadSession();
+      const sessionUser = useAuth.getState().user;
+      if (cancelled) return;
 
-        // Logged in as a student → auto-redeem immediately.
-        if (!user || user.is_super_admin || !(user.roles || []).includes('Teacher')) {
-          if (d.card?.tenant?.id) redeem(d.card.code, d.card.tenant.id);
-        } else {
-          // Teacher/admin scanning a student card.
+      const staff = !!sessionUser
+        && (sessionUser.is_super_admin || (sessionUser.roles || []).includes('Teacher'));
+      setIsTeacher(staff);
+
+      try {
+        const response = await fetch(`${API}/public/cards/${encodeURIComponent(code)}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!response.ok) { setNotFound(true); setPhase('error'); return; }
+
+        const data = await response.json();
+        if (cancelled) return;
+        setCard(data.card);
+
+        if (!sessionUser) { setPhase('idle'); return; }
+
+        if (staff) {
+          // Staff/admin accounts must not redeem student cards.
           setPhase('idle');
           setMessage(t('بطاقات التسجيل خاصة بالطلاب — سجّل الدخول بحساب طالب لتفعيلها.', 'Registration cards are for students — log in with a student account to activate.'));
+          return;
         }
-      })
-      .catch(() => { setNotFound(true); setPhase('error'); });
+
+        if (data.card?.tenant?.id) {
+          redeem(data.card.code, data.card.tenant.id);
+        } else {
+          setPhase('error');
+          setMessage(t('تعذر تحديد منصة البطاقة', 'Could not resolve the card workspace'));
+        }
+      } catch {
+        if (!cancelled) { setNotFound(true); setPhase('error'); }
+      }
+    };
+
+    void loadCard();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
+  }, [code, loadSession]);
 
   const loginUrl = card?.tenant ? `/student/login?tenant_slug=${card.tenant.slug}&from=/card/${code}` : `/student/login?from=/card/${code}`;
   const registerUrl = card?.tenant ? `/register/student?tenant_slug=${card.tenant.slug}&from=/card/${code}` : `/register/student?from=/card/${code}`;
@@ -151,7 +176,7 @@ export default function CardRedeemPage() {
               )}
 
               {/* Not logged in → auth required */}
-              {!localStorage.getItem('lms_authed') ? (
+              {!user ? (
                 <>
                   <div className="flex items-start gap-3 p-4 rounded-2xl bg-teal-50 border border-teal-100 text-sm text-teal-700">
                     <Sparkles className="h-5 w-5 shrink-0 mt-0.5" />

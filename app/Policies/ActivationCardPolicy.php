@@ -30,8 +30,19 @@ class ActivationCardPolicy
         return $this->isTenantStaff($user);
     }
 
-    public function redeem(User $user): bool
+    public function redeem(User $user, ActivationCard $card): bool
     {
-        return $this->isTenantMember($user);
+        if ($user->is_super_admin || $user->hasRole('Teacher') || $card->tenant_id !== $this->tenantId()) {
+            return false;
+        }
+
+        $membership = $user->tenantPivots()
+            ->where('tenant_id', $card->tenant_id)
+            ->first();
+
+        // A valid card may establish a first student membership. Existing
+        // disabled or non-student memberships must not be silently re-enabled.
+        return ! $membership
+            || ($membership->status === 'active' && $membership->role === 'student');
     }
 }

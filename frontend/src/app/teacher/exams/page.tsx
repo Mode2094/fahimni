@@ -123,6 +123,7 @@ export default function TeacherExamsPage() {
 
   const [exams, setExams] = useState<any[]>([]);
   const [attempts, setAttempts] = useState<Record<string, any[]>>({});
+  const [contexts, setContexts] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any>(null); // attempt being reviewed
   const [loadingAttempt, setLoadingAttempt] = useState(false);
@@ -144,14 +145,20 @@ export default function TeacherExamsPage() {
       const list = d.exams || [];
       setExams(list);
       const map: Record<string, any[]> = {};
+      const contextMap: Record<string, any> = {};
       await Promise.all(list.map(async (e: any) => {
         try {
           const r = await fetch(`${API}/exams/${e.id}/attempts`, { headers: headers() });
           const ad = await r.json();
           map[e.id] = ad.attempts || [];
-        } catch { map[e.id] = []; }
+          contextMap[e.id] = ad.context || null;
+        } catch {
+          map[e.id] = [];
+          contextMap[e.id] = null;
+        }
       }));
       setAttempts(map);
+      setContexts(contextMap);
     } catch { /* */ }
     setLoading(false);
   };
@@ -161,7 +168,7 @@ export default function TeacherExamsPage() {
   const needsReview = (examId: string) => (attempts[examId] || []).filter((a: any) => a.needs_review);
 
   const openReview = async (attempt: any) => {
-    setSelected(attempt);
+    setSelected({ ...attempt, review_context: contexts[attempt.exam_id] || null });
     setGrades({});
     setLoadingAttempt(true);
     try {
@@ -170,7 +177,12 @@ export default function TeacherExamsPage() {
       const res = await fetch(`${API}/exam-attempts/${attempt.id}`, { headers: headers() });
       if (res.ok) {
         const d = await res.json();
-        if (d.attempt) setSelected(d.attempt);
+        if (d.attempt) {
+          setSelected({
+            ...d.attempt,
+            review_context: d.context || contexts[attempt.exam_id] || null,
+          });
+        }
       }
     } catch { /* keep the list copy */ }
     setLoadingAttempt(false);
@@ -196,6 +208,11 @@ export default function TeacherExamsPage() {
   };
 
   const allNeedingReview = exams.reduce((n, e) => n + needsReview(e.id).length, 0);
+  const selectedContext = selected?.review_context || contexts[selected?.exam_id || ''] || null;
+  const selectedLessonTitles = (selectedContext?.lessons || [])
+    .map((lesson: any) => lesson?.title)
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <div className="space-y-6">
@@ -242,6 +259,7 @@ export default function TeacherExamsPage() {
         {exams.map((exam: any) => {
           const list = attempts[exam.id] || [];
           const pending = list.filter((a: any) => a.needs_review);
+          const context = contexts[exam.id];
           return (
             <Card key={exam.id} className="border-0 shadow-sm overflow-hidden">
               <CardContent className="p-5 space-y-3">
@@ -250,6 +268,11 @@ export default function TeacherExamsPage() {
                     <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500/10 to-emerald-500/10 border border-teal-100"><ClipboardList className="h-5 w-5 text-teal-600" /></div>
                     <div>
                       <p className="font-bold">{exam.title}</p>
+                      {(context?.course?.title || context?.lesson?.title) && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {[context.course?.title, context.lesson?.title].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
                       <div className="flex flex-wrap items-center gap-2 mt-1">
                         <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{t('المحاولات', 'Attempts')}: {list.length}</span>
                         {pending.length > 0 && (
@@ -280,7 +303,13 @@ export default function TeacherExamsPage() {
                                 <span className="font-semibold truncate">{a.student?.name || a.user_id}</span>
                                 <Badge className="border-0 bg-slate-100 text-slate-600 text-[10px]">{t('محاولة', 'Attempt')} #{a.attempt_number}</Badge>
                                 <Badge className={`border-0 text-[10px] ${a.status === 'submitted' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{a.status === 'submitted' ? t('مُسلّمة', 'Submitted') : t('جارية', 'In progress')}</Badge>
-                                {a.needs_review && <Badge className="border-0 bg-amber-100 text-amber-700 text-[10px]">{t('بانتظار التصحيح', 'Pending review')}</Badge>}
+                                {a.needs_review ? (
+                                  <Badge className="border-0 bg-amber-100 text-amber-700 text-[10px]">{t('بانتظار التصحيح', 'Pending review')}</Badge>
+                                ) : a.reviewed_at ? (
+                                  <Badge className="border-0 bg-teal-100 text-teal-700 text-[10px]">{t('مصحح يدوياً', 'Manually reviewed')}</Badge>
+                                ) : a.status === 'submitted' ? (
+                                  <Badge className="border-0 bg-emerald-50 text-emerald-700 text-[10px]">{t('تصحيح تلقائي', 'Auto-graded')}</Badge>
+                                ) : null}
                               </div>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground mt-0.5">
                                 <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{a.submitted_at ? new Date(a.submitted_at).toLocaleString(locale === 'ar' ? 'ar' : 'en') : t('لم تُسلّم', 'not submitted')}</span>
@@ -310,7 +339,11 @@ export default function TeacherExamsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-bold">{t('مراجعة المحاولة', 'Review attempt')} #{selected.attempt_number}</h2>
-                <p className="text-xs text-muted-foreground">{selected.student?.name || selected.user_id} · {selected.course?.title || selected.exam?.title || ''}{selected.section?.title ? ` · ${selected.section.title}` : ''} · {t('المدة', 'Time')} {fmtDuration(selected.time_spent_seconds)}</p>
+                <p className="text-xs text-muted-foreground">
+                  {[selected.student?.name || selected.user_id, selected.exam?.title, selectedContext?.course?.title || selected.course?.title, selectedLessonTitles || selectedContext?.lesson?.title, selected.section?.title, `${t('المدة', 'Time')} ${fmtDuration(selected.time_spent_seconds)}`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
               </div>
               <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600" aria-label={t('إغلاق', 'Close')}><X className="h-5 w-5" /></button>
             </div>

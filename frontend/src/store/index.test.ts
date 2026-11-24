@@ -9,12 +9,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   authFetch: vi.fn(),
   hasSessionHint: vi.fn(() => false),
+  getStoredTenantId: vi.fn(() => localStorage.getItem('tenant_id')),
 }));
 
 vi.mock('@/lib/auth-client', () => ({
   API_BASE: '/api/v1',
   authFetch: (...args: unknown[]) => mocks.authFetch(...args),
   hasSessionHint: () => mocks.hasSessionHint(),
+  getStoredTenantId: () => mocks.getStoredTenantId(),
+  setStoredTenantId: (tenantId: string | null) => {
+    if (tenantId) localStorage.setItem('tenant_id', tenantId);
+    else localStorage.removeItem('tenant_id');
+  },
   setSessionHint: (active: boolean) => {
     if (active) localStorage.setItem('lms_authed', '1');
     else localStorage.removeItem('lms_authed');
@@ -145,6 +151,32 @@ describe('auth store — login', () => {
     expect(outcome).toEqual({ requires2fa: false });
     expect(useAuth.getState().status).toBe('authenticated');
     expect(useAuth.getState().user?.id).toBe('u1');
+  });
+
+  it('sends the teacher-site slug and stores the server-validated tenant selection', async () => {
+    const tenants = [
+      { id: 'tenant-a', slug: 'teacher-a', status: 'active' },
+      { id: 'tenant-b', slug: 'teacher-b', status: 'active' },
+    ];
+    mocks.authFetch.mockResolvedValue(res(200, { user: { ...USER, tenants }, tenant_id: 'tenant-b' }));
+
+    await useAuth.getState().login('student@test.local', 'secret', { tenant_slug: 'teacher-b' });
+
+    const body = JSON.parse(mocks.authFetch.mock.calls[0][1].body as string);
+    expect(body.tenant_slug).toBe('teacher-b');
+    expect(localStorage.getItem('tenant_id')).toBe('tenant-b');
+  });
+
+  it('does not guess the first workspace when a student belongs to several tenants', async () => {
+    const tenants = [
+      { id: 'tenant-a', slug: 'teacher-a', status: 'active' },
+      { id: 'tenant-b', slug: 'teacher-b', status: 'active' },
+    ];
+    mocks.authFetch.mockResolvedValue(res(200, { user: { ...USER, tenants } }));
+
+    await useAuth.getState().login('student@test.local', 'secret');
+
+    expect(localStorage.getItem('tenant_id')).toBeNull();
   });
 
   it('leaves the existing session intact when a login attempt fails', async () => {

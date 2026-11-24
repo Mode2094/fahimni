@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { User } from '@/types/api';
-import { API_BASE, authFetch, clearStoredUser, hasSessionHint, setSessionHint } from '@/lib/auth-client';
+import { API_BASE, authFetch, clearStoredUser, getStoredTenantId, hasSessionHint, setSessionHint, setStoredTenantId } from '@/lib/auth-client';
 import { dashboardPathFor } from '@/lib/auth-routes';
 
 type LoginOutcome = { requires2fa: boolean };
@@ -77,7 +77,11 @@ function cacheUser(user: User | null): void {
   if (typeof window === 'undefined') return;
 
   if (user) {
-    localStorage.setItem('user', JSON.stringify(user));
+    try {
+      localStorage.setItem('user', JSON.stringify(user));
+    } catch {
+      // The HttpOnly session remains valid when browser storage is restricted.
+    }
     setSessionHint(true);
   } else {
     clearStoredUser();
@@ -91,24 +95,24 @@ function cacheUser(user: User | null): void {
  * no (or a different) tenant.
  */
 async function healTenant(user: User): Promise<void> {
-  const tid = typeof window !== 'undefined' ? localStorage.getItem('tenant_id') : null;
+  if (typeof window === 'undefined') return;
+
+  const tid = getStoredTenantId();
 
   if (user.tenants?.length) {
-    if (!tid || !user.tenants.some((t: any) => t.id === tid)) {
-      try {
-        const res = await authFetch(`${API_BASE}/tenants`);
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const first = (data.tenants || [])[0];
-          if (first?.id) localStorage.setItem('tenant_id', first.id);
-          else localStorage.removeItem('tenant_id');
-        }
-      } catch {
-        /* non-blocking */
-      }
+    const activeTenants = user.tenants.filter((tenant: any) => tenant?.id && tenant.status === 'active');
+    if (tid && activeTenants.some((tenant: any) => tenant.id === tid)) return;
+
+    if (activeTenants.length === 1) {
+      setStoredTenantId(activeTenants[0].id);
+      return;
     }
+
+    // Never guess the first tenant for a multi-workspace student. The teacher
+    // URL/card or a saved, server-validated selection supplies the context.
+    setStoredTenantId(null);
   } else if (typeof window !== 'undefined') {
-    localStorage.removeItem('tenant_id');
+    setStoredTenantId(null);
   }
 }
 
@@ -232,6 +236,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       }
 
       lastAuthAt = Date.now();
+      setStoredTenantId(data?.tenant_id ? String(data.tenant_id) : null);
       cacheUser(user);
       await healTenant(user);
       set({
@@ -275,6 +280,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       }
 
       lastAuthAt = Date.now();
+      setStoredTenantId(data?.tenant_id ? String(data.tenant_id) : null);
       cacheUser(user);
       await healTenant(user);
       set({
@@ -306,6 +312,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     const user = (data?.user ?? null) as User | null;
 
     if (user) {
+      setStoredTenantId(data?.tenant_id ? String(data.tenant_id) : null);
       cacheUser(user);
       await healTenant(user);
       set({
@@ -315,10 +322,6 @@ export const useAuth = create<AuthState>((set, get) => ({
         status: 'authenticated',
         lastValidatedAt: Date.now(),
       });
-    }
-
-    if (data?.tenant_id && typeof window !== 'undefined') {
-      localStorage.setItem('tenant_id', data.tenant_id);
     }
 
     try {
@@ -371,7 +374,11 @@ export const useAuth = create<AuthState>((set, get) => ({
     cacheUser(null);
     if (typeof window !== 'undefined') {
       for (const key of ['token', 'user_role', 'lms_remembered_password', 'lms_admin_remembered_password']) {
-        localStorage.removeItem(key);
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          // Server-side logout has already invalidated the session.
+        }
       }
     }
 

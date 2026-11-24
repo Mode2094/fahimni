@@ -120,6 +120,9 @@ export default function VideoUploadQueue({
     const tid = tenantId();
     const file = item.file;
     if (!file) throw new Error(t('الملف غير متاح — أعد اختياره', 'File is no longer available — pick it again'));
+    const idempotencyKey = destination === 'existing' && lessonId
+      ? `${item.key || ''}-${lessonId}`
+      : item.key;
 
     // 1) Resumable (TUS) ticket FIRST: reserves quota + signs a direct Bunny
     // upload. `key` is deterministic per file, so a retry/reload reuses the
@@ -129,7 +132,7 @@ export default function VideoUploadQueue({
       title: baseName(item.name),
       original_filename: item.name,
       mime_type: file.type || 'video/mp4',
-      idempotency_key: item.key,
+      idempotency_key: idempotencyKey,
     }, tid);
 
     const upload = ticket?.upload || {};

@@ -15,6 +15,30 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SESSION_HINT = 'lms_authed';
 
+/** Read the current workspace selection without making it an auth credential. */
+export function getStoredTenantId(): string | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const tenantId = localStorage.getItem('tenant_id')?.trim();
+    return tenantId || null;
+  } catch {
+    // Private browsing/storage restrictions must not prevent public/API reads.
+    return null;
+  }
+}
+
+export function setStoredTenantId(tenantId: string | null): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    if (tenantId) localStorage.setItem('tenant_id', tenantId);
+    else localStorage.removeItem('tenant_id');
+  } catch {
+    // The server-side session and validated membership remain authoritative.
+  }
+}
+
 export function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
 
@@ -79,7 +103,17 @@ export function enrichApiInit(input: RequestInfo | URL, init: RequestInit = {}):
   new Headers(init.headers).forEach((value, key) => headers.set(key, value));
 
   if (isSameOriginApi(input)) {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const pathname = new URL(url, window.location.origin).pathname;
     const method = requestMethod(input, init);
+
+    // BFF session endpoints have their own context. Tenant-scoped Laravel API
+    // calls share the persisted workspace selection; the server still validates
+    // membership before using it.
+    if ((pathname === '/api/v1' || pathname.startsWith('/api/v1/')) && !headers.has('X-Tenant-Id')) {
+      const tenantId = getStoredTenantId();
+      if (tenantId) headers.set('X-Tenant-Id', tenantId);
+    }
 
     const xsrf = readCookie('XSRF-TOKEN');
     if (xsrf && UNSAFE_METHODS.has(method) && !headers.has('X-XSRF-TOKEN')) {
@@ -153,23 +187,35 @@ function isSessionEndpoint(input: RequestInfo | URL): boolean {
 export function hasSessionHint(): boolean {
   if (typeof window === 'undefined') return false;
 
-  return localStorage.getItem(SESSION_HINT) === '1';
+  try {
+    return localStorage.getItem(SESSION_HINT) === '1';
+  } catch {
+    return false;
+  }
 }
 
 export function setSessionHint(active: boolean): void {
   if (typeof window === 'undefined') return;
 
-  if (active) localStorage.setItem(SESSION_HINT, '1');
-  else localStorage.removeItem(SESSION_HINT);
+  try {
+    if (active) localStorage.setItem(SESSION_HINT, '1');
+    else localStorage.removeItem(SESSION_HINT);
+  } catch {
+    // The HttpOnly cookie is the source of truth.
+  }
 }
 
 /** Clear cached profile data only — never touches HttpOnly credentials. */
 export function clearStoredUser(): void {
   if (typeof window === 'undefined') return;
 
-  localStorage.removeItem(SESSION_HINT);
-  localStorage.removeItem('user');
-  localStorage.removeItem('tenant_id');
+  try {
+    localStorage.removeItem(SESSION_HINT);
+    localStorage.removeItem('user');
+  } catch {
+    // Keep the caller's auth flow working when storage is unavailable.
+  }
+  setStoredTenantId(null);
 }
 
 /**
@@ -179,8 +225,11 @@ export function clearStoredUser(): void {
 export function clearLegacyAuthStorage(): void {
   if (typeof window === 'undefined') return;
 
-  for (const key of ['token', 'user_role', 'lms_remembered_password', 'lms_admin_remembered_password']) {
-    localStorage.removeItem(key);
+  try {
+    for (const key of ['token', 'user_role', 'lms_remembered_password', 'lms_admin_remembered_password']) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Legacy storage cleanup is best effort.
   }
-  
 }

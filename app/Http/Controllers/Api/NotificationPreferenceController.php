@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
 class NotificationPreferenceController extends Controller
 {
     private const ALL_TYPES = [
-        'enrollment.created', 'lesson.completed', 'exam.graded',
+        'enrollment.created', 'lesson.completed', 'exam.graded', 'exam.review_required',
         'subscription.activated', 'payment.completed',
         'announcement.published', 'chat.message', 'community.reply',
     ];

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { use } from 'react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
@@ -29,6 +29,7 @@ import CourseGroupsManager from '@/components/course/course-groups';
 import { DuplicateDialog, type DuplicateKind } from '@/components/content/duplicate-dialog';
 import { uploadVideoDirect } from '@/lib/tus-upload';
 import { stableIdempotencyKey } from '@/lib/video-upload-queue';
+import { moveLessonBy, moveLessonTo } from '@/lib/lesson-order';
 import { buildLearnUrl } from '@/lib/course-preview';
 import { useUnsavedChangesWarning } from '@/lib/use-unsaved-changes';
 import { getApiErrorMessage } from '@/services/api';
@@ -52,6 +53,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dragLesson, setDragLesson] = useState<string | null>(null);
   const [dragOverLesson, setDragOverLesson] = useState<string | null>(null);
+  const [orderSaving, setOrderSaving] = useState(false);
   const [lesContents, setLesContents] = useState<any[]>([]);
   const [lesContentsLoading, setLesContentsLoading] = useState(false);
   const [contentType, setContentType] = useState<'video' | 'text' | ''>('');
@@ -68,6 +70,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const pointerDragRef = useRef<{ lessonId: string; sectionId: string } | null>(null);
 
   const [dup, setDup] = useState<{ kind: DuplicateKind; id: string; title: string } | null>(null);
 
@@ -195,7 +198,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const saveLesson = async () => {
     if (!les.title.trim()) { toast.error(t('أدخل عنوان الدرس', 'Enter lesson title')); return; }
     try {
-      const body: any = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview, sort_order: lesTarget ? lesTarget.sort_order : undefined };
+      const body: any = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview };
       // Only a video lesson can carry an attached exercise; the id is the SAME
       // exam engine used everywhere else, so no separate grading system exists.
       if (lesTarget && isVideoLesson(lesTarget)) {
@@ -216,53 +219,96 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   };
   const moveLesson = async (l: any, dir: number) => {
     const sec = sections.find((s) => s.id === l.section_id);
-    const list = sec?.lessons || [];
-    const idx = list.findIndex((x: any) => x.id === l.id);
-    const other = list[idx + dir];
-    if (!other) return;
-    try {
-      await fetch(`${API}/lessons/${l.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: other.sort_order }) });
-      await fetch(`${API}/lessons/${other.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: l.sort_order }) });
-      load();
-    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر نقل الدرس', 'Could not move the lesson'))); }
+    if (!sec || orderSaving) return;
+
+    const expectedIds = (sec.lessons || []).map((lesson: any) => lesson.id);
+    const ids = moveLessonBy(expectedIds, l.id, dir < 0 ? -1 : 1);
+    if (ids) await saveLessonOrder(sec.id, ids, expectedIds);
   };
-  const reorderLessons = async (sectionId: string, lessonIds: string[]) => {
+
+  const saveLessonOrder = async (sectionId: string, lessonIds: string[], expectedIds: string[]) => {
+    const previous = sections;
+    const current = sections.find((section) => section.id === sectionId)?.lessons || [];
+    if (lessonIds.length !== current.length || lessonIds.every((id, index) => id === current[index]?.id)) return;
+
+    const sortOrder = new Map(lessonIds.map((lessonId, index) => [lessonId, index + 1]));
+    const optimistic = sections.map((section) => section.id === sectionId
+      ? {
+        ...section,
+        lessons: lessonIds
+          .map((lessonId) => section.lessons.find((lesson: any) => lesson.id === lessonId))
+          .filter(Boolean)
+          .map((lesson: any) => ({ ...lesson, sort_order: sortOrder.get(lesson.id) })),
+      }
+      : section);
+    setSections(optimistic);
+    setOrderSaving(true);
+
     try {
-      const res = await fetch(`${API}/lessons/reorder`, { method: 'POST', headers: headers(), body: JSON.stringify({ section_id: sectionId, lesson_ids: lessonIds }) });
-      if (!res.ok) throw new Error();
+      const res = await fetch(`${API}/lessons/reorder`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ section_id: sectionId, lesson_ids: lessonIds, expected_lesson_ids: expectedIds }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.status === 409) {
+          throw new Error(t('تغيّر ترتيب الدروس في تبويب آخر — جارٍ تحميل الترتيب الحالي.', 'Lesson order changed elsewhere — reloading the latest order.'));
+        }
+        throw new Error(data?.message || t('فشل حفظ الترتيب', 'Failed to save order'));
+      }
       toast.success(t('تم حفظ ترتيب الدروس', 'Lesson order saved'));
-    } catch { toast.error(t('فشل حفظ الترتيب', 'Failed to save order')); load(); }
+    } catch (error: any) {
+      setSections(previous);
+      toast.error(error?.message || t('فشل حفظ الترتيب — أُعيد الترتيب السابق', 'Could not save order — the previous order was restored'));
+      void load();
+    } finally {
+      setOrderSaving(false);
+    }
   };
-  const onLessonDragStart = (e: DragEvent, l: any) => {
-    setDragLesson(l.id);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', l.id);
-  };
-  const onLessonDragOver = (e: DragEvent, target: any) => {
-    e.preventDefault();
-    if (dragLesson && dragLesson !== target.id) setDragOverLesson(target.id);
-  };
-  const onLessonDrop = async (e: DragEvent, target: any) => {
-    e.preventDefault();
-    const fromId = dragLesson;
+  const finishPointerDrag = async (clientX: number, clientY: number) => {
+    const active = pointerDragRef.current;
+    if (!active) return;
+    pointerDragRef.current = null;
+
+    const target = document.elementFromPoint?.(clientX, clientY)?.closest<HTMLElement>('[data-lesson-row]');
+    const targetId = target?.dataset.sectionId === active.sectionId ? target.dataset.lessonRow : null;
     setDragLesson(null);
     setDragOverLesson(null);
-    if (!fromId || fromId === target.id) return;
-    const next = sections.map((s) => {
-      if (s.id !== target.section_id) return s;
-      const list = s.lessons || [];
-      const from = list.findIndex((x: any) => x.id === fromId);
-      const to = list.findIndex((x: any) => x.id === target.id);
-      if (from === -1 || to === -1) return s;
-      const arr = [...list];
-      const [moved] = arr.splice(from, 1);
-      arr.splice(to, 0, moved);
-      return { ...s, lessons: arr };
-    });
-    const sec = next.find((s: any) => s.id === target.section_id);
-    const ids = (sec?.lessons || []).map((x: any) => x.id);
-    setSections(next);
-    if (ids.length) await reorderLessons(target.section_id, ids);
+
+    const section = sections.find((item) => item.id === active.sectionId);
+    const expectedIds = (section?.lessons || []).map((lesson: any) => lesson.id);
+    const ids = section && targetId
+      ? moveLessonTo(expectedIds, active.lessonId, targetId)
+      : null;
+    if (ids) await saveLessonOrder(active.sectionId, ids, expectedIds);
+  };
+
+  const onPointerDragStart = (event: ReactPointerEvent<HTMLButtonElement>, lesson: any) => {
+    if (orderSaving || pointerDragRef.current || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    pointerDragRef.current = { lessonId: lesson.id, sectionId: lesson.section_id };
+    setDragLesson(lesson.id);
+    setDragOverLesson(lesson.id);
+  };
+  const onPointerDragMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = pointerDragRef.current;
+    if (!active) return;
+
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-lesson-row]');
+    if (target?.dataset.sectionId === active.sectionId) {
+      setDragOverLesson(target.dataset.lessonRow || null);
+    }
+  };
+  const onLessonPointerEnter = (event: ReactPointerEvent<HTMLDivElement>, lesson: any) => {
+    const active = pointerDragRef.current;
+    if (active && active.sectionId === lesson.section_id) {
+      setDragOverLesson(lesson.id);
+    }
+  };
+  const clearLessonDrag = () => {
+    pointerDragRef.current = null;
+    setDragLesson(null);
+    setDragOverLesson(null);
   };
 
   // ─── Lesson content (video / PDF / audio / text / files) ─────
@@ -371,7 +417,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     if (!file || videoUploading) return;
     // مفتاح حتمي مشتق من الملف نفسه: نفس الملف = نفس المفتاح → لا تكرار
     // ولا احتساب مساحة مرتين، وإن أعيد الاختيار يمكن استئناف الرفع.
-    const uploadKey = stableIdempotencyKey(file);
+    const currentVideo = lesContents.find((content: any) => content.content_type === 'video');
+    const uploadKey = `${stableIdempotencyKey(file)}-${lesTarget.id}-${currentVideo?.id || 'new'}`;
     const tid = localStorage.getItem('tenant_id') || '';
     setVideoUploading(true);
     setVideoUploadProgress(0);
@@ -383,7 +430,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const res = await fetch(`${API}/teacher/media/resumable-ticket`, {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ lesson_id: lesTarget.id, file_size: file.size, title: file.name.replace(/\.[^.]+$/, ''), original_filename: file.name, mime_type: file.type || 'video/mp4', idempotency_key: uploadKey }),
+        body: JSON.stringify({
+          lesson_id: lesTarget.id,
+          replace_content_id: currentVideo?.id || null,
+          file_size: file.size,
+          title: file.name.replace(/\.[^.]+$/, ''),
+          original_filename: file.name,
+          mime_type: file.type || 'video/mp4',
+          idempotency_key: uploadKey,
+        }),
       });
       const d = await res.json().catch(() => null);
       if (!res.ok) {
@@ -420,13 +475,15 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         headers: headers(),
         body: JSON.stringify({ asset_id: upload.asset_id, lesson_id: lesTarget.id }),
       });
+      const completion = await cr.json().catch(() => null);
       if (!cr.ok) {
-        const cd = await cr.json().catch(() => null);
-        throw new Error(cd?.message || t('فشل إتمام الرفع', 'Failed to complete upload'));
+        throw new Error(completion?.message || t('فشل إتمام الرفع', 'Failed to complete upload'));
       }
 
       setVideoUploadProgress(100);
-      toast.success(t('تم رفع الفيديو بنجاح — قيد المعالجة الآن', 'Video uploaded — processing now'));
+      toast.success(currentVideo
+        ? t('جُهِّز الفيديو الجديد للمعالجة؛ سيبقى الفيديو الحالي يعمل حتى يكتمل الاستبدال.', 'The new video is processing; the current video stays active until replacement is ready.')
+        : t('تم رفع الفيديو بنجاح — قيد المعالجة الآن', 'Video uploaded — processing now'));
       resetContentForm();
       loadLesContents(lesTarget.id);
     } catch (err: any) {
@@ -489,6 +546,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     if (['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext)) return t('فيديو', 'Video');
     return t('ملف', 'File');
   };
+  const hasVideoContent = lesContents.some((content: any) => content.content_type === 'video');
 
   // ─── Exams ─────────────────────────────────────
   const openExamFromSection = async (sid: string) => {
@@ -629,7 +687,12 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const openExamViewer = (e: any) => setViewerExam(e);
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div
+      className="space-y-6 max-w-6xl mx-auto"
+      onPointerMove={onPointerDragMove}
+      onPointerUp={(event) => void finishPointerDrag(event.clientX, event.clientY)}
+      onPointerCancel={clearLessonDrag}
+    >
       {/* The whole course content is hidden while an exam is being edited, so
           the exam editor takes over the content area while the main sidebar
           stays visible and usable. */}
@@ -686,6 +749,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           action={<Button onClick={openSecAdd} className="gap-2 rounded-full"><Plus className="h-4 w-4" />{t('إضافة وحدة', 'Add unit')}</Button>} />
       ) : (
         <div className="space-y-6">
+          {orderSaving && <p className="sr-only" role="status">{t('جار حفظ ترتيب الدروس', 'Saving lesson order')}</p>}
           {sections.map((s, si) => {
             const secLessons = s.lessons || [];
             const secEx = sectionExams(s.id);
@@ -728,9 +792,31 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       // ── بطاقة البث المباشر ──
                       if (isLive) {
                         return (
-                          <div key={l.id} className="rounded-xl border border-rose-200 bg-rose-50/50 p-4 space-y-3">
+                          <div
+                            key={l.id}
+                            data-lesson-row={l.id}
+                            data-section-id={l.section_id}
+                            onPointerEnter={(e) => onLessonPointerEnter(e, l)}
+                            className={cn(
+                              'rounded-xl border p-4 space-y-3 transition-colors',
+                              dragLesson === l.id && 'opacity-50',
+                              dragOverLesson === l.id && dragLesson !== l.id ? 'border-teal-400 ring-1 ring-teal-200' : 'border-rose-200',
+                              'bg-rose-50/50',
+                            )}
+                          >
                             <div className="flex items-center gap-3">
-                              <GripVertical className="h-4 w-4 text-rose-300 shrink-0" />
+                              <button
+                                type="button"
+                                data-lesson-drag-handle={l.id}
+                                onPointerDown={(e) => onPointerDragStart(e, l)}
+                                onPointerCancel={clearLessonDrag}
+                                disabled={orderSaving}
+                                className="touch-none cursor-grab rounded p-1 text-rose-400 hover:bg-white/70 active:cursor-grabbing disabled:cursor-wait"
+                                aria-label={t(`اسحب لإعادة ترتيب ${l.title}`, `Drag to reorder ${l.title}`)}
+                                title={t('اسحب لإعادة ترتيب الدرس', 'Drag to reorder lesson')}
+                              >
+                                <GripVertical className="h-4 w-4 shrink-0" aria-hidden="true" />
+                              </button>
                               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-100 shrink-0"><Radio className="h-4 w-4 text-rose-600" /></span>
                               <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-sm truncate">{l.title}</p>
@@ -744,6 +830,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                                 <Button size="sm" variant="ghost" className="rounded-full text-xs text-rose-700"><Eye className="h-3.5 w-3.5" /></Button>
                               </a>
                               <a href="/teacher/live"><Button size="sm" className="gap-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white"><Radio className="h-3.5 w-3.5" />{t('إدارة الحصة', 'Manage session')}</Button></a>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={orderSaving || li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={orderSaving || li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
                               <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
                             <div className="flex items-center gap-2">
@@ -761,8 +849,31 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
                       // ── بطاقة الدرس العادي ──
                       return (
-                        <div key={l.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3 hover:bg-slate-50/60 transition">
-                          <GripVertical className="h-4 w-4 text-gray-300 shrink-0" />
+                        <div
+                          key={l.id}
+                          data-lesson-row={l.id}
+                          data-section-id={l.section_id}
+                          onPointerEnter={(e) => onLessonPointerEnter(e, l)}
+                          className={cn(
+                            'flex items-center gap-3 rounded-xl border p-3 transition',
+                            dragLesson === l.id && 'opacity-50',
+                            dragOverLesson === l.id && dragLesson !== l.id
+                              ? 'border-teal-400 bg-teal-50/60 ring-1 ring-teal-200'
+                              : 'border-slate-100 hover:bg-slate-50/60',
+                          )}
+                        >
+                          <button
+                            type="button"
+                            data-lesson-drag-handle={l.id}
+                            onPointerDown={(e) => onPointerDragStart(e, l)}
+                            onPointerCancel={clearLessonDrag}
+                            disabled={orderSaving}
+                            className="touch-none cursor-grab rounded p-1 text-gray-400 hover:bg-white active:cursor-grabbing disabled:cursor-wait"
+                            aria-label={t(`اسحب لإعادة ترتيب ${l.title}`, `Drag to reorder ${l.title}`)}
+                            title={t('اسحب لإعادة ترتيب الدرس', 'Drag to reorder lesson')}
+                          >
+                            <GripVertical className="h-4 w-4 shrink-0" aria-hidden="true" />
+                          </button>
                           <span className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${hasContent ? 'bg-teal-50' : 'bg-gray-100'}`}>
                             {hasContent ? <Video className="h-4 w-4 text-teal-600" /> : <FileText className="h-4 w-4 text-gray-400" />}
                           </span>
@@ -780,8 +891,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                             <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700"><Eye className="h-3.5 w-3.5" /></Button>
                           </a>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => setDup({ kind: 'lesson', id: l.id, title: l.title })} aria-label={t('إنشاء نسخة من الدرس', 'Duplicate lesson')} title={t('إنشاء نسخة من الدرس', 'Duplicate lesson')}><Copy className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={orderSaving || li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={orderSaving || li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       );
@@ -912,13 +1023,29 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     {(c.content_type === 'video' || c.content_type === 'text') && (
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-teal-700" onClick={() => openContentEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
                     )}
+                    {c.content_type === 'video' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1.5 rounded-full text-xs"
+                        onClick={() => videoInputRef.current?.click()}
+                        disabled={videoUploading}
+                        aria-label={t('استبدال الفيديو', 'Replace video')}
+                      >
+                        {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}
+                        {t('استبدال الفيديو', 'Replace video')}
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => removeContent(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                   </div>
                 ))}
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => videoInputRef.current?.click()} disabled={videoUploading}>
-                    {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}{t('رفع فيديو', 'Upload video')}
-                  </Button>
+                  {!hasVideoContent && (
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => videoInputRef.current?.click()} disabled={videoUploading}>
+                      {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}{t('رفع فيديو', 'Upload video')}
+                    </Button>
+                  )}
                   <input ref={videoInputRef} type="file" className="hidden" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" onChange={onVideoSelected} />
                   {videoUploading && (
                     <div className="flex w-full items-center gap-2">

@@ -54,7 +54,10 @@ beforeEach(() => {
 describe('Teacher exams review page', () => {
   it('lists every attempt of the exam (not only the pending ones) with the real duration', async () => {
     vi.stubGlobal('fetch', routeFetch({
-      '/exams/e1/attempts': () => ok({ attempts: [ATTEMPT] }),
+      '/exams/e1/attempts': () => ok({
+        context: { course: { title: 'فيزياء' }, lesson: { title: 'درس الكثافة' } },
+        attempts: [ATTEMPT],
+      }),
       '/exams': () => ok({ exams: [{ id: 'e1', title: 'اختبار الوحدة' }] }),
     }));
 
@@ -65,13 +68,18 @@ describe('Teacher exams review page', () => {
     expect(screen.getByText(/#2/)).toBeInTheDocument();
     // The actual duration (125s) is shown as 2:05, not the remaining time.
     expect(screen.getByText(/المدة الفعلية: 2:05/)).toBeInTheDocument();
+    expect(screen.getByText('فيزياء · درس الكثافة')).toBeInTheDocument();
+    expect(screen.getByText('بانتظار التصحيح')).toBeInTheDocument();
   });
 
   it('opens a review that renders the student answer and the skill performance', async () => {
     vi.stubGlobal('fetch', routeFetch({
       '/exams/e1/attempts': () => ok({ attempts: [ATTEMPT] }),
       '/exams': () => ok({ exams: [{ id: 'e1', title: 'اختبار الوحدة' }] }),
-      '/exam-attempts/a1': () => ok({ attempt: ATTEMPT }),
+      '/exam-attempts/a1': () => ok({
+        attempt: ATTEMPT,
+        context: { course: { title: 'فيزياء' }, lesson: { title: 'درس الكثافة' } },
+      }),
     }));
 
     render(<TeacherExamsPage />);
@@ -81,8 +89,25 @@ describe('Teacher exams review page', () => {
 
     await waitFor(() => expect(screen.getByText('اشرح قانون الكثافة')).toBeInTheDocument());
     expect(screen.getByText('شرح الطالب هنا')).toBeInTheDocument();
+    expect(screen.getByText(/درس الكثافة/)).toBeInTheDocument();
     // Skill performance derived from the real graded answers.
     expect(screen.getByText('الكثافة')).toBeInTheDocument();
     expect(screen.getAllByText(/40%/).length).toBeGreaterThan(0);
+  });
+
+  it('labels completed manual grading separately from automatic grading and shows result context', async () => {
+    const autoAttempt = { ...ATTEMPT, needs_review: false, reviewed_at: null };
+    vi.stubGlobal('fetch', routeFetch({
+      '/exams/e1/attempts': () => ok({
+        context: { course: { title: 'فيزياء' }, lesson: { title: 'درس الكثافة' } },
+        attempts: [autoAttempt],
+      }),
+      '/exams': () => ok({ exams: [{ id: 'e1', title: 'تمرين الكثافة' }] }),
+    }));
+
+    render(<TeacherExamsPage />);
+
+    expect(await screen.findByText('فيزياء · درس الكثافة')).toBeInTheDocument();
+    expect(screen.getByText('تصحيح تلقائي')).toBeInTheDocument();
   });
 });

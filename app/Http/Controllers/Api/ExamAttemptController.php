@@ -10,8 +10,10 @@ use App\Models\Exam;
 use App\Models\ExamAnswer;
 use App\Models\ExamAttempt;
 use App\Models\ExamQuestion;
+use App\Models\Lesson;
 use App\Models\Question;
 use App\Services\ExamPaper;
+use App\Services\NotificationService;
 use App\Services\StudentGamificationService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
@@ -56,6 +58,7 @@ class ExamAttemptController extends Controller
             ->paginate($this->perPage($request));
 
         return response()->json([
+            'context' => $this->examContext($exam),
             'attempts' => ExamAttemptResource::collection($attempts->items()),
             'pagination' => [
                 'current_page' => $attempts->currentPage(),
@@ -239,7 +242,7 @@ class ExamAttemptController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $attempt = ExamAttempt::with(['exam', 'student', 'answers.question.options'])->findOrFail($id);
+        $attempt = ExamAttempt::with(['exam.course', 'exam.section', 'student', 'answers.question.options'])->findOrFail($id);
 
         $user = request()->user();
         $isStaff = false;
@@ -275,7 +278,32 @@ class ExamAttemptController extends Controller
 
         return response()->json([
             'attempt' => new ExamAttemptResource($attempt),
+            'context' => $this->examContext($attempt->exam),
         ]);
+    }
+
+    /**
+     * Shared, tenant-scoped context for teacher result screens. Lesson links are
+     * stored in lesson metadata so no duplicate exercise/attempt relation exists.
+     */
+    private function examContext(Exam $exam): array
+    {
+        $exam->loadMissing(['course', 'section']);
+        $lessons = Lesson::withoutTenant()
+            ->where('tenant_id', $exam->tenant_id)
+            ->where('metadata->exercise_exam_id', $exam->id)
+            ->orderBy('sort_order')
+            ->get(['id', 'title'])
+            ->map(fn (Lesson $lesson) => ['id' => $lesson->id, 'title' => $lesson->title])
+            ->values();
+
+        return [
+            'exam' => ['id' => $exam->id, 'title' => $exam->title],
+            'course' => $exam->course ? ['id' => $exam->course->id, 'title' => $exam->course->title] : null,
+            'section' => $exam->section ? ['id' => $exam->section->id, 'title' => $exam->section->title] : null,
+            'lessons' => $lessons,
+            'lesson' => $lessons->first(),
+        ];
     }
 
     public function start(string $examId): JsonResponse
@@ -544,11 +572,31 @@ class ExamAttemptController extends Controller
 
     public function submit(SubmitExamRequest $request, string $examId, string $attemptId): JsonResponse
     {
+        $reviewNotification = null;
+        $response = DB::transaction(function () use ($request, $examId, $attemptId, &$reviewNotification) {
+            return $this->submitWithinTransaction($request, $examId, $attemptId, $reviewNotification);
+        });
+
+        if ($reviewNotification) {
+            $this->notifyReviewRequired($reviewNotification);
+        }
+
+        return $response;
+    }
+
+    private function submitWithinTransaction(
+        SubmitExamRequest $request,
+        string $examId,
+        string $attemptId,
+        ?array &$reviewNotification,
+    ): JsonResponse
+    {
         $exam = Exam::findOrFail($examId);
         $attempt = ExamAttempt::where('exam_id', $exam->id)
             ->where('id', $attemptId)
             ->where('user_id', $request->user()->id)
             ->where('status', 'in_progress')
+            ->lockForUpdate()
             ->firstOrFail();
 
         if ($exam->starts_at && now()->lt($exam->starts_at)) {
@@ -685,6 +733,17 @@ class ExamAttemptController extends Controller
             'metadata' => $metadata,
         ]);
 
+        if ($needsReview) {
+            $reviewNotification = [
+                'tenant_id' => (string) $exam->tenant_id,
+                'exam_id' => (string) $exam->id,
+                'attempt_id' => (string) $attempt->id,
+                'course_id' => (string) $exam->course_id,
+                'exam_title' => (string) $exam->title,
+                'student_name' => (string) $request->user()->name,
+            ];
+        }
+
         $attemptsUsed = $this->scopeToTerm(
             ExamAttempt::where('exam_id', $exam->id)
                 ->where('user_id', $request->user()->id)
@@ -717,6 +776,42 @@ class ExamAttemptController extends Controller
                 'attempts_left' => $attemptsLeft,
             ],
         ]);
+    }
+
+    /**
+     * Fan out only after the submission transaction commits. A notification
+     * failure must never undo a valid student submission.
+     */
+    private function notifyReviewRequired(array $context): void
+    {
+        try {
+            $notifications = app(NotificationService::class);
+            $teachers = $notifications->resolveAudience((string) $context['tenant_id'], 'teachers');
+
+            if ($teachers->isEmpty()) {
+                return;
+            }
+
+            $notifications->dispatch(
+                notifiable: $teachers,
+                type: 'exam.review_required',
+                title: 'Student attempt needs review',
+                body: $context['student_name'].' submitted an exercise that needs manual review: '.$context['exam_title'].'.',
+                tenantId: (string) $context['tenant_id'],
+                data: [
+                    'exam_id' => $context['exam_id'],
+                    'attempt_id' => $context['attempt_id'],
+                    'course_id' => $context['course_id'],
+                    'action_url' => '/teacher/exams',
+                ],
+            );
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('exam.review_notification_failed', [
+                'tenant_id' => $context['tenant_id'],
+                'attempt_id' => $context['attempt_id'],
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
