@@ -218,6 +218,139 @@ class AdminController extends Controller
     }
 
     /**
+     * Super Admin FREE-TRIAL extension, for one teacher only.
+     *
+     * Deliberately separate from `subscriptionExtend` (the universal
+     * administrative access grant): here we move the trial's own
+     * `trial_ends_at` forward and, when the trial had lapsed, put the row
+     * back into `trialing` so access resumes. It never converts the teacher
+     * to a paid plan, never creates an invoice/charge, and never touches a
+     * paid subscription (a provider-owned mirror or an active paid period).
+     */
+    public function subscriptionExtendTrial(Request $request, string $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'days' => 'required|integer|min:1|max:3650',
+            'request_id' => 'nullable|string|max:80',
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $days = (int) $validated['days'];
+        $requestId = $validated['request_id'] ?? null;
+        $reason = $validated['reason'] ?? null;
+        $admin = $request->user();
+
+        $outcome = DB::transaction(function () use ($id, $days, $requestId, $reason, $admin, $request) {
+            // Row lock: concurrent double-clicks serialise instead of racing.
+            $sub = TenantSubscription::withoutTenant()->lockForUpdate()->findOrFail($id);
+            $tenantId = $sub->tenant_id;
+
+            // Never touch a paid subscription: a provider-owned mirror, a
+            // genuinely active paid period, and a row with no trial window
+            // at all (e.g. a canceled paid legacy row) are all off-limits.
+            $providerOwned = $sub->billing_source === 'freemius' || $sub->fs_license_id !== null;
+            $hasTrial = $sub->trial_ends_at !== null || $sub->status === 'trialing';
+            if ($providerOwned || $sub->status === 'active' || ! $hasTrial) {
+                return ['refused' => true];
+            }
+
+            $metadata = $sub->metadata ?? [];
+            $grants = array_values((array) ($metadata['trial_grants'] ?? []));
+
+            // Idempotency #1: an identical request_id was already applied.
+            if ($requestId !== null) {
+                foreach ($grants as $grant) {
+                    if (($grant['request_id'] ?? null) === $requestId) {
+                        return ['sub' => $sub, 'already_applied' => true, 'reactivated' => false];
+                    }
+                }
+            }
+
+            // Idempotency #2 (no request_id): an identical extension by the
+            // same admin within a few seconds is a retry, not a new grant.
+            $lastGrant = $grants !== [] ? $grants[array_key_last($grants)] : null;
+            if ($requestId === null && is_array($lastGrant)
+                && (int) ($lastGrant['days'] ?? 0) === $days
+                && ($lastGrant['by'] ?? null) === $admin?->id
+                && isset($lastGrant['at'])) {
+                $seconds = now()->timestamp - Carbon::parse($lastGrant['at'])->timestamp;
+                if ($seconds >= 0 && $seconds < 10) {
+                    return ['sub' => $sub, 'already_applied' => true, 'reactivated' => false];
+                }
+            }
+
+            // An active trial keeps every remaining day (base = its current
+            // end); a lapsed trial starts a fresh window from now.
+            $previousTrialEnd = $sub->trial_ends_at?->toIso8601String();
+            $trialLapsed = $sub->trial_ends_at === null || $sub->trial_ends_at->isPast();
+            $base = $trialLapsed ? now() : $sub->trial_ends_at->copy();
+            $newTrialEnd = $base->addDays($days);
+
+            $reactivated = $trialLapsed || $sub->status !== 'trialing';
+
+            $grants[] = [
+                'request_id' => $requestId,
+                'days' => $days,
+                'by' => $admin?->id,
+                'by_name' => $admin?->name,
+                'at' => now()->toIso8601String(),
+                'previous_trial_ends_at' => $previousTrialEnd,
+                'new_trial_ends_at' => $newTrialEnd->toIso8601String(),
+                'reactivated' => $reactivated,
+                'reason' => $reason,
+            ];
+
+            $metadata['trial_grants'] = $grants;
+
+            // Only the trial fields move: the plan, its limits, any real
+            // `ends_at` and the billing source are left untouched. A lapsed
+            // trial is simply re-opened as `trialing`.
+            $sub->update([
+                'trial_ends_at' => $newTrialEnd,
+                'status' => 'trialing',
+                'cancelled_at' => null,
+                'metadata' => $metadata,
+            ]);
+
+            // Immediate effect for an already-connected teacher.
+            PlanEngine::bumpVersion();
+
+            AuditLogger::log($request, 'admin.subscription_trial_extended', 'tenant_subscription', $sub->id, [
+                'tenant_id' => $tenantId,
+                'days' => $days,
+                'previous_trial_ends_at' => $previousTrialEnd,
+                'new_trial_ends_at' => $newTrialEnd->toIso8601String(),
+                'reactivated' => $reactivated,
+                'request_id' => $requestId,
+                'reason' => $reason,
+            ]);
+
+            return ['sub' => $sub->fresh(), 'already_applied' => false, 'reactivated' => $reactivated];
+        });
+
+        if (($outcome['refused'] ?? false) === true) {
+            return response()->json([
+                'message' => 'This teacher has a paid or active subscription — trial extension does not apply. Use “Extend access” instead.',
+                'code' => 'not_a_trial',
+            ], 422);
+        }
+
+        /** @var TenantSubscription $sub */
+        $sub = $outcome['sub'];
+
+        return response()->json([
+            'message' => $outcome['already_applied']
+                ? 'This trial extension was already applied.'
+                : 'Free trial extended — no charge and no plan change.',
+            'already_applied' => $outcome['already_applied'],
+            'reactivated' => (bool) ($outcome['reactivated'] ?? false),
+            'trial_ends_at' => $sub->trial_ends_at?->toIso8601String(),
+            'subscription' => $sub->loadMissing('tenant', 'plan'),
+            'access' => $this->accessInfo($sub->tenant_id),
+        ]);
+    }
+
+    /**
      * The tenant's current effective access end (max of every source that can
      * grant access): an admin grant, an active Freemius entitlement's
      * expiration, and any still-running legacy subscription. Null when nothing
@@ -303,11 +436,42 @@ class AdminController extends Controller
 
         $adminActive = (bool) ($adminRow && $adminRow->admin_ends_at && $adminRow->admin_ends_at->isFuture());
 
+        // The FREE-TRIAL window (if any). It lives on the local row that
+        // carries `trial_ends_at` and is NOT owned by the payment provider —
+        // a paid Freemius row is never a trial and must never be touched by
+        // trial extension.
+        $trialRow = TenantSubscription::withoutTenant()
+            ->where('tenant_id', $tenantId)
+            ->whereNotNull('trial_ends_at')
+            ->where(function ($q) {
+                $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
+            })
+            ->whereNull('fs_license_id')
+            ->orderByDesc('trial_ends_at')
+            ->first();
+
+        $trialEndsAt = $trialRow?->trial_ends_at;
+        $trialDaysLeft = null;
+        if ($trialEndsAt instanceof \DateTimeInterface) {
+            $trialDaysLeft = (int) max(0, (int) ceil(($trialEndsAt->getTimestamp() - now()->getTimestamp()) / 86400));
+        }
+
+        // Trial extension only applies while access is not governed by a paid
+        // provider subscription and the row is not already a paid `active`
+        // period (an active row has no trial window to extend).
+        $canExtendTrial = $trialRow !== null
+            && $state['source'] !== SubscriptionState::SOURCE_FREEMIUS
+            && $trialRow->status !== 'active';
+
         return [
             'access_active' => $state['source'] !== SubscriptionState::SOURCE_NONE,
             'access_source' => $state['source'],
             'access_ends_at' => $endsAt instanceof \DateTimeInterface ? $endsAt->format(\DateTimeInterface::ATOM) : null,
             'days_left' => $daysLeft,
+            'trial_ends_at' => $trialEndsAt instanceof \DateTimeInterface ? $trialEndsAt->format(\DateTimeInterface::ATOM) : null,
+            'trial_days_left' => $trialDaysLeft,
+            'trial_active' => (bool) ($trialEndsAt instanceof \DateTimeInterface && $trialEndsAt->isFuture()),
+            'can_extend_trial' => $canExtendTrial,
             'subscription_id' => $state['subscription_id'],
             'admin_extension' => $adminActive,
             'admin_ends_at' => $adminRow?->admin_ends_at?->toIso8601String(),

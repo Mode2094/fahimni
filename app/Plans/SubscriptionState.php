@@ -134,12 +134,21 @@ class SubscriptionState
             });
 
         if ($subscription) {
+            // A trialing row runs out at `trial_ends_at` (its `ends_at` is
+            // normally null until it becomes a paid period). Reporting the
+            // trial end here keeps the admin UI, the plan engine and the
+            // teacher dashboard honest about when access actually lapses —
+            // and stops a trial from being mistaken for a lifetime grant.
+            $legacyEnd = $subscription->status === 'trialing' && $subscription->trial_ends_at
+                ? $subscription->trial_ends_at
+                : $subscription->ends_at;
+
             $candidates[] = [
                 'source' => self::SOURCE_LEGACY,
                 'plan_id' => $subscription->plan_id,
                 'status' => $subscription->status,
                 'billing_cycle' => $subscription->billing_cycle,
-                'ends_at' => $subscription->ends_at,
+                'ends_at' => $legacyEnd,
                 'trial_ends_at' => $subscription->trial_ends_at,
                 'subscription_id' => $subscription->id,
                 'entitlement_id' => null,

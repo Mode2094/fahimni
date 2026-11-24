@@ -413,6 +413,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('subscriptions', [AdminController::class, 'subscriptions']);
                 Route::post('subscriptions/{subscription}/status', [AdminController::class, 'subscriptionStatus']);
                 Route::post('subscriptions/{subscription}/extend', [AdminController::class, 'subscriptionExtend']);
+                Route::post('subscriptions/{subscription}/extend-trial', [AdminController::class, 'subscriptionExtendTrial']);
                 Route::post('subscriptions/{subscription}/plan', [AdminController::class, 'subscriptionPlan']);
 
                 Route::get('students', [AdminController::class, 'students']);
