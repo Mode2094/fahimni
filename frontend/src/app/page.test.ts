@@ -16,6 +16,7 @@ describe('Landing page metadata (app/page.tsx)', () => {
     const meta = await generateMetadata();
 
     expect(meta.title).toContain('منصة تعليمية');
+    expect(meta.title).toContain(SITE_NAME);
     expect(meta.description).toContain('فهمني');
     expect(meta.alternates?.canonical).toBe('/');
   });
