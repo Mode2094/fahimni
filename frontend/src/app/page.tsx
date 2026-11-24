@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const logo = await platformLogo();
   const ogImage = logo || absoluteUrl(DEFAULT_OG_IMAGE);
   return {
-    title: 'منصة تعليمية لكل معلم — أنشئ منصتك وانشر دوراتك أونلاين',
+    title: `${SITE_NAME} — منصة تعليمية لكل معلم، أنشئ منصتك وانشر دوراتك أونلاين`,
     description:
       'منصة فهمني — أنشئ منصتك التعليمية خلال دقائق، انشر الدورات المسجلة، أدر الطلاب والامتحانات، بثّ الحصص المباشرة واحصل على موقعك الخاص. منصة تعليمية متكاملة للمعلمين المستقلين.',
     alternates: { canonical: '/' },
