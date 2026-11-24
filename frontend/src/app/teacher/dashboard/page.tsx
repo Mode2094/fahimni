@@ -67,6 +67,7 @@ export default function TeacherDashboard() {
   const [platform, setPlatform] = useState<{ url: string; slug: string; customDomain: string | null; verified: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [registrationLinkCopied, setRegistrationLinkCopied] = useState(false);
   // Which data sources failed to load — drives the honest error notice instead
   // of the old "?? 0" fallbacks that showed a fake zero on a network error.
   const [planFailed, setPlanFailed] = useState(false);
@@ -211,6 +212,17 @@ export default function TeacherDashboard() {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
       toast.success(t('تم نسخ رابط منصتك', 'Platform link copied'));
+    } catch { toast.error(t('تعذر النسخ', 'Copy failed')); }
+  };
+
+  const registrationUrl = platform?.url ? `${platform.url.replace(/\/+$/, '')}/register` : '';
+  const copyRegistrationLink = async () => {
+    if (!registrationUrl) return;
+    try {
+      await navigator.clipboard.writeText(registrationUrl);
+      setRegistrationLinkCopied(true);
+      setTimeout(() => setRegistrationLinkCopied(false), 2000);
+      toast.success(t('تم نسخ رابط تسجيل الطلاب', 'Student registration link copied'));
     } catch { toast.error(t('تعذر النسخ', 'Copy failed')); }
   };
 
@@ -497,6 +509,24 @@ export default function TeacherDashboard() {
                 </div>
               ) : (
                 <p className="mt-2 text-xs text-amber-600">{t('لم يُحدَّد رابط منصتك بعد — حدّده من إعدادات المنصة.', 'Your platform link is not set yet — set it from platform settings.')}</p>
+              )}
+              {registrationUrl && (
+                <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3" data-testid="student-registration-link">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-700">{t('رابط تسجيل الطلاب', 'Student registration link')}</p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 shrink-0 gap-1.5 text-xs"
+                      onClick={copyRegistrationLink}
+                      aria-label={t('نسخ رابط تسجيل الطلاب', 'Copy student registration link')}
+                    >
+                      {registrationLinkCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                      {registrationLinkCopied ? t('تم النسخ', 'Copied') : t('نسخ', 'Copy')}
+                    </Button>
+                  </div>
+                  <p className="mt-1 truncate font-mono text-xs text-slate-600" dir="ltr">{registrationUrl}</p>
+                </div>
               )}
             </div>
           </div>

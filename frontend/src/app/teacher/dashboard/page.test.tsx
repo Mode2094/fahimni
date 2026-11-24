@@ -253,6 +253,21 @@ describe('Teacher Dashboard', () => {
     expect(container.querySelector('a[href="/teacher/settings"]')).toBeTruthy();
   });
 
+  it('shows and copies the routed student registration link', async () => {
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    vi.stubGlobal('fetch', routeFetch({
+      ...FULL_SUCCESS,
+      '/teacher/domain': () => ok({ slug: 'sami', page_url: 'https://fahimni.me/t/sami', domain: null, verified: false }),
+    }));
+
+    render(<TeacherDashboard />);
+
+    expect(await screen.findByTestId('student-registration-link')).toHaveTextContent('/t/sami/register');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'نسخ رابط تسجيل الطلاب' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://fahimni.me/t/sami/register'));
+  });
+
   it('lays out quick actions and a 2×2 statistics grid that links to real pages', async () => {
     vi.stubGlobal('fetch', routeFetch(FULL_SUCCESS));
 

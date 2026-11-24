@@ -40,6 +40,14 @@ class GoogleAuthController extends Controller
         $role = in_array($request->query('role', 'teacher'), ['teacher', 'student', 'admin'], true)
             ? (string) $request->query('role')
             : 'teacher';
+        $rawTenantSlug = $request->query('tenant_slug');
+        $tenantSlug = $role === 'student' && is_string($rawTenantSlug)
+            ? Str::limit(trim($rawTenantSlug), 255, '')
+            : null;
+        $rawRedirectTo = $request->query('redirect_to');
+        $redirectTo = $role === 'student' && is_string($rawRedirectTo)
+            ? $this->safeInternalRedirect($rawRedirectTo)
+            : null;
 
         // Fail fast (and honestly) when OAuth is not configured: Socialite
         // happily builds a URL with an empty client_id, and Google then shows
@@ -63,6 +71,8 @@ class GoogleAuthController extends Controller
             'role' => $role,
             'name' => $name !== '' ? Str::limit($name, 120, '') : null,
             'phone' => $phone !== '' ? Str::limit($phone, 40, '') : null,
+            'tenant_slug' => $tenantSlug,
+            'redirect_to' => $redirectTo,
             'exp' => time() + 600,
             'n' => bin2hex(random_bytes(8)),
         ]);
@@ -106,6 +116,10 @@ class GoogleAuthController extends Controller
         $regData = [
             'name' => $state['name'] ?? null,
             'phone' => $state['phone'] ?? null,
+            'tenant_slug' => is_string($state['tenant_slug'] ?? null) ? $state['tenant_slug'] : null,
+            'redirect_to' => is_string($state['redirect_to'] ?? null)
+                ? $this->safeInternalRedirect($state['redirect_to'])
+                : null,
         ];
 
         // Staff (teacher/admin) identities own a workspace tenant.
@@ -173,10 +187,14 @@ class GoogleAuthController extends Controller
                 // Web session flow: the pending challenge stays server-side.
                 $request->session()->put('auth.2fa_pending', [
                     'user_id' => $user->id,
+                    'tenant_id' => $this->studentTenantId($user, $regData['tenant_slug']),
                     'expires_at' => now()->addMinutes(5)->getTimestamp(),
                 ]);
 
-                return $this->redirectToFrontend($frontend, $role, ['step' => '2fa']);
+                return $this->redirectToFrontend($frontend, $role, [
+                    'step' => '2fa',
+                    'redirect_to' => $regData['redirect_to'],
+                ]);
             }
 
             $pending = bin2hex(random_bytes(16));
@@ -268,16 +286,26 @@ class GoogleAuthController extends Controller
         // A teacher still lacking a phone has no workspace/trial yet: send the
         // browser to the «أكمل بيانات حسابك» step instead of the dashboard.
         $needsProfile = $role === 'teacher' && ! filled($user->phone);
+        $studentTenantId = $this->studentTenantId($user, $regData['tenant_slug']);
 
         // Web browser flow: sign in with an HttpOnly session cookie — the
         // Sanctum token never leaves the server. Mobile keeps using the
         // bearer-token flow of /api/v1/mobile/auth/google.
         if ($request->hasSession()) {
             WebSessionAuth::login($request, $user);
+            if ($studentTenantId) {
+                $request->session()->put('current_tenant_id', $studentTenantId);
+            } else {
+                $request->session()->forget('current_tenant_id');
+            }
 
             return $this->redirectToFrontend($frontend, $role, $needsProfile
                 ? ['step' => 'profile_required']
-                : ['step' => 'done', 'trial_started' => $trialStarted ? '1' : '0']);
+                : [
+                    'step' => 'done',
+                    'trial_started' => $trialStarted ? '1' : '0',
+                    'redirect_to' => $regData['redirect_to'],
+                ]);
         }
 
         $token = $user->createToken('auth-token')->plainTextToken;
@@ -286,7 +314,7 @@ class GoogleAuthController extends Controller
         // to servers, so tokens cannot leak into access logs or Referer.
         $fragment = http_build_query([
             'token' => $token,
-            'tenant_id' => $tenant?->id ?? '',
+            'tenant_id' => $studentTenantId ?? $tenant?->id ?? '',
             'role' => $role,
             'trial_started' => $trialStarted ? '1' : '0',
             'needs_profile_completion' => $needsProfile ? '1' : '0',
@@ -379,6 +407,57 @@ class GoogleAuthController extends Controller
             ->where('status', TeacherInvitation::STATUS_PENDING)
             ->where('expires_at', '>', now())
             ->exists();
+    }
+
+    private function studentTenantId(User $user, ?string $tenantSlug): ?string
+    {
+        if ($user->is_super_admin || $user->hasRole('Teacher')) {
+            return null;
+        }
+
+        if ($tenantSlug !== null && $tenantSlug !== '') {
+            $tenant = Tenant::where('slug', $tenantSlug)->where('status', 'active')->first();
+            if (! $tenant) {
+                return null;
+            }
+
+            return TenantUser::where('tenant_id', $tenant->id)
+                ->where('user_id', $user->id)
+                ->where('role', 'student')
+                ->where('status', 'active')
+                ->exists()
+                    ? (string) $tenant->id
+                    : null;
+        }
+
+        $tenantIds = TenantUser::where('user_id', $user->id)
+            ->where('role', 'student')
+            ->where('status', 'active')
+            ->limit(2)
+            ->pluck('tenant_id');
+
+        return $tenantIds->count() === 1 ? (string) $tenantIds->first() : null;
+    }
+
+    private function safeInternalRedirect(string $candidate): ?string
+    {
+        $candidate = trim($candidate);
+
+        if ($candidate === ''
+            || strlen($candidate) > 512
+            || ! str_starts_with($candidate, '/')
+            || str_starts_with($candidate, '//')
+            || str_starts_with($candidate, '/\\')
+            || preg_match('/[\r\n]/', $candidate)) {
+            return null;
+        }
+
+        $parts = parse_url($candidate);
+        if ($parts === false || isset($parts['scheme']) || isset($parts['host'])) {
+            return null;
+        }
+
+        return $candidate;
     }
 
     /** Postgres unique_violation (23505) or SQLite's UNIQUE constraint error. */

@@ -38,15 +38,31 @@ class MediaService
     public function createVideoUploadTicket(string $tenantId, ?string $userId, array $params): array
     {
         $size = (int) ($params['file_size'] ?? 0);
-        $idempotencyKey = (string) ($params['idempotency_key'] ?? '');
+        $clientIdempotencyKey = (string) ($params['idempotency_key'] ?? '');
+        // The DB key is globally unique. Namespace the browser's stable key by
+        // tenant before storing or looking it up so equal filenames in two
+        // workspaces can never reuse each other's provider asset.
+        $idempotencyKey = $clientIdempotencyKey !== ''
+            ? hash('sha256', $tenantId."\0".$clientIdempotencyKey)
+            : null;
 
         // ── Idempotency: نفس المفتاح = نفس عملية الرفع = نفس الفيديو ──
         // (double click / retry / network replay / StrictMode) لا ينشئ
         // فيديو ثانياً في Bunny — بل يعيد نفس الأصل والتذكرة.
-        if ($idempotencyKey !== '') {
+        if ($idempotencyKey !== null) {
             $existing = MediaAsset::withoutTenant()
+                ->where('tenant_id', $tenantId)
                 ->where('idempotency_key', $idempotencyKey)
                 ->first();
+
+            // Migrate a same-tenant key created by an older release in place.
+            if (! $existing) {
+                $existing = MediaAsset::withoutTenant()
+                    ->where('tenant_id', $tenantId)
+                    ->where('idempotency_key', $clientIdempotencyKey)
+                    ->first();
+                $existing?->update(['idempotency_key' => $idempotencyKey]);
+            }
 
             if ($existing) {
                 $guid = $existing->provider_asset_id;
@@ -99,10 +115,14 @@ class MediaService
                 'mime_type' => $params['mime_type'] ?? null,
                 'size_bytes' => $size,
                 'storage_bytes' => 0,
-                'idempotency_key' => $idempotencyKey !== '' ? $idempotencyKey : null,
+                'idempotency_key' => $idempotencyKey,
                 'metadata' => [
                     'reservation_id' => $reservation['reservation_id'],
                     'upload_started_at' => now()->toIso8601String(),
+                    ...(! empty($params['replacement_lesson_content_id']) ? [
+                        'replacement_lesson_content_id' => (string) $params['replacement_lesson_content_id'],
+                        'replacement_lesson_id' => (string) ($params['replacement_lesson_id'] ?? ''),
+                    ] : []),
                 ],
             ]);
 
@@ -169,19 +189,82 @@ class MediaService
             throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'Media asset does not belong to this tenant.');
         }
 
-        // ── Idempotency: الأصل مربوط مسبقاً بالدرس (retry/تكرار الطلب)
-        // لا ينشئ LessonContent + VideoContent ثانيين أبداً.
+        // ── Idempotency: الأصل مربوط مسبقاً بالدرس (retry/تكرار الطلب).
         if ($asset->lesson_content_id) {
+            $linkedContent = LessonContent::withoutTenant()->find($asset->lesson_content_id);
+            if (! $linkedContent || $linkedContent->lesson_id !== $lesson->id) {
+                throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'Media asset is already attached to another lesson.');
+            }
+
             return $asset;
         }
 
+        if (in_array($asset->status, [MediaAsset::STATUS_ERROR, MediaAsset::STATUS_DELETED], true)) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'This video upload did not complete successfully.');
+        }
+
         // ── درس واحد = محتوى رئيسي واحد ──
-        // إن كان للدرس محتوى رئيسي آخر (نوع آخر أو محتوى قديم) نستبدله:
-        // حذف المحتوى القديم وملحقاته قبل ربط الجديد — لا محتويين أبداً.
-        $existing = LessonContent::withoutTenant()
-            ->where('lesson_id', $lesson->id)
-            ->whereIn('content_type', ['video', 'text', 'file', 'live'])
-            ->first();
+        // An upload targeting an existing video is staged. The previous VideoContent
+        // remains playable until the provider confirms the new asset is ready.
+        $replacementContentId = (string) ($asset->metadata['replacement_lesson_content_id'] ?? '');
+        $replacementLessonId = (string) ($asset->metadata['replacement_lesson_id'] ?? '');
+        if ($replacementContentId !== '' && $replacementLessonId !== '' && $replacementLessonId !== $lesson->id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'This upload targets a different lesson.');
+        }
+
+        $existing = $replacementContentId !== ''
+            ? LessonContent::withoutTenant()
+                ->where('tenant_id', $lesson->tenant_id)
+                ->where('lesson_id', $lesson->id)
+                ->where('content_type', 'video')
+                ->whereKey($replacementContentId)
+                ->first()
+            : LessonContent::withoutTenant()
+                ->where('tenant_id', $lesson->tenant_id)
+                ->where('lesson_id', $lesson->id)
+                ->whereIn('content_type', ['video', 'text', 'file', 'live'])
+                ->first();
+
+        if ($replacementContentId !== '' && ! $existing) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'The video being replaced is no longer available.');
+        }
+
+        if ($existing && $existing->content_type === 'video') {
+            if ($asset->status === MediaAsset::STATUS_PROCESSING) {
+                $this->stageVideoReplacement($asset, $lesson, $existing);
+
+                return $asset->fresh();
+            }
+
+            if ($asset->status === MediaAsset::STATUS_READY) {
+                $oldAssetId = DB::transaction(fn () => $this->activateVideoReplacement(
+                    $asset,
+                    $lesson->id,
+                    $existing->id,
+                    [
+                        'duration_seconds' => $asset->duration_seconds,
+                        'size_bytes' => $asset->storage_bytes ?: $asset->size_bytes,
+                        'thumbnail_url' => $asset->thumbnail_url,
+                    ],
+                ));
+
+                if ($oldAssetId) {
+                    $this->deleteAsset($oldAssetId);
+                }
+
+                return $asset->fresh();
+            }
+
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'This video upload is not ready to replace lesson content.');
+        }
+
+        if ($replacementContentId !== '') {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'The lesson content is no longer a video.');
+        }
+
+        if ($asset->status !== MediaAsset::STATUS_PROCESSING && $asset->status !== MediaAsset::STATUS_READY) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'This video upload is not available.');
+        }
 
         if ($existing) {
             VideoContent::withoutTenant()->where('lesson_content_id', $existing->id)->delete();
@@ -237,6 +320,135 @@ class MediaService
         return $asset->fresh();
     }
 
+    private function stageVideoReplacement(MediaAsset $asset, Lesson $lesson, LessonContent $content): void
+    {
+        DB::transaction(function () use ($asset, $lesson, $content) {
+            $lockedAsset = MediaAsset::withoutTenant()->whereKey($asset->id)->lockForUpdate()->firstOrFail();
+            $lockedContent = LessonContent::withoutTenant()
+                ->where('tenant_id', $lesson->tenant_id)
+                ->where('lesson_id', $lesson->id)
+                ->where('content_type', 'video')
+                ->whereKey($content->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedAsset->lesson_content_id) {
+                if ($lockedAsset->lesson_content_id !== $lockedContent->id) {
+                    throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'Media asset is already attached to another lesson.');
+                }
+
+                return;
+            }
+
+            $metadata = $lockedAsset->metadata ?? [];
+            $targetContentId = (string) ($metadata['replacement_lesson_content_id'] ?? '');
+            $targetLessonId = (string) ($metadata['replacement_lesson_id'] ?? '');
+
+            if (($targetContentId !== '' && $targetContentId !== $lockedContent->id)
+                || ($targetLessonId !== '' && $targetLessonId !== $lesson->id)) {
+                throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'This upload already targets another lesson video.');
+            }
+
+            $metadata['replacement_lesson_content_id'] = $lockedContent->id;
+            $metadata['replacement_lesson_id'] = $lesson->id;
+
+            $lockedAsset->update([
+                'course_id' => $lesson->course_id,
+                'metadata' => $metadata,
+            ]);
+        });
+    }
+
+    /**
+     * Activate a processed replacement on the existing LessonContent/VideoContent
+     * rows so sort order, title, exercise links, and student progress stay intact.
+     * Caller must hold a DB transaction.
+     */
+    private function activateVideoReplacement(MediaAsset $asset, string $lessonId, string $contentId, array $info): ?string
+    {
+        $lesson = Lesson::withoutTenant()
+            ->where('tenant_id', $asset->tenant_id)
+            ->find($lessonId);
+        $content = LessonContent::withoutTenant()
+            ->where('tenant_id', $asset->tenant_id)
+            ->where('lesson_id', $lessonId)
+            ->where('content_type', 'video')
+            ->whereKey($contentId)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $lesson || ! $content) {
+            $metadata = $asset->metadata ?? [];
+            $metadata['replacement_failed_at'] = now()->toIso8601String();
+            $metadata['replacement_failure'] = 'target_not_available';
+            $asset->update(['metadata' => $metadata]);
+
+            return null;
+        }
+
+        $oldAsset = MediaAsset::withoutTenant()
+            ->where('tenant_id', $asset->tenant_id)
+            ->where('lesson_content_id', $content->id)
+            ->where('id', '!=', $asset->id)
+            ->lockForUpdate()
+            ->first();
+        $video = VideoContent::withoutTenant()
+            ->where('lesson_content_id', $content->id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($oldAsset) {
+            $oldAsset->update(['lesson_content_id' => null]);
+        }
+
+        $videoData = [
+            'lesson_id' => $lesson->id,
+            'tenant_id' => $lesson->tenant_id,
+            'provider' => $asset->provider,
+            'provider_video_id' => $asset->provider_asset_id,
+            'title' => $asset->title,
+            'status' => MediaAsset::STATUS_READY,
+            'duration' => (int) ($info['duration_seconds'] ?? $asset->duration_seconds),
+            'thumbnail_url' => $info['thumbnail_url'] ?? $asset->thumbnail_url,
+            'file_size_bytes' => (int) ($info['size_bytes'] ?? ($asset->storage_bytes ?: $asset->size_bytes)),
+            'storage_path' => null,
+            'original_name' => $asset->original_filename,
+            'mime_type' => $asset->mime_type,
+            'is_uploaded' => false,
+            'is_shared_reference' => false,
+        ];
+
+        if ($video) {
+            // Keep the lesson's existing video row and its non-provider settings.
+            $video->update($videoData);
+        } else {
+            VideoContent::withoutTenant()->create([
+                'id' => UuidV7::generate(),
+                'lesson_content_id' => $content->id,
+                'config' => [
+                    'allow_download' => false,
+                    'watermark_enabled' => true,
+                    'pause_on_hidden' => true,
+                    'block_picture_in_picture' => true,
+                ],
+                ...$videoData,
+            ]);
+        }
+
+        $metadata = $asset->metadata ?? [];
+        unset($metadata['replacement_lesson_content_id'], $metadata['replacement_lesson_id'], $metadata['replacement_failure']);
+        $metadata['lesson_id'] = $lesson->id;
+        $metadata['replacement_activated_at'] = now()->toIso8601String();
+
+        $asset->update([
+            'lesson_content_id' => $content->id,
+            'course_id' => $lesson->course_id,
+            'metadata' => $metadata,
+        ]);
+
+        return $oldAsset?->id;
+    }
+
     // ─── Video: Status transitions (من الـ Webhook) ─────
 
     public function markAssetReady(MediaProviderInterface $driver, string $providerAssetId, string $eventId): void
@@ -251,8 +463,14 @@ class MediaService
         }
 
         $info = $driver->getVideo($providerAssetId);
+        $oldAssetId = null;
 
-        DB::transaction(function () use ($asset, $info, $eventId) {
+        DB::transaction(function () use ($asset, $info, $eventId, &$oldAssetId) {
+            $asset = MediaAsset::withoutTenant()->whereKey($asset->id)->lockForUpdate()->first();
+            if (! $asset) {
+                return;
+            }
+
             $wasReady = $asset->status === MediaAsset::STATUS_READY;
 
             $asset->update([
@@ -264,8 +482,18 @@ class MediaService
                 'metadata' => array_merge($asset->metadata ?? [], ['ready_event' => $eventId, 'ready_at' => now()->toIso8601String()]),
             ]);
 
-            // تحديث VideoContent المرتبط إن وُجد (التوافق مع نظام التشغيل القائم).
-            if ($asset->lesson_content_id) {
+            $replacementContentId = (string) ($asset->metadata['replacement_lesson_content_id'] ?? '');
+            $replacementLessonId = (string) ($asset->metadata['replacement_lesson_id'] ?? '');
+
+            if ($replacementContentId !== '' && $replacementLessonId !== '') {
+                $oldAssetId = $this->activateVideoReplacement(
+                    $asset,
+                    $replacementLessonId,
+                    $replacementContentId,
+                    $info,
+                );
+            } elseif ($asset->lesson_content_id) {
+                // Existing/non-replacement uploads keep the original lifecycle.
                 $content = VideoContent::withoutTenant()
                     ->where('lesson_content_id', $asset->lesson_content_id)
                     ->first();
@@ -298,6 +526,12 @@ class MediaService
                 }
             }
         });
+
+        // Provider I/O happens only after the database has switched the stable
+        // lesson/video rows to the confirmed-ready replacement.
+        if ($oldAssetId) {
+            $this->deleteAsset($oldAssetId);
+        }
     }
 
     public function markAssetError(MediaProviderInterface $driver, string $providerAssetId, string $eventId): void

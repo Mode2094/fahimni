@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import PlatformLogo from '@/components/brand/platform-logo';
+import { setStoredTenantId } from '@/lib/auth-client';
 
 function StudentLoginPageInner() {
   const [email, setEmail] = useState('');
@@ -52,18 +53,26 @@ function StudentLoginPageInner() {
 
   useEffect(() => {
     // Credentials are never persisted client-side — purge any legacy copy.
-    localStorage.removeItem('lms_remembered_password');
-    const savedEmail = localStorage.getItem('lms_remembered_email');
-    if (savedEmail) { setEmail(savedEmail); setRemember(true); }
+    try {
+      localStorage.removeItem('lms_remembered_password');
+      const savedEmail = localStorage.getItem('lms_remembered_email');
+      if (savedEmail) { setEmail(savedEmail); setRemember(true); }
+    } catch {
+      // Authentication still works when browser storage is unavailable.
+    }
   }, []);
 
   const persistRemember = () => {
-    if (remember) {
-      localStorage.setItem('lms_remembered_email', email);
-    } else {
-      localStorage.removeItem('lms_remembered_email');
+    try {
+      if (remember) {
+        localStorage.setItem('lms_remembered_email', email);
+      } else {
+        localStorage.removeItem('lms_remembered_email');
+      }
+      localStorage.removeItem('lms_remembered_password');
+    } catch {
+      // Remember-email is optional; do not block a successful login.
     }
-    localStorage.removeItem('lms_remembered_password');
   };
 
   const finishLogin = async () => {
@@ -73,7 +82,7 @@ function StudentLoginPageInner() {
     // select the matching tenant after the session is established.
     if (tenantSlug && user?.tenants?.length) {
       const match = user.tenants.find((tn: any) => tn.slug === tenantSlug);
-      if (match?.id) localStorage.setItem('tenant_id', match.id);
+      if (match?.id) setStoredTenantId(match.id);
     }
 
     const roles: string[] = user?.roles || [];
@@ -89,6 +98,7 @@ function StudentLoginPageInner() {
       const { requires2fa } = await login(email, pass, {
         captcha_id: captchaId,
         captcha_answer: captchaAnswer,
+        ...(tenantSlug ? { tenant_slug: tenantSlug } : {}),
       });
       if (requires2fa) { setNeed2fa(true); return; }
       persistRemember();
@@ -154,7 +164,7 @@ function StudentLoginPageInner() {
             <h1 className="text-2xl sm:text-3xl font-bold">{locale === 'ar' ? 'بوابة الطلاب' : 'Student Portal'}</h1>
             <p className="text-gray-500 mt-2">{locale === 'ar' ? 'سجل دخولك لمتابعة تعلمك' : 'Sign in to continue learning'}</p>
           </div>
-          <div className="mb-4"><GoogleLoginButton role="student" label="المتابعة عبر Google" /></div><form onSubmit={submit} className="space-y-5 bg-white p-6 sm:p-8 rounded-2xl border shadow-sm">
+          <div className="mb-4"><GoogleLoginButton role="student" tenantSlug={tenantSlug} redirectTo={from} label="المتابعة عبر Google" /></div><form onSubmit={submit} className="space-y-5 bg-white p-6 sm:p-8 rounded-2xl border shadow-sm">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">{t(locale, 'common.email')}</Label>
               <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 bg-gray-50" placeholder="student@example.com" />

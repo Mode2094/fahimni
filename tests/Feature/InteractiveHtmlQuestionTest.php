@@ -7,11 +7,14 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\ExamAnswer;
+use App\Models\ExamAttempt;
 use App\Models\ExamQuestion;
+use App\Models\Lesson;
 use App\Models\Question;
 use App\Models\Section;
 use App\Models\Tenant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
 /**
@@ -392,6 +395,79 @@ class InteractiveHtmlQuestionTest extends TenantTestCase
         $grade->assertOk();
         $this->assertEquals(100.0, (float) $grade->json('attempt.percentage'));
         $this->assertTrue($grade->json('attempt.passed'));
+        $this->assertSame(1, ExamAttempt::where('exam_id', $exam->id)->where('user_id', $student->id)->count());
+    }
+
+    public function test_manual_interactive_submission_notifies_only_workspace_staff_and_shows_lesson_context(): void
+    {
+        $tenant = $this->tenant();
+        $this->attachSubscription($tenant);
+        [$course, $section, $student] = $this->studentWithCourse($tenant);
+        $this->enroll($tenant, $course, $student);
+        $teacher = $this->teacher($tenant);
+        $otherTenant = $this->makeTenant();
+        $otherTeacher = $this->teacher($otherTenant);
+
+        $question = $this->interactive($tenant, ['mode' => 'manual']);
+        $exam = $this->examWith($tenant, $course, $section, [[$question, 10]]);
+        Lesson::create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $tenant->id,
+            'section_id' => $section->id,
+            'title' => 'Interactive lesson',
+            'lesson_type' => 'video',
+            'sort_order' => 1,
+            'is_published' => true,
+            'metadata' => ['exercise_exam_id' => $exam->id, 'exercise_position' => 'after_video'],
+        ]);
+
+        $studentHeaders = $this->authHeaders($student, $tenant);
+        $start = $this->withHeaders($studentHeaders)->postJson("/api/v1/exams/{$exam->id}/attempt");
+        $start->assertOk();
+        $attemptId = $start->json('attempt.id');
+        $examQuestionId = $start->json('questions.0.exam_question_id');
+
+        $submitPayload = [
+            'answers' => [[
+                'exam_question_id' => $examQuestionId,
+                'question_id' => $question->id,
+                'given_answer' => ['response' => 'student answer'],
+            ]],
+        ];
+        $this->withHeaders($studentHeaders)
+            ->postJson("/api/v1/exams/{$exam->id}/attempts/{$attemptId}/submit", $submitPayload)
+            ->assertOk()
+            ->assertJsonPath('result.needs_review', true);
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($studentHeaders)
+            ->postJson("/api/v1/exams/{$exam->id}/attempts/{$attemptId}/submit", $submitPayload)
+            ->assertNotFound();
+
+        $this->assertDatabaseHas('notifications', [
+            'tenant_id' => $tenant->id,
+            'notifiable_id' => $teacher->id,
+            'type' => 'exam.review_required',
+        ]);
+        $this->assertDatabaseMissing('notifications', [
+            'tenant_id' => $tenant->id,
+            'notifiable_id' => $otherTeacher->id,
+            'type' => 'exam.review_required',
+        ]);
+        $this->assertSame(1, DB::table('notifications')
+            ->where('tenant_id', $tenant->id)
+            ->where('notifiable_id', $teacher->id)
+            ->where('type', 'exam.review_required')
+            ->count());
+
+        $review = $this->withHeaders($this->authHeaders($teacher, $tenant))
+            ->getJson("/api/v1/exams/{$exam->id}/attempts");
+
+        $review->assertOk()
+            ->assertJsonPath('attempts.0.id', $attemptId)
+            ->assertJsonPath('attempts.0.student.name', $student->name)
+            ->assertJsonPath('context.course.title', $course->title)
+            ->assertJsonPath('context.lesson.title', 'Interactive lesson');
     }
 
     public function test_oversized_and_forged_answers_are_rejected_or_failed(): void

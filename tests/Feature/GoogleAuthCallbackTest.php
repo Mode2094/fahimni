@@ -224,6 +224,84 @@ class GoogleAuthCallbackTest extends TenantTestCase
         $this->assertFalse($user->hasRole('Teacher'));
     }
 
+    public function test_student_google_signup_preserves_qr_activation_return_path(): void
+    {
+        $tenant = $this->makeTenant();
+        $email = $this->freshEmail('student');
+        $this->fakeGoogle($email, 'QR Student');
+
+        $response = $this->callbackWith($this->signedState([
+            'role' => 'student',
+            'tenant_slug' => $tenant->slug,
+            'redirect_to' => '/card/ABCDEF123456',
+        ]));
+
+        $response->assertRedirect();
+        $location = (string) $response->headers->get('Location');
+        $this->assertStringContainsString('redirect_to=%2Fcard%2FABCDEF123456', $location);
+        $this->assertStringNotContainsString('token=', $location);
+        $this->assertDatabaseHas('users', ['email' => $email]);
+    }
+
+    public function test_student_google_login_restores_the_selected_teacher_session_context(): void
+    {
+        $this->useProductionStatefulDomains();
+        $tenant = $this->makeTenant();
+        $email = $this->freshEmail('student');
+        $student = $this->makeUser(['email' => $email]);
+        $this->attachToTenant($student, $tenant, 'student');
+        $this->fakeGoogle($email, 'Existing Student');
+
+        $response = $this->callbackWith($this->signedState([
+            'role' => 'student',
+            'tenant_slug' => $tenant->slug,
+        ]));
+        $response->assertRedirect();
+
+        $this->asCookie($this->sessionCookie($response))
+            ->getJson('/api/v1/dashboard')
+            ->assertOk();
+    }
+
+    public function test_student_google_registration_returns_to_the_activation_card_without_a_token_in_the_url(): void
+    {
+        $tenant = $this->makeTenant();
+        $email = $this->freshEmail('student');
+        $this->fakeGoogle($email, 'New Student');
+
+        $response = $this->callbackWith($this->signedState([
+            'role' => 'student',
+            'tenant_slug' => $tenant->slug,
+            'redirect_to' => '/card/ABCDEF123456',
+        ]));
+
+        $response->assertRedirect();
+        $location = (string) $response->headers->get('Location');
+        $this->assertStringContainsString('step=done', $location);
+        $this->assertStringContainsString('redirect_to=%2Fcard%2FABCDEF123456', $location);
+        $this->assertStringNotContainsString('token=', $location);
+        $this->assertDatabaseHas('users', ['email' => $email]);
+    }
+
+    public function test_student_google_login_preserves_an_existing_teacher_workspace(): void
+    {
+        $this->useProductionStatefulDomains();
+        $tenant = $this->makeTenant();
+        $email = $this->freshEmail('student');
+        $student = $this->makeUser(['email' => $email]);
+        $this->attachToTenant($student, $tenant, 'student');
+        $this->fakeGoogle($email, 'Existing Student');
+
+        $response = $this->callbackWith($this->signedState([
+            'role' => 'student',
+            'tenant_slug' => $tenant->slug,
+        ]));
+        $response->assertRedirect();
+
+        $cookie = $this->sessionCookie($response);
+        $this->asCookie($cookie)->getJson('/api/v1/dashboard')->assertOk();
+    }
+
     public function test_mixed_case_google_email_normalizes_to_one_account(): void
     {
         PlatformSetting::set('teacher_registration_enabled', true);

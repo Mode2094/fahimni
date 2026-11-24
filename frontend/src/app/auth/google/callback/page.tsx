@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/store';
 import { track } from '@/lib/analytics';
-import { dashboardPathFor } from '@/lib/auth-routes';
+import { postLoginPath } from '@/lib/auth-routes';
 
 type Stage = 'working' | '2fa' | 'error';
 
@@ -51,10 +51,10 @@ function GoogleCallbackInner() {
 
     if (!user) return false;
 
-    // Single source of truth: super admin → admin, teacher → dashboard (or the
-    // «أكمل بيانات حسابك» step when the mandatory phone is still missing),
-    // student → my-learning.
-    router.replace(dashboardPathFor(user));
+    // A student who arrived from a teacher/card link returns to that
+    // same-origin destination; staff still route to their own dashboard.
+    const redirectTo = new URLSearchParams(window.location.search).get('redirect_to');
+    router.replace(postLoginPath(user, redirectTo));
 
     return true;
   }, [router]);

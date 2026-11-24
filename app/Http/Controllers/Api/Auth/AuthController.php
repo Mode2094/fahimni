@@ -219,6 +219,7 @@ class AuthController extends Controller
         // never hand a bearer token to the browser.
         if ($request->hasSession()) {
             WebSessionAuth::login($request, $user);
+            $this->storeTenantContext($request, $tenantId);
 
             AuditLogger::log($request, 'auth.register', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
@@ -372,6 +373,7 @@ class AuthController extends Controller
                 // no pending credential ever reaches the browser.
                 $request->session()->put('auth.2fa_pending', [
                     'user_id' => $user->id,
+                    'tenant_id' => $this->resolveStudentTenantId($request, $user),
                     'expires_at' => now()->addMinutes(5)->getTimestamp(),
                 ]);
 
@@ -393,6 +395,7 @@ class AuthController extends Controller
 
         if ($sessionMode) {
             WebSessionAuth::login($request, $user);
+            $this->storeTenantContext($request, $tenantId);
 
             AuditLogger::log($request, 'auth.login', 'user', $user->id, ['email' => $user->email, 'mode' => 'session']);
 
@@ -420,31 +423,97 @@ class AuthController extends Controller
      * Shared post-authentication side effects (last login, device policy,
      * daily reward). Returns the resolved tenant id for students, or null.
      */
-    private function applyLoginSideEffects(Request $request, User $user): ?string
+    private function applyLoginSideEffects(Request $request, User $user, ?string $preferredTenantId = null): ?string
     {
         $user->update(['last_login_at' => now(), 'last_login_ip' => $request->ip()]);
 
-        $roles = $user->getRoleNames();
-        $isStudent = ! $user->is_super_admin && ! $roles->contains('Teacher');
+        $tenantId = $this->resolveStudentTenantId($request, $user, $preferredTenantId);
 
-        $tenantId = null;
-
-        if ($isStudent) {
-            $tenantId = $request->header('X-Tenant-Id') ?? $request->input('tenant_id');
-            if (! $tenantId) {
-                $tenantId = $user->tenants()->wherePivot('status', 'active')->first()?->id;
+        if ($tenantId) {
+            $error = DevicePolicy::register($request, $tenantId, $user);
+            if ($error) {
+                throw new \Symfony\Component\HttpKernel\Exception\HttpException($error['status'], $error['message']);
             }
-            if ($tenantId) {
-                $error = DevicePolicy::register($request, $tenantId, $user);
-                if ($error) {
-                    throw new \Symfony\Component\HttpKernel\Exception\HttpException($error['status'], $error['message']);
-                }
 
-                $this->recordLoginReward($user, $tenantId);
-            }
+            $this->recordLoginReward($user, $tenantId);
         }
 
         return $tenantId;
+    }
+
+    private function storeTenantContext(Request $request, ?string $tenantId): void
+    {
+        if (! $request->hasSession()) {
+            return;
+        }
+
+        if ($tenantId) {
+            $request->session()->put('current_tenant_id', $tenantId);
+        } else {
+            $request->session()->forget('current_tenant_id');
+        }
+    }
+
+    /**
+     * Resolve student login context only from an active membership. A tenant
+     * slug from a teacher's registration/login link takes precedence, while a
+     * missing selection is inferred only when the student has exactly one
+     * active workspace. Client-supplied IDs are never trusted on their own.
+     */
+    private function resolveStudentTenantId(
+        Request $request,
+        User $user,
+        ?string $preferredTenantId = null,
+    ): ?string {
+        if ($user->is_super_admin || $user->getRoleNames()->contains('Teacher')) {
+            return null;
+        }
+
+        if ($preferredTenantId !== null) {
+            return $this->hasActiveTenantMembership($user, $preferredTenantId)
+                ? $preferredTenantId
+                : null;
+        }
+
+        if ($request->filled('tenant_slug')) {
+            $tenant = Tenant::where('slug', (string) $request->input('tenant_slug'))
+                ->where('status', 'active')
+                ->first();
+
+            if (! $tenant) {
+                return null;
+            }
+
+            return $this->hasActiveTenantMembership($user, (string) $tenant->id)
+                ? (string) $tenant->id
+                : null;
+        }
+
+        $requestedTenantId = $request->header('X-Tenant-Id')
+            ?? $request->input('tenant_id');
+
+        if ($requestedTenantId) {
+            $requestedTenantId = (string) $requestedTenantId;
+
+            return $this->hasActiveTenantMembership($user, $requestedTenantId)
+                ? $requestedTenantId
+                : null;
+        }
+
+        $tenants = $user->tenants()
+            ->wherePivot('status', 'active')
+            ->limit(2)
+            ->get(['tenants.id']);
+
+        return $tenants->count() === 1 ? (string) $tenants->first()->id : null;
+    }
+
+    private function hasActiveTenantMembership(User $user, string $tenantId): bool
+    {
+        return $user->tenantPivots()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'active')
+            ->exists();
     }
 
     public function twoFactorConfirm(Request $request): JsonResponse
@@ -505,11 +574,15 @@ class AuthController extends Controller
 
         Cache::forget($failKey);
 
-        $tenantId = $this->applyLoginSideEffects($request, $user);
+        $preferredTenantId = is_array($sessionPending)
+            ? ($sessionPending['tenant_id'] ?? null)
+            : null;
+        $tenantId = $this->applyLoginSideEffects($request, $user, is_string($preferredTenantId) ? $preferredTenantId : null);
 
         if (is_array($sessionPending)) {
             $request->session()->forget('auth.2fa_pending');
             WebSessionAuth::login($request, $user);
+            $this->storeTenantContext($request, $tenantId);
 
             AuditLogger::log($request, 'auth.login_2fa', 'user', $user->id, ['mode' => 'session']);
 

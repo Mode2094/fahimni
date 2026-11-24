@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { GraduationCap, Loader2, CheckCircle, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
-import { authFetch, setSessionHint } from '@/lib/auth-client';
+import { authFetch, setSessionHint, setStoredTenantId } from '@/lib/auth-client';
 import { track } from '@/lib/analytics';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -46,8 +46,8 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.message || t('فشل', 'Failed')); return; }
-            localStorage.setItem('user', JSON.stringify(data.user));
-      if (data.tenant_id) localStorage.setItem('tenant_id', data.tenant_id);
+      try { localStorage.setItem('user', JSON.stringify(data.user)); } catch { /* session cookie remains authoritative */ }
+      setStoredTenantId(data.tenant_id ? String(data.tenant_id) : null);
       // Sync the auth store so the app shell (sidebar etc.) appears instantly.
       setSessionHint(true);
       useAuth.setState({ user: data.user, loading: false, initialized: true });

@@ -36,6 +36,6 @@ class Section extends Model
 
     public function lessons(): HasMany
     {
-        return $this->hasMany(Lesson::class)->orderBy('sort_order');
+        return $this->hasMany(Lesson::class)->orderBy('sort_order')->orderBy('id');
     }
 }

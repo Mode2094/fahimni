@@ -1,7 +1,25 @@
 'use client';
 
+import { safeInternalPath } from '@/lib/auth-routes';
+
 /** زر تسجيل الدخول عبر Google — يبدأ OAuth بالدور المطلوب. */
-export default function GoogleLoginButton({ role, label, formData, onClick, variant = 'outline' }: { role: 'teacher' | 'student' | 'admin'; label?: string; formData?: { name?: string; phone?: string }; onClick?: () => boolean | void | Promise<boolean | void>; variant?: 'outline' | 'primary' }) {
+export default function GoogleLoginButton({
+  role,
+  label,
+  formData,
+  onClick,
+  variant = 'outline',
+  tenantSlug,
+  redirectTo,
+}: {
+  role: 'teacher' | 'student' | 'admin';
+  label?: string;
+  formData?: { name?: string; phone?: string };
+  onClick?: () => boolean | void | Promise<boolean | void>;
+  variant?: 'outline' | 'primary';
+  tenantSlug?: string | null;
+  redirectTo?: string | null;
+}) {
   const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
   const start = async () => {
@@ -14,6 +32,11 @@ export default function GoogleLoginButton({ role, label, formData, onClick, vari
       const params = new URLSearchParams({ role });
       if (formData?.name) params.set('name', formData.name);
       if (formData?.phone) params.set('phone', formData.phone);
+      if (role === 'student') {
+        if (tenantSlug) params.set('tenant_slug', tenantSlug);
+        const safeRedirect = safeInternalPath(redirectTo);
+        if (safeRedirect) params.set('redirect_to', safeRedirect);
+      }
 
       const res = await fetch(`${API}/auth/google/redirect?${params.toString()}`);
       const d = await res.json();

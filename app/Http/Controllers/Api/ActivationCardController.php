@@ -13,6 +13,7 @@ use App\Models\ActivationCard;
 use App\Models\CardRedemption;
 use App\Models\Course;
 use App\Models\Enrollment;
+use App\Models\TenantUser;
 use App\Plans\QuotaService;
 use App\Services\EnrollmentService;
 use App\Services\StudentGamificationService;
@@ -104,14 +105,6 @@ class ActivationCardController extends Controller
         // dashboard works exactly like the /card/{code} page.
         $code = strtoupper(trim((string) $request->code));
 
-        $this->authorize('redeem', ActivationCard::class);
-
-        // Staff must never redeem a card: it would silently enroll the teacher
-        // as a student in a course of their own workspace.
-        if ($this->isActiveStaff($user, (string) $tenantId)) {
-            return response()->json(['message' => 'Staff accounts cannot redeem activation cards.'], 403);
-        }
-
         // Resolve the card WITHOUT a status filter so cancelled/expired cards
         // get an honest message. Tenant isolation happens before any mutation
         // (the global scope already filters by the current tenant, and the
@@ -120,6 +113,14 @@ class ActivationCardController extends Controller
 
         if (! $card) {
             return response()->json(['message' => 'Invalid card code.'], 404);
+        }
+
+        $this->authorize('redeem', $card);
+
+        // Staff must never redeem a card: it would silently enroll the teacher
+        // as a student in a course of their own workspace.
+        if ($this->isActiveStaff($user, (string) $tenantId)) {
+            return response()->json(['message' => 'Staff accounts cannot redeem activation cards.'], 403);
         }
 
         if ($card->tenant_id !== $tenantId) {
@@ -192,6 +193,30 @@ class ActivationCardController extends Controller
                     );
                 }
 
+                // A valid teacher-issued card can establish the student's first
+                // membership in this tenant. Existing inactive/non-student
+                // memberships are deliberately not reactivated.
+                $membership = TenantUser::withoutTenant()
+                    ->where('tenant_id', $tenantId)
+                    ->where('user_id', $user->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $membership) {
+                    TenantUser::withoutTenant()->create([
+                        'tenant_id' => $tenantId,
+                        'user_id' => $user->id,
+                        'role' => 'student',
+                        'status' => 'active',
+                        'joined_at' => now(),
+                        'metadata' => [],
+                    ]);
+                } elseif ($membership->status !== 'active' || $membership->role !== 'student') {
+                    throw new HttpResponseException(
+                        response()->json(['message' => 'This account cannot redeem a student card in this teacher workspace.'], 403)
+                    );
+                }
+
                 // Seat limit, duplicate protection and per-course cap are all
                 // enforced here (tenant row already locked above).
                 $enrollment = app(EnrollmentService::class)->enroll($course, $user, [
@@ -235,6 +260,10 @@ class ActivationCardController extends Controller
 
         if ($redemption === 'expired') {
             return response()->json(['message' => 'Card has expired.'], 410);
+        }
+
+        if ($request->hasSession()) {
+            $request->session()->put('current_tenant_id', $tenantId);
         }
 
         app(StudentGamificationService::class)->logActivity(

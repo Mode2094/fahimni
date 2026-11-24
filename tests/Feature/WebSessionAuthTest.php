@@ -109,6 +109,55 @@ class WebSessionAuthTest extends TenantTestCase
         $response->assertJsonPath('user.tenants.0.id', $tenant->id);
     }
 
+    public function test_student_login_uses_the_teacher_site_slug_to_choose_a_tenant(): void
+    {
+        $firstTenant = $this->makeTenant();
+        $siteTenant = $this->makeTenant();
+        $user = $this->makeWebUser();
+        $this->attachToTenant($user, $firstTenant, 'student');
+        $this->attachToTenant($user, $siteTenant, 'student');
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password-123',
+            'tenant_slug' => $siteTenant->slug,
+        ], $this->statefulHeaders());
+
+        $response->assertOk()->assertJsonPath('tenant_id', $siteTenant->id);
+
+        $this->asCookie($this->sessionCookie($response))
+            ->getJson('/api/v1/dashboard')
+            ->assertOk();
+    }
+
+    public function test_student_two_factor_login_keeps_the_selected_teacher_context(): void
+    {
+        $firstTenant = $this->makeTenant();
+        $siteTenant = $this->makeTenant();
+        $user = $this->makeWebUser();
+        $this->attachToTenant($user, $firstTenant, 'student');
+        $this->attachToTenant($user, $siteTenant, 'student');
+        $user->forceFill([
+            'two_factor_enabled' => true,
+            'two_factor_secret' => Crypt::encryptString('JBSWY3DPEHPK3PXP'),
+        ])->save();
+
+        $login = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password-123',
+            'tenant_slug' => $siteTenant->slug,
+        ], $this->statefulHeaders());
+
+        $login->assertOk()->assertJsonPath('requires_2fa', true);
+        $cookie = $this->sessionCookie($login);
+
+        $confirm = $this->asCookie($cookie)
+            ->postJson('/api/v1/auth/2fa/confirm', ['code' => TOTP::code('JBSWY3DPEHPK3PXP')]);
+        $confirm->assertOk()->assertJsonPath('tenant_id', $siteTenant->id);
+
+        $this->asCookie($this->sessionCookie($confirm))->getJson('/api/v1/dashboard')->assertOk();
+    }
+
     public function test_session_authenticates_tenant_scoped_endpoints(): void
     {
         $tenant = $this->makeTenant();
@@ -215,6 +264,28 @@ class WebSessionAuthTest extends TenantTestCase
             ->getJson('/api/v1/auth/me')
             ->assertOk()
             ->assertJsonPath('user.email', $email);
+    }
+
+    public function test_teacher_site_registration_keeps_tenant_context_for_first_api_requests(): void
+    {
+        $tenant = $this->makeTenant();
+        $email = 'site-register-'.strtolower(Str::random(8)).'@test.local';
+
+        $register = $this->postJson('/api/v1/auth/register', [
+            'name' => 'Teacher Site Student',
+            'email' => $email,
+            'password' => 'password-123',
+            'password_confirmation' => 'password-123',
+            'tenant_slug' => $tenant->slug,
+        ], $this->statefulHeaders());
+
+        $register->assertCreated()
+            ->assertJsonPath('tenant_id', $tenant->id)
+            ->assertJsonPath('user.tenants.0.id', $tenant->id);
+
+        $this->asCookie($this->sessionCookie($register))
+            ->getJson('/api/v1/dashboard')
+            ->assertOk();
     }
 
     public function test_registration_queues_a_welcome_email(): void

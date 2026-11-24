@@ -62,6 +62,44 @@ class ActivationCardRedeemTest extends TenantTestCase
         ]);
     }
 
+    public function test_a_valid_card_resolves_tenant_and_adds_a_new_student_membership(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $student = $this->makeUser();
+        $course = $this->makeCourse($tenant->id);
+        $card = $this->makeCard($tenant->id, $course->id);
+        $headers = [
+            'Authorization' => 'Bearer '.$student->createToken('test')->plainTextToken,
+            'Accept' => 'application/json',
+        ];
+
+        $response = $this->postJson('/api/v1/cards/redeem', ['code' => $card->code], $headers);
+
+        $response->assertOk();
+        $this->assertDatabaseHas('tenant_user', [
+            'tenant_id' => $tenant->id,
+            'user_id' => $student->id,
+            'role' => 'student',
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('activation_cards', ['id' => $card->id, 'status' => 'redeemed']);
+        $this->assertDatabaseHas('enrollments', [
+            'tenant_id' => $tenant->id,
+            'course_id' => $course->id,
+            'user_id' => $student->id,
+        ]);
+
+        // The relation established by redemption restores tenant context when
+        // a fresh tab, private window, or PWA request has no local tenant id.
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($headers)->getJson('/api/v1/dashboard')->assertOk();
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($headers)->getJson('/api/v1/assignments?course_id='.$course->id)->assertOk();
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders($headers)->getJson('/api/v1/scheduled-lessons')->assertOk();
+    }
+
     public function test_a_teacher_cannot_redeem_their_own_card(): void
     {
         $tenant = $this->makeTenant();
