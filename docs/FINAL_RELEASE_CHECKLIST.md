@@ -124,7 +124,7 @@ executed through `deploy/scripts/fahimni-golive.sh` with the pinned SHA above.
 3. clone/checkout the release (`FAHIMNI_RELEASE_BRANCH` / `FAHIMNI_RELEASE_SHA`),
    hard-fail if the tree lacks `frontend/src/lib/request-origin.ts` (the Google/session
    fix) or is dirty
-4. brand-audit the source; build images for tag `prod-brand1`
+4. brand-audit the source; build images for tag `prod-brand2`
 5. verify the brand + logo hashes **inside the built images**
 6. **DB preflight (read-only, always):** list the pending migrations reported by the
    new image and compare them to `FAHIMNI_APPROVED_MIGRATIONS`. Any **unapproved**
@@ -269,13 +269,13 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of release/launch-2026-11-rc
-git merge-base --is-ancestor 659828997ff0b9a93312674e39e2b00eaa7d564b \
+git merge-base --is-ancestor d7758daacba3b6bf603ad7e72557902477e730e9 \
   refs/remotes/origin/release/launch-2026-11-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = 2fe40e2204a1531a0188c64c55080e4abe961ee7aad8985341d8c91b30c580c1`
+- `sha256 = a1c0bf4f8797b6efb73f9f4855fca24c6381c9736cddfe77e741bfc69a3479c1`
 - 53 440 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
 The restore drill is not installed on the host: the runner always executes it
@@ -284,9 +284,9 @@ so the pinned SHA above is its integrity gate.
 
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = 37dc220ef689b46970402ed70d0a66c304b5c6e94c47bf61c774a275f94c9801`
-- 31 844 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `65982899…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
+- `sha256 = cb3aeeeaf32e12966b60cf32b042360963c3d6de0cc604905eca18ae448a37e8`
+- 31 820 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `d7758daa…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
   that does not match. On a standalone Fahimni host with **no LooksLoop containers** the
   before/after LooksLoop comparison degrades to a recorded no-op instead of aborting.
@@ -295,9 +295,9 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref 659828997ff0b9a93312674e39e2b00eaa7d564b \
+  --git-ref d7758daacba3b6bf603ad7e72557902477e730e9 \
   --remote fahimni@187.127.87.101 \
-  --expect 2fe40e2204a1531a0188c64c55080e4abe961ee7aad8985341d8c91b30c580c1
+  --expect a1c0bf4f8797b6efb73f9f4855fca24c6381c9736cddfe77e741bfc69a3479c1
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
@@ -435,7 +435,7 @@ before the release can be declared GO.
 | Core pages | `/teacher/login`, `/student/login`, `/admin/login`, `/register/*` all 200 |
 | CSP | nonce present; no `unsafe-inline` regression |
 | Logo/PWA | served icon + manifest show the new identity |
-| Containers | `app frontend scheduler horizon` on `prod-brand1`, healthy |
+| Containers | `app frontend scheduler horizon` on `prod-brand2`, healthy |
 | Migration | `assignments.lesson_id` exists; `php artisan migrations:pending` lists nothing unapproved |
 | Permission | `cards.export` granted to Teacher; other roles/permissions untouched |
 | LooksLoop / Staging | unchanged from baseline |

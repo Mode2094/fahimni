@@ -52,24 +52,23 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-# 65982899 is the current approved Release Candidate on
+# d7758daa is the current approved Release Candidate on
 # release/launch-2026-11-rc: PR #63/#64/#65 integrated, plus the Super-Admin
-# trial extension, per-teacher custom domains, and two deploy-script fixes —
-# production.env stays shell-sourceable (APP_NAME is quoted like
-# MAIL_FROM_NAME) and a standalone host with no LooksLoop containers no longer
-# aborts the rollout. It changes NO migration relative to the previously
-# deployed 68e150b, and it carries the approved 2fe40e22… rollout script pinned
-# below.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-659828997ff0b9a93312674e39e2b00eaa7d564b}"
+# trial extension, per-teacher custom domains, and the custom-domain closeout
+# (session/CSRF for VERIFIED teacher domains, tenant-site-only proxy rewrite,
+# Google safely disabled off-platform). It changes NO migration relative to the
+# previously deployed 65982899, and it carries the approved a1c0bf4f… rollout
+# script (image tag prod-brand2) pinned below.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-d7758daacba3b6bf603ad7e72557902477e730e9}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-release/launch-2026-11-rc}"
-APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-2fe40e2204a1531a0188c64c55080e4abe961ee7aad8985341d8c91b30c580c1}"
+APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-a1c0bf4f8797b6efb73f9f4855fca24c6381c9736cddfe77e741bfc69a3479c1}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
 
 HOST_SCRIPT="${FAHIMNI_HOST_SCRIPT:-/home/fahimni/fahimni-brand-rollout.sh}"
 STACK="${FAHIMNI_STACK:-/opt/fahimni/production}"
 ENVF="${FAHIMNI_ENV_FILE:-/etc/fahimni/production.env}"
 REPO_URL="${FAHIMNI_REPO_URL:-https://github.com/Mode2094/fahimni.git}"
-NEW_TAG="${FAHIMNI_NEW_TAG:-prod-brand1}"
+NEW_TAG="${FAHIMNI_NEW_TAG:-prod-brand2}"
 MAX_AGE_HOURS="${FAHIMNI_BACKUP_MAX_AGE_HOURS:-26}"
 # Optional LOCAL backup file. When set, the isolated restore drill uses THIS
 # archive instead of the off-site rclone remote, so the temporary path does not
