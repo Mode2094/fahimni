@@ -71,6 +71,12 @@ has "$SCRIPT" "auth/google/redirect"   "checks the Google redirect endpoint"
 has "$SCRIPT" "cards/export"           "checks the cards.export surface"
 has "$SCRIPT" "frontend/public/logo.png" "verifies the served logo hash against the release"
 has "$SCRIPT" "BLOCKED"                "prints an explicit BLOCKED marker"
+has "$SCRIPT" "/teacher/login /student/login /pricing" "checks actual login and pricing routes"
+if grep -qE "for p in .*( /login | /plans | /about )" "$SCRIPT"; then
+  fail "public smoke loop still includes obsolete routes"
+else
+  pass "public smoke loop excludes obsolete routes"
+fi
 
 # ── T5: it is read-only by default (no credential probe unless opted in) ────
 printf '\n-- T5 safe by default\n'

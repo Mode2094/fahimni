@@ -194,7 +194,7 @@ for p in /icon-192.png /icon-512.png /icon-maskable-512.png /apple-icon.png /og.
   c="$(code "$BASE$p")"
   if [ "$c" = "200" ]; then pass "$p → 200"; else fail "$p → $c"; fi
 done
-for p in / /courses /login /plans /about /contact /privacy /terms; do
+for p in / /courses /teacher/login /student/login /pricing /contact /privacy /terms; do
   c="$(code "$BASE$p")"
   case "$c" in 200|301|302|307|308) pass "link $p → $c" ;; *) fail "link $p → $c" ;; esac
 done
