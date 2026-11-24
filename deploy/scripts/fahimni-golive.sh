@@ -52,15 +52,16 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-# b85ce47 is the current approved Release Candidate on
+# dbe6965 is the current approved Release Candidate on
 # release/launch-2026-11-rc: PR #63/#64/#65 integrated, plus the Super-Admin
-# trial extension and per-teacher custom domains. It changes NO migration
-# relative to the previously deployed 68e150b, and it carries the SAME
-# deploy/scripts/fahimni-brand-rollout.sh, so APPROVED_SCRIPT_SHA256 is
-# unchanged.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-b85ce47b77b8e6380d9a042181c7d2df0f2867cd}"
+# trial extension, per-teacher custom domains, and one deploy-script fix that
+# keeps production.env shell-sourceable (APP_NAME is now quoted like
+# MAIL_FROM_NAME). It changes NO migration relative to the previously deployed
+# 68e150b, and it carries the approved a00a3eab… deploy/scripts/fahimni-brand-rollout.sh
+# pinned below.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-dbe6965ddb80e2eaed3f58ac601ca598abfba462}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-release/launch-2026-11-rc}"
-APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8}"
+APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-a00a3eabaa11bef99b61c03958f9c49e3bdf1a8b1ddca7a4454ba8ebe66db869}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
 
 HOST_SCRIPT="${FAHIMNI_HOST_SCRIPT:-/home/fahimni/fahimni-brand-rollout.sh}"

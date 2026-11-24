@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `release/launch-2026-11-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `b85ce47b77b8e6380d9a042181c7d2df0f2867cd`
+**Final unified SHA (pinned — CI-green):** `dbe6965ddb80e2eaed3f58ac601ca598abfba462`
 **P0 fixes in this revision:**
 - **PR #63 / #64 / #65 integrated** on the RC line: tenant-scoped card/video test
   alignment (#64), the branded home `<title>` and live launch-smoke routes (#65).
@@ -261,7 +261,7 @@ default (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallb
 does not):
 
 ```
-b85ce47b77b8e6380d9a042181c7d2df0f2867cd
+dbe6965ddb80e2eaed3f58ac601ca598abfba462
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -269,14 +269,14 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of release/launch-2026-11-rc
-git merge-base --is-ancestor b85ce47b77b8e6380d9a042181c7d2df0f2867cd \
+git merge-base --is-ancestor dbe6965ddb80e2eaed3f58ac601ca598abfba462 \
   refs/remotes/origin/release/launch-2026-11-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8`
-- 52 999 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
+- `sha256 = a00a3eabaa11bef99b61c03958f9c49e3bdf1a8b1ddca7a4454ba8ebe66db869`
+- 53 005 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
 The restore drill is not installed on the host: the runner always executes it
 from the pinned tree (`$STACK/.golive-tools/<sha>/deploy/scripts/restore-drill.sh`),
@@ -284,9 +284,9 @@ so the pinned SHA above is its integrity gate.
 
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = a9e25dc1dfe5b8cce8c9ebf0dc02eadc3c9668f1d6b0648984588f894401a671`
-- 31 686 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `b85ce47…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
+- `sha256 = 2bb0eafdb63f80723fb73d4d60a8abce7c25b15a8946960a1d95a5a559b93912`
+- 31 789 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `dbe6965…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
   that does not match. On a standalone Fahimni host with **no LooksLoop containers** the
   before/after LooksLoop comparison degrades to a recorded no-op instead of aborting.
@@ -295,9 +295,9 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref b85ce47b77b8e6380d9a042181c7d2df0f2867cd \
+  --git-ref dbe6965ddb80e2eaed3f58ac601ca598abfba462 \
   --remote fahimni@187.127.87.101 \
-  --expect 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8
+  --expect a00a3eabaa11bef99b61c03958f9c49e3bdf1a8b1ddca7a4454ba8ebe66db869
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
