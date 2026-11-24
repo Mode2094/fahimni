@@ -52,13 +52,14 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-# 3ed3df6 makes the restore drill wait out the postgres init race
-# (pg_isready was answering during the entrypoint's temporary server, so
-# pg_restore died with "the database system is shutting down"). It carries the
-# same deploy/scripts/fahimni-brand-rollout.sh as the previous pin, so
-# APPROVED_SCRIPT_SHA256 is unchanged.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-3ed3df6c39b222e94ba381cf92dcf25672e26d5d}"
-RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-fix/launch-blockers-rc}"
+# b85ce47 is the current approved Release Candidate on
+# release/launch-2026-11-rc: PR #63/#64/#65 integrated, plus the Super-Admin
+# trial extension and per-teacher custom domains. It changes NO migration
+# relative to the previously deployed 68e150b, and it carries the SAME
+# deploy/scripts/fahimni-brand-rollout.sh, so APPROVED_SCRIPT_SHA256 is
+# unchanged.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-b85ce47b77b8e6380d9a042181c7d2df0f2867cd}"
+RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-release/launch-2026-11-rc}"
 APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
 
@@ -129,6 +130,7 @@ chmod 600 "$LOG"
 CURRENT_REL=""
 OLD_TAG=""
 LL_BEFORE=""
+LL_ABSENT=0
 DRILL_OK=0
 DRILL_EVIDENCE=""
 BACKUP_ACTION="none"
@@ -311,8 +313,16 @@ snapshot_state(){
     log "  health(loopback) $p -> $(code "$BASE_LOOP$p")"
   done
   LL_BEFORE="$(ll_snapshot)"
-  [ -n "$LL_BEFORE" ] || die "no LooksLoop containers found — aborting rather than guessing (LooksLoop must stay protected)"
-  log "LooksLoop baseline: $(printf '%s\n' "$LL_BEFORE" | grep -c .) container(s)"
+  if [ -n "$LL_BEFORE" ]; then
+    log "LooksLoop baseline: $(printf '%s\n' "$LL_BEFORE" | grep -c .) container(s)"
+  else
+    # This host is the standalone Fahimni VPS: no LooksLoop containers exist,
+    # so there is nothing to protect and the before/after comparison degrades
+    # to a no-op. Absence is recorded (not assumed) so a REAL disappearance
+    # after the deploy would still be visible as a diff.
+    LL_ABSENT=1
+    log "LooksLoop baseline: none on this host (standalone Fahimni — nothing to protect)"
+  fi
   cp -p "$ENVF" "$ENV_SNAPSHOT"
   chmod 600 "$ENV_SNAPSHOT"; chown fahimni:fahimni "$ENV_SNAPSHOT" 2>/dev/null || true
   log "env snapshot    : $ENV_SNAPSHOT"
@@ -569,7 +579,11 @@ verify_live(){
   local ll_after
   ll_after="$(ll_snapshot)"
   if [ "$LL_BEFORE" = "$ll_after" ]; then
-    log "LooksLoop: unchanged (baseline == now)"
+    if [ "$LL_ABSENT" = 1 ]; then
+      log "LooksLoop: none before and none now (standalone host — nothing to protect)"
+    else
+      log "LooksLoop: unchanged (baseline == now)"
+    fi
   else
     warn "LooksLoop state CHANGED — a human must investigate (this runner never touched it)"
     diff <(printf '%s\n' "$LL_BEFORE") <(printf '%s\n' "$ll_after") | tee -a "$LOG" || true

@@ -1,9 +1,25 @@
 # FINAL RELEASE CHECKLIST — منصة فهمني
 
-**Release branch (carries the final SHA):** `fix/launch-blockers-rc`
+**Release branch (carries the final SHA):** `release/launch-2026-11-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `3ed3df6c39b222e94ba381cf92dcf25672e26d5d`
+**Final unified SHA (pinned — CI-green):** `b85ce47b77b8e6380d9a042181c7d2df0f2867cd`
 **P0 fixes in this revision:**
+- **PR #63 / #64 / #65 integrated** on the RC line: tenant-scoped card/video test
+  alignment (#64), the branded home `<title>` and live launch-smoke routes (#65).
+  PR #63's source fixes (explicit tenant context, safe video replace, lesson
+  ordering, exam results, Super-Admin new-teacher email) were already on the RC.
+- **Super-Admin free-trial extension** (`POST /admin/subscriptions/{id}/extend-trial`):
+  moves only the trial's own `trial_ends_at` forward (1..3650 days), re-opens a
+  lapsed trial as `trialing`, never converts to a paid plan and never creates an
+  invoice; Super-Admin only, audited, idempotent.
+- **Per-teacher custom domains are now SERVED end-to-end.** The standalone edge
+  gained an intentional `:443` catch-all with `on_demand_tls` + an `ask` gate
+  (`GET /api/v1/public/tls/ask`), so a verified teacher domain (apex or `www.`)
+  gets a certificate on first visit with **no server edit and no reload**; an
+  unverified/unknown hostname is refused and no certificate is issued. `connect()`
+  stores the apex only and refuses a domain another tenant owns; `lookup()` serves
+  the apex and its `www.` variant; verification accepts a CNAME **or** an apex A
+  record.
 - Migration preflight no longer parses `migrate:status`. Laravel 13's
   `Migrator::getMigrationName()` strips `.php`, so the old parser could miss
   **every** pending migration and let an unapproved one through; it now diffs the
@@ -50,8 +66,9 @@
   complete" marker or a second ready line), then confirms `restore_drill`
   answers a query before restoring; it also fails fast if the container exits
   during init. Still fully isolated (`--network none`, trust auth).
-**Status:** **NO-GO for deploy — blockers closed in code, awaiting the owner's approval.**
-Nothing in §5 or §6 has been executed.
+**Status:** **CLOSE-OUT** — all §1 gates green; PR #63/#64/#65 merged; the Super-Admin
+trial extension and per-teacher custom domains shipped on the RC line. The deploy is
+executed through `deploy/scripts/fahimni-golive.sh` with the pinned SHA above.
 
 ---
 
@@ -83,12 +100,12 @@ Nothing in §5 or §6 has been executed.
 
 | Gate | Result |
 | --- | --- |
-| PHPUnit (full) | **394 / 394** |
+| PHPUnit (full) | **881 / 881** |
 | `npx tsc --noEmit` | clean |
-| Frontend node tests | **26 / 26** |
-| Frontend vitest | **20 / 20** |
+| Frontend node tests (`npm run test:scripts`) | **46 / 46** |
+| Frontend vitest | **340 / 340** (62 files) |
 | `next build` | success |
-| `shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh` | **clean** |
+| `shellcheck -x -P deploy/scripts deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh` | clean |
 | `bash -n deploy/**/*.sh` | clean |
 | Brand-rollout tests (`deploy/tests/brand-rollout-nginx-test.sh`) | all pass — incl. **T12–T21** (DB preflight / approved migration / permission gating / sequence / rollback does not revert the schema) |
 | Deploy-script integrity test (`deploy/tests/verify-deploy-script-test.sh`) | all pass |
@@ -229,31 +246,31 @@ php artisan permissions:ensure-cards-export --apply  # creates cards.export + gr
 - refuses to act if the `Teacher` role is absent.
 - Gated by `FAHIMNI_ALLOW_PERMISSION_WRITE=1`.
 
-### 4C — **Deploying the RC branch** (not the default brand commit)
+### 4C — **Deploying the RC branch**
 
-The blockers work lives on `fix/launch-blockers-rc`, which is **one commit ahead of**
-`release/launch-2026-11-rc`. The deploy must therefore name **that** branch, because the
-clone is `--single-branch`: the target SHA is only fetchable from the branch that actually
-contains it. `release_sha_on_branch()` enforces this and aborts before checkout when
-`FAHIMNI_RELEASE_SHA` is not reachable from `FAHIMNI_RELEASE_BRANCH`.
+The final work lives on `release/launch-2026-11-rc`. The deploy must therefore name
+**that** branch, because the clone is `--single-branch`: the target SHA is only
+fetchable from the branch that actually contains it. `release_sha_on_branch()`
+enforces this and aborts before checkout when `FAHIMNI_RELEASE_SHA` is not
+reachable from `FAHIMNI_RELEASE_BRANCH`.
 
-`FAHIMNI_RELEASE_BRANCH` + `FAHIMNI_RELEASE_SHA` override the clone target; the default
-(`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallback.
+`FAHIMNI_RELEASE_BRANCH` + `FAHIMNI_RELEASE_SHA` override the clone target; the
+default (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallback.
 
 **Final unified SHA — pinned literally. Never deploy a branch tip** (it moves; the SHA
 does not):
 
 ```
-3ed3df6c39b222e94ba381cf92dcf25672e26d5d
+b85ce47b77b8e6380d9a042181c7d2df0f2867cd
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
 enforces before checkout:
 
 ```bash
-# from a clean single-branch clone of fix/launch-blockers-rc
-git merge-base --is-ancestor 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
-  refs/remotes/origin/fix/launch-blockers-rc && echo "on-branch OK"
+# from a clean single-branch clone of release/launch-2026-11-rc
+git merge-base --is-ancestor b85ce47b77b8e6380d9a042181c7d2df0f2867cd \
+  refs/remotes/origin/release/launch-2026-11-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
@@ -263,23 +280,22 @@ git merge-base --is-ancestor 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
 
 The restore drill is not installed on the host: the runner always executes it
 from the pinned tree (`$STACK/.golive-tools/<sha>/deploy/scripts/restore-drill.sh`),
-so the pinned SHA above is its integrity gate. For reference, at `3ed3df6` it is
-`sha256 = 5b9cfb197697d67643720623c3d0ed248e2123596a42e4557774ac0b5c9ceb72`
-(9 067 bytes).
+so the pinned SHA above is its integrity gate.
 
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = 9448e27dffcadb8d2e3e19253a42bf9c419c39e51b030fe8eb6aac76b5b5d98a`
-- 31 181 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `3ed3df6…` / `fix/launch-blockers-rc` and the deploy-script `sha256` above; it
+- `sha256 = a9e25dc1dfe5b8cce8c9ebf0dc02eadc3c9668f1d6b0648984588f894401a671`
+- 31 686 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `b85ce47…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
-  that does not match.
+  that does not match. On a standalone Fahimni host with **no LooksLoop containers** the
+  before/after LooksLoop comparison degrades to a recorded no-op instead of aborting.
 
 Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref 3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
+  --git-ref b85ce47b77b8e6380d9a042181c7d2df0f2867cd \
   --remote fahimni@187.127.87.101 \
   --expect 15c829fb78ac48ce1d8fad7d33a433953c83573c7d3d160b01413bd4778b69c8
 ```
@@ -309,8 +325,8 @@ performs the whole release (approved migration → permission fix → brand roll
 
 ```bash
 sudo env \
-  FAHIMNI_RELEASE_BRANCH=fix/launch-blockers-rc \
-  FAHIMNI_RELEASE_SHA=3ed3df6c39b222e94ba381cf92dcf25672e26d5d \
+  FAHIMNI_RELEASE_BRANCH=release/launch-2026-11-rc \
+  FAHIMNI_RELEASE_SHA=b85ce47b77b8e6380d9a042181c7d2df0f2867cd \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
@@ -404,7 +420,8 @@ additionally confirm the login endpoint rejects bad credentials with 401/422.
 | Video + live access by permission | needs real enrolled users |
 | Google OAuth consent screen («تعذر إنشاء الجلسة» must not appear) | external provider |
 | Bunny transcode of a real upload | external provider |
-| Custom-domain DNS / Freemius checkout | out of scope for this release |
+| Custom-domain DNS (a real teacher domain) | needs a registrar the operator controls — the server-side connect/verify/`ask`/`www` are covered by `tests/Feature/TeacherDomainTest.php`; the live DNS+SSL leg is BLOCKED without a controllable domain |
+| Freemius checkout (real payment) | external provider / out of scope for this release |
 
 These are the **exact** steps a human must complete (from `docs/FINAL_E2E_TEST_MATRIX.md`)
 before the release can be declared GO.
