@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `release/launch-2026-11-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `8cb86030bacc6679a2a838231c93075faff14db6`
+**Final unified SHA (pinned — CI-green):** `81abbbbf095cd721ddfc2fa5814ad91d24f159f6`
 **P0 fixes in this revision:**
 - **PR #63 / #64 / #65 integrated** on the RC line: tenant-scoped card/video test
   alignment (#64), the branded home `<title>` and live launch-smoke routes (#65).
@@ -124,7 +124,7 @@ executed through `deploy/scripts/fahimni-golive.sh` with the pinned SHA above.
 3. clone/checkout the release (`FAHIMNI_RELEASE_BRANCH` / `FAHIMNI_RELEASE_SHA`),
    hard-fail if the tree lacks `frontend/src/lib/request-origin.ts` (the Google/session
    fix) or is dirty
-4. brand-audit the source; build images for tag `prod-brand3`
+4. brand-audit the source; build images for tag `prod-brand4`
 5. verify the brand + logo hashes **inside the built images**
 6. **DB preflight (read-only, always):** list the pending migrations reported by the
    new image and compare them to `FAHIMNI_APPROVED_MIGRATIONS`. Any **unapproved**
@@ -261,7 +261,7 @@ default (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallb
 does not):
 
 ```
-8cb86030bacc6679a2a838231c93075faff14db6
+81abbbbf095cd721ddfc2fa5814ad91d24f159f6
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -269,13 +269,13 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of release/launch-2026-11-rc
-git merge-base --is-ancestor 8cb86030bacc6679a2a838231c93075faff14db6 \
+git merge-base --is-ancestor 81abbbbf095cd721ddfc2fa5814ad91d24f159f6 \
   refs/remotes/origin/release/launch-2026-11-rc && echo "on-branch OK"
 ```
 
 **Deploy-script integrity gate.** The reviewed script is:
 
-- `sha256 = b40358465cfee453d30185d020b7066b72f3be5c63c5153130796ffa18053f91`
+- `sha256 = 8de70e41c3723c4b83864ec43a541136e66685c58043822f09e03024d09d3dff`
 - 53 440 bytes, at `/home/fahimni/fahimni-brand-rollout.sh` (mode 700, root-run via `sudo`).
 
 The restore drill is not installed on the host: the runner always executes it
@@ -284,9 +284,9 @@ so the pinned SHA above is its integrity gate.
 
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = 8c1279d91748a4f74b62b6b76c5eebd2d5eed575e1387bdedef713cafd0e0da5`
-- 31 942 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `8cb86030…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
+- `sha256 = d60afa1c77f3de6fc5802971f6fbbb16d414e2842a0cc22d8c39e2e956df04ab`
+- 32 019 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `81abbbb…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
   that does not match. On a standalone Fahimni host with **no LooksLoop containers** the
   before/after LooksLoop comparison degrades to a recorded no-op instead of aborting.
@@ -295,9 +295,9 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref 8cb86030bacc6679a2a838231c93075faff14db6 \
+  --git-ref 81abbbbf095cd721ddfc2fa5814ad91d24f159f6 \
   --remote fahimni@187.127.87.101 \
-  --expect b40358465cfee453d30185d020b7066b72f3be5c63c5153130796ffa18053f91
+  --expect 8de70e41c3723c4b83864ec43a541136e66685c58043822f09e03024d09d3dff
 ```
 
 A mismatch aborts (exit 1); an unfetchable side is exit 2 (never treated as a pass).
@@ -326,7 +326,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=release/launch-2026-11-rc \
-  FAHIMNI_RELEASE_SHA=8cb86030bacc6679a2a838231c93075faff14db6 \
+  FAHIMNI_RELEASE_SHA=81abbbbf095cd721ddfc2fa5814ad91d24f159f6 \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
@@ -435,7 +435,7 @@ before the release can be declared GO.
 | Core pages | `/teacher/login`, `/student/login`, `/admin/login`, `/register/*` all 200 |
 | CSP | nonce present; no `unsafe-inline` regression |
 | Logo/PWA | served icon + manifest show the new identity |
-| Containers | `app frontend scheduler horizon` on `prod-brand3`, healthy |
+| Containers | `app frontend scheduler horizon` on `prod-brand4`, healthy |
 | Migration | `assignments.lesson_id` exists; `php artisan migrations:pending` lists nothing unapproved |
 | Permission | `cards.export` granted to Teacher; other roles/permissions untouched |
 | LooksLoop / Staging | unchanged from baseline |

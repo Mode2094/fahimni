@@ -52,25 +52,26 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-# 8cb86030 is the current approved Release Candidate on
-# release/launch-2026-11-rc: it builds on d7758daa (PR #63/#64/#65, the
-# Super-Admin trial extension, per-teacher custom domains and the custom-domain
-# closeout) and adds the Super-Admin financial audit — one platform-wide
-# statistics source for the dashboard/teachers/subscriptions panels, verified
-# Freemius payment totals, valid-trial date rules and admin-grant = access not
-# revenue. It changes NO migration relative to the previously deployed
-# d7758daa, and it carries the approved b4035846… rollout script (image tag
-# prod-brand3) pinned below.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-8cb86030bacc6679a2a838231c93075faff14db6}"
+# 81abbbb is the current approved Release Candidate on
+# release/launch-2026-11-rc: it builds on 8cb86030 (the Super-Admin financial
+# audit) and adds the platform audit fixes — a single-priority partition of
+# teacher subscription states (a multi-workspace teacher is counted once),
+# tenant-staff-only billing management (a student can no longer cancel the
+# workspace subscription), per-currency revenue maps for the admin payments
+# screen and hardened card stats for the per-teacher view, plus mobile/UX and
+# RTL fixes. It changes NO migration relative to the previously deployed
+# 8cb86030, and it carries the approved 8de70e41… rollout script (image tag
+# prod-brand4) pinned below.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-81abbbbf095cd721ddfc2fa5814ad91d24f159f6}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-release/launch-2026-11-rc}"
-APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-b40358465cfee453d30185d020b7066b72f3be5c63c5153130796ffa18053f91}"
+APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-8de70e41c3723c4b83864ec43a541136e66685c58043822f09e03024d09d3dff}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"
 
 HOST_SCRIPT="${FAHIMNI_HOST_SCRIPT:-/home/fahimni/fahimni-brand-rollout.sh}"
 STACK="${FAHIMNI_STACK:-/opt/fahimni/production}"
 ENVF="${FAHIMNI_ENV_FILE:-/etc/fahimni/production.env}"
 REPO_URL="${FAHIMNI_REPO_URL:-https://github.com/Mode2094/fahimni.git}"
-NEW_TAG="${FAHIMNI_NEW_TAG:-prod-brand3}"
+NEW_TAG="${FAHIMNI_NEW_TAG:-prod-brand4}"
 MAX_AGE_HOURS="${FAHIMNI_BACKUP_MAX_AGE_HOURS:-26}"
 # Optional LOCAL backup file. When set, the isolated restore drill uses THIS
 # archive instead of the off-site rclone remote, so the temporary path does not
