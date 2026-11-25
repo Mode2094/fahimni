@@ -36,7 +36,10 @@ export default function AdminTransactionsPage() {
   const [detail, setDetail] = useState<any>(null);
   const [error, setError] = useState('');
 
-  const headers = () => ({ 'X-Tenant-Id': localStorage.getItem('tenant_id') || '', Accept: 'application/json' });
+  // Platform-wide super-admin page: request the whole platform explicitly.
+  // Sending a lingering `X-Tenant-Id` from localStorage (e.g. after using
+  // /admin/view-as) would silently scope the ledger to one teacher.
+  const headers = () => ({ Accept: 'application/json' });
 
   const load = () => {
     setLoading(true);

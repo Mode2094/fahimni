@@ -921,18 +921,80 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
 
                     {/* واجبات الوحدة */}
-                    {secAs.map((a: any) => (
-                      <div key={a.id} className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/40 p-3 hover:bg-amber-50 transition">
-                        <GripVertical className="h-4 w-4 text-amber-300 shrink-0" />
-                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 shrink-0"><ClipboardCheck className="h-4 w-4 text-amber-600" /></span>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-sm truncate">{a.title}</p>
-                          <p className="text-[11px] text-gray-400">{a.points} {t('نقطة', 'pts')}{a.due_at ? ` · ${t('ينتهي', 'due')} ${new Date(a.due_at).toLocaleDateString()}` : ''}</p>
+                    {secAs.map((a: any) => {
+                      const subs: any[] = Array.isArray(a.submissions) ? a.submissions : [];
+                      const open = viewSubm === a.id;
+                      const statusLabel: Record<string, string> = {
+                        submitted: t('تم التسليم', 'Submitted'),
+                        late: t('متأخر', 'Late'),
+                        graded: t('مصحح', 'Graded'),
+                      };
+                      return (
+                        <div key={a.id} className="rounded-xl border border-amber-100 bg-amber-50/40 transition">
+                          <div className="flex items-center gap-3 p-3 hover:bg-amber-50">
+                            <GripVertical className="h-4 w-4 text-amber-300 shrink-0" />
+                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 shrink-0"><ClipboardCheck className="h-4 w-4 text-amber-600" /></span>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-sm truncate">{a.title}</p>
+                              <p className="text-[11px] text-gray-400">{a.points} {t('نقطة', 'pts')}{a.due_at ? ` · ${t('ينتهي', 'due')} ${new Date(a.due_at).toLocaleDateString()}` : ''}</p>
+                            </div>
+                            <Badge className={a.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{a.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>
+                            <Button size="sm" variant="ghost" className="gap-1 rounded-full text-xs text-amber-700" aria-expanded={open} aria-controls={`assign-subs-${a.id}`} onClick={() => setViewSubm(open ? null : a.id)}>
+                              <Users className="h-3.5 w-3.5" />{t('التسليمات', 'Submissions')}
+                              <span className="ms-1 rounded-full bg-amber-200/70 px-1.5 text-[10px] font-semibold">{subs.length}</span>
+                            </Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => openAssignEdit(a)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => toggleAssignPublish(a)} aria-label={a.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')} title={a.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')}>
+                              {a.is_published ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeAssign(a.id)} aria-label={t('حذف الواجب', 'Delete assignment')}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
+                          {open && (
+                            <div id={`assign-subs-${a.id}`} className="border-t border-amber-100 bg-white/60 p-3 space-y-3">
+                              {subs.length === 0 ? (
+                                <p className="text-sm text-gray-400 text-center py-3">{t('لا توجد تسليمات بعد', 'No submissions yet')}</p>
+                              ) : subs.map((s: any) => (
+                                <div key={s.id} className="rounded-lg border border-gray-100 bg-white p-3 space-y-2">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <p className="text-sm font-medium">{s.student?.name || '—'} <span className="text-gray-400 font-normal">({s.student?.email || ''})</span></p>
+                                    <Badge className={s.status === 'graded' ? 'bg-green-50 text-green-600 border-0' : s.status === 'late' ? 'bg-amber-50 text-amber-600 border-0' : 'bg-blue-50 text-blue-600 border-0'}>{statusLabel[s.status] || s.status}</Badge>
+                                  </div>
+                                  {s.submission_text && <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">{s.submission_text}</p>}
+                                  {s.file_url && (
+                                    <a href={s.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-teal-700 underline">
+                                      <FileText className="h-3.5 w-3.5" />{s.file_name || t('الملف المرفق', 'Attached file')}
+                                    </a>
+                                  )}
+                                  {s.grade !== null && s.grade !== undefined && (
+                                    <p className="text-xs text-green-700">{t('الدرجة', 'Grade')}: <b>{s.grade}</b> / {a.points}{s.grade_comment ? ` — ${s.grade_comment}` : ''}</p>
+                                  )}
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Input type="number" value={gradeVals[s.id] ?? ''} onChange={(e) => setGradeVals((g) => ({ ...g, [s.id]: e.target.value }))} placeholder={t('الدرجة', 'Grade')} className="h-9 w-24" aria-label={t('الدرجة', 'Grade')} />
+                                    <Input value={gradeCmts[s.id] ?? ''} onChange={(e) => setGradeCmts((g) => ({ ...g, [s.id]: e.target.value }))} placeholder={t('ملاحظة التصحيح (اختياري)', 'Grade comment (optional)')} className="h-9 flex-1 min-w-[160px]" aria-label={t('ملاحظة التصحيح', 'Grade comment')} />
+                                    <Button size="sm" className="gap-1 rounded-full bg-teal-600 hover:bg-teal-700 text-white" disabled={gradingId === s.id} onClick={() => gradeSubmission(a, s)}>
+                                      {gradingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{t('حفظ التصحيح', 'Save grade')}
+                                    </Button>
+                                  </div>
+                                  {Array.isArray(s.comments) && s.comments.length > 0 && (
+                                    <div className="space-y-1 border-t border-gray-100 pt-2">
+                                      {s.comments.map((c: any) => (
+                                        <p key={c.id} className="text-xs text-gray-500"><b>{c.user_name || ''}</b>: {c.comment}</p>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-2">
+                                    <Input value={commentVals[s.id] ?? ''} onChange={(e) => setCommentVals((c) => ({ ...c, [s.id]: e.target.value }))} placeholder={t('أضف تعليقاً...', 'Add a comment...')} className="h-9 flex-1" aria-label={t('تعليق', 'Comment')} />
+                                    <Button size="sm" variant="outline" className="gap-1 rounded-full" disabled={commentingId === s.id} onClick={() => addComment(s)}>
+                                      {commentingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}{t('إرسال', 'Send')}
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => openAssignEdit(a)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
-                        <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={async () => { if (await confirmDialog({ description: t('حذف الواجب؟', 'Delete assignment?') })) { fetch(`${API}/assignments/${a.id}`, { method: 'DELETE', headers: headers() }).then(() => load()); } }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {totalItems === 0 && (
                       <p className="text-sm text-gray-400 text-center py-6">{t('هذه الوحدة فارغة — أضف أول محتوى', 'This unit is empty — add your first content')}</p>
@@ -1182,13 +1244,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); }}>{t('إلغاء', 'Cancel')}</Button>
-            <Button onClick={async () => {
-              if (!assign.title.trim()) { toast.error(t('أدخل العنوان', 'Enter title')); return; }
-              const body = { ...assign, section_id: assignTarget ? assignTarget.section_id : lesSection || undefined };
-              const res = await fetch(`${API}/assignments${assignTarget ? `/${assignTarget.id}` : ''}`, { method: assignTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-              if (!res.ok) { toast.error(t('تعذر حفظ الواجب', 'Could not save the assignment')); return; }
-              toast.success(t('تم الحفظ', 'Saved')); setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); load();
-            }}>{t('حفظ', 'Save')}</Button>
+            {/* Delegates to saveAssign() so the request always carries course_id —
+                the previous inline copy omitted it and POST /assignments 422'd. */}
+            <Button onClick={saveAssign} disabled={assignUploading}>{t('حفظ', 'Save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

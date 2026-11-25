@@ -46,6 +46,11 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
                 ['secure_playback_enabled', 'true', 'boolean'],
+                // "Fixed on for everyone" gates the admin plan editor hides
+                // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
+                ['assignments_enabled', 'true', 'boolean'],
+                ['blog_enabled', 'true', 'boolean'],
+                ['custom_domain', 'true', 'boolean'],
             ]],
             ['slug' => 'professional', 'name' => 'Professional', 'desc' => 'للمعلمين المحترفين', 'monthly' => 59.00, 'yearly' => 599.00, 'trial' => 7, 'sort' => 2, 'features' => [
                 ['students_limit', '250', 'numeric'],
@@ -81,6 +86,11 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
                 ['secure_playback_enabled', 'true', 'boolean'],
+                // "Fixed on for everyone" gates the admin plan editor hides
+                // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
+                ['assignments_enabled', 'true', 'boolean'],
+                ['blog_enabled', 'true', 'boolean'],
+                ['custom_domain', 'true', 'boolean'],
             ]],
             ['slug' => 'enterprise', 'name' => 'Enterprise', 'desc' => 'للأكاديميات والمؤسسات', 'monthly' => 89.00, 'yearly' => 899.00, 'trial' => 7, 'sort' => 3, 'features' => [
                 ['students_limit', '1000', 'numeric'],
@@ -118,6 +128,11 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
                 ['secure_playback_enabled', 'true', 'boolean'],
+                // "Fixed on for everyone" gates the admin plan editor hides
+                // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
+                ['assignments_enabled', 'true', 'boolean'],
+                ['blog_enabled', 'true', 'boolean'],
+                ['custom_domain', 'true', 'boolean'],
             ]],
         ];
 

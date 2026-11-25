@@ -48,7 +48,10 @@ export default function AdminLogsPage() {
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState('');
 
-  const headers = () => ({ 'X-Tenant-Id': localStorage.getItem('tenant_id') || '', Accept: 'application/json' });
+  // Platform-wide super-admin page: request the whole platform explicitly.
+  // A lingering `X-Tenant-Id` in localStorage (after /admin/view-as) must not
+  // scope the audit/error logs to a single teacher.
+  const headers = () => ({ Accept: 'application/json' });
 
   useEffect(() => {
     if (!check()) return;

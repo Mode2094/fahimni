@@ -44,6 +44,7 @@ frontend/.env.*.local
 # Playwright (interactive-question browser tests)
 /frontend/test-results
 /frontend/playwright-report
+/frontend/audit-shots
 /frontend/blob-report
 /frontend/.playwright
 

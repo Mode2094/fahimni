@@ -56,6 +56,7 @@ export const ADMIN_NAV: NavGroup[] = [
         en: 'Sales',
         match: ['/admin/payments', '/admin/invoices', '/admin/coupons'],
       },
+      { href: '/admin/transactions', icon: ReceiptText, ar: 'المعاملات المالية', en: 'Financial Transactions' },
     ],
   },
   {
@@ -70,6 +71,7 @@ export const ADMIN_NAV: NavGroup[] = [
     items: [
       { href: '/admin/monitoring', icon: Activity, ar: 'مراقبة النظام', en: 'System Monitoring', match: ['/admin/monitoring'] },
       { href: '/admin/monitoring/frontend', icon: Bug, ar: 'أخطاء الواجهة', en: 'Frontend Errors' },
+      { href: '/admin/logs', icon: Shield, ar: 'السجلات', en: 'Logs' },
     ],
   },
   {
@@ -78,6 +80,7 @@ export const ADMIN_NAV: NavGroup[] = [
       { href: '/admin/bi', icon: BarChart3, ar: 'ذكاء الأعمال', en: 'Business Intelligence' },
       { href: '/admin/media', icon: ServerCog, ar: 'الوسائط والبنية التحتية', en: 'Media Infrastructure' },
       { href: '/admin/live', icon: Radio, ar: 'مزودو البث المباشر', en: 'Live Providers' },
+      { href: '/admin/cards', icon: Ticket, ar: 'بطاقات التفعيل', en: 'Activation Cards' },
       { href: '/admin/settings', icon: Settings, ar: 'الإعدادات', en: 'Settings' },
     ],
   },

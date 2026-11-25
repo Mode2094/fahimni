@@ -87,47 +87,20 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $user = User::create([
-            'id' => UuidV7::generate(),
-            'name' => $request->name,
-            'email' => $email,
-            'phone' => $phone,
-            'password' => Hash::make($request->password),
-            'locale' => $request->locale ?? 'ar',
-            'is_active' => true,
-        ]);
-
-        $this->issueVerificationToken($user);
-
         $role = $validated['role'] ?? 'Student';
 
-        // ربط الطالب بمنصة المعلم (tenant) فور تسجيله من الموقع العام
-        $tenantId = null;
-        $trialGranted = false;
+        // Every gate runs BEFORE the user row exists. A rejected registration
+        // must never leave an orphan account (no role, no tenant) that also
+        // squats the email address for the owner's later legitimate signup.
+        $publicTenant = null;
         if ($request->filled('tenant_slug')) {
-            $tenant = Tenant::where('slug', $request->input('tenant_slug'))
+            $publicTenant = Tenant::where('slug', $request->input('tenant_slug'))
                 ->where('status', 'active')
                 ->first();
 
-            if (! $tenant) {
+            if (! $publicTenant) {
                 return response()->json(['message' => 'Teacher platform not found.'], 404);
             }
-
-            $existing = TenantUser::where('tenant_id', $tenant->id)
-                ->where('user_id', $user->id)
-                ->exists();
-
-            if (! $existing) {
-                TenantUser::create([
-                    'tenant_id' => $tenant->id,
-                    'user_id' => $user->id,
-                    'role' => 'student',
-                    'status' => 'active',
-                    'joined_at' => now(),
-                ]);
-            }
-
-            $tenantId = $tenant->id;
         }
 
         if ($role === 'Teacher') {
@@ -142,7 +115,42 @@ class AuthController extends Controller
                     'message' => 'Teacher registration requires an invitation. Please accept the invitation link sent to you, or contact the platform administrator.',
                 ], 403);
             }
+        }
 
+        $user = User::create([
+            'id' => UuidV7::generate(),
+            'name' => $request->name,
+            'email' => $email,
+            'phone' => $phone,
+            'password' => Hash::make($request->password),
+            'locale' => $request->locale ?? 'ar',
+            'is_active' => true,
+        ]);
+
+        $this->issueVerificationToken($user);
+
+        // ربط الطالب بمنصة المعلم (tenant) فور تسجيله من الموقع العام
+        $tenantId = null;
+        $trialGranted = false;
+        if ($publicTenant) {
+            $existing = TenantUser::where('tenant_id', $publicTenant->id)
+                ->where('user_id', $user->id)
+                ->exists();
+
+            if (! $existing) {
+                TenantUser::create([
+                    'tenant_id' => $publicTenant->id,
+                    'user_id' => $user->id,
+                    'role' => 'student',
+                    'status' => 'active',
+                    'joined_at' => now(),
+                ]);
+            }
+
+            $tenantId = $publicTenant->id;
+        }
+
+        if ($role === 'Teacher') {
             $user->assignRole('Teacher');
 
             // إنشاء منصة المعلم الافتراضية (tenant) تلقائياً
