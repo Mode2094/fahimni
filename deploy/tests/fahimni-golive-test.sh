@@ -251,7 +251,7 @@ if grep -v '^[[:space:]]*#' "$RUNNER" | grep -qE 'migrate:fresh|migrate:rollback
 else
   pass "no migrate:fresh / rollback / db:wipe / down -v in executable lines"
 fi
-if grep -q '81abbbbf095cd721ddfc2fa5814ad91d24f159f6' "$RUNNER" \
+if grep -q 'd2ff3a47c6ffc0704a60ad619569240adbbb6ca5' "$RUNNER" \
    && grep -q 'release/launch-2026-11-rc' "$RUNNER" \
    && grep -q 'a673d6d6f3351feda5658867936a7523a3b6345a89c0efeeef9a67feb226a227' "$RUNNER"; then
   pass "the pinned SHA, branch and approved script hash are the approved values"

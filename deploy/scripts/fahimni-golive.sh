@@ -59,7 +59,7 @@ set -Eeuo pipefail
 # assignment-create 422 fix, the analytics SQL portability fix, the orphan
 # registration gate ordering, dialog a11y, and the admin nav links. It carries
 # the approved rollout script (image tag prod-brand5) pinned below.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-81abbbbf095cd721ddfc2fa5814ad91d24f159f6}"
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-d2ff3a47c6ffc0704a60ad619569240adbbb6ca5}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-release/launch-2026-11-rc}"
 APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-a673d6d6f3351feda5658867936a7523a3b6345a89c0efeeef9a67feb226a227}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php,2026_11_25_000001_backfill_enforced_plan_feature_gates.php}"
