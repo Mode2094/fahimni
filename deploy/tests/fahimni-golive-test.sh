@@ -253,7 +253,7 @@ else
 fi
 if grep -q '81abbbbf095cd721ddfc2fa5814ad91d24f159f6' "$RUNNER" \
    && grep -q 'release/launch-2026-11-rc' "$RUNNER" \
-   && grep -q '8de70e41c3723c4b83864ec43a541136e66685c58043822f09e03024d09d3dff' "$RUNNER"; then
+   && grep -q 'a673d6d6f3351feda5658867936a7523a3b6345a89c0efeeef9a67feb226a227' "$RUNNER"; then
   pass "the pinned SHA, branch and approved script hash are the approved values"
 else
   fail "the runner does not carry the approved pin/branch/script-hash defaults"
@@ -320,7 +320,7 @@ if grep -q 'allow_db=1 backup_verified=1 allow_perm=1' "$STUB_LOG"; then
 else
   fail "the deploy did not run with the three gates"
 fi
-if grep -q "brand-rollout .*sha=$RELEASE_SHA branch=test-branch migrations=2026_11_16_000001_add_lesson_id_to_assignments.php" "$STUB_LOG"; then
+if grep -q "brand-rollout .*sha=$RELEASE_SHA branch=test-branch migrations=2026_11_16_000001_add_lesson_id_to_assignments.php,2026_11_25_000001_backfill_enforced_plan_feature_gates.php" "$STUB_LOG"; then
   pass "the deploy was pinned to the exact SHA and the approved migration"
 else
   fail "the deploy was not pinned to the SHA/migration"

@@ -10,7 +10,7 @@
 #      FAHIMNI_RELEASE_SHA=<sha|ref> and FAHIMNI_RELEASE_BRANCH=<branch> so the
 #      unified Release Candidate, which also carries the P0 Google/session fix
 #      from PR #24, is what gets deployed instead of a brand-only checkout),
-#    * builds images tagged prod-brand4 and replaces ONLY these four containers:
+#    * builds images tagged prod-brand5 and replaces ONLY these four containers:
 #        app  frontend  scheduler  horizon
 #    * BEFORE the cutover, runs a READ-ONLY preflight that compares the pending
 #      migrations reported by the new image against an explicit allowlist, then
@@ -75,7 +75,7 @@ REPO_URL=https://github.com/Mode2094/fahimni.git
 # release_sha_on_branch() then refuses to deploy when $SHA is not reachable
 # from this branch (see the FAHIMNI_LIB block).
 BRANCH="${FAHIMNI_RELEASE_BRANCH:-integration/launch-2026-11}"
-NEW_TAG=prod-brand4
+NEW_TAG=prod-brand5
 PORT="${APP_PORT:-8080}"
 BASE="http://127.0.0.1:$PORT"
 HOSTHDR=fahimni.me
@@ -96,7 +96,7 @@ CSP_PAGE=/teacher/dashboard
 # set. The generic `docker compose run migrate` service is deliberately NOT
 # used: it would run `migrate --force` (any pending migration, approved or not)
 # and `plans:sync`.
-APPROVED_MIGRATIONS_DEFAULT="2026_11_16_000001_add_lesson_id_to_assignments.php"
+APPROVED_MIGRATIONS_DEFAULT="2026_11_16_000001_add_lesson_id_to_assignments.php,2026_11_25_000001_backfill_enforced_plan_feature_gates.php"
 
 # Core surfaces: must be 200, must carry the new identity, must not carry the old.
 CORE_PAGES=(/ /teacher/login /student/login /admin/login /register/student /register/teacher)
@@ -558,6 +558,9 @@ log "$ENV_BAK"
   echo "# DB note: the additive migration (assignments.lesson_id, NULLABLE) is NOT"
   echo "# reverted by a rollback. It is compatible with the previous release, whose"
   echo "# code never reads the column, so the rollback image keeps working."
+  echo "# The plan-gate backfill (2026_11_25_000001) is also additive-only: it INSERTs"
+  echo "# the missing assignments_enabled/blog_enabled/custom_domain rows when absent"
+  echo "# and never overwrites an existing value, so the previous release is unaffected."
   echo "# Approve/applied via FAHIMNI_ALLOW_DB_WRITE; reverted only manually + deliberately."
   echo "env_backup=$ENV_BAK"
   echo "# exact revert:"
