@@ -69,122 +69,160 @@ class SubscriptionState
      */
     public function resolve(string $tenantId): array
     {
-        // Gather EVERY source that currently grants access, then keep the one
-        // whose granted period ends LAST (a null end = lifetime wins). This
-        // makes access a UNION: an admin extension never shortens a still-paid
-        // period, and a paid period never hides an admin grant. Tie-break by
-        // source priority: Freemius (paid) > legacy > admin.
+        return $this->resolveMany([$tenantId])[$tenantId] ?? $this->empty();
+    }
 
-        /** @var list<array<string, mixed>> $candidates */
-        $candidates = [];
+    /**
+     * Batch resolve avoids N+1 tenant queries in platform-wide Super Admin
+     * statistics. Every subscription query explicitly bypasses the currently
+     * selected tenant scope.
+     *
+     * @param  list<string>  $tenantIds
+     * @return array<string, array{
+     *     source: string,
+     *     plan_id: string|null,
+     *     status: string|null,
+     *     billing_cycle: string|null,
+     *     ends_at: \DateTimeInterface|null,
+     *     trial_ends_at: \DateTimeInterface|null,
+     *     subscription_id: string|null,
+     *     entitlement_id: string|null,
+     *     cancel_at_period_end: bool
+     * }>
+     */
+    public function resolveMany(array $tenantIds): array
+    {
+        $tenantIds = array_values(array_unique(array_filter(
+            array_map('strval', $tenantIds),
+            fn (string $tenantId) => $tenantId !== '',
+        )));
 
-        // 1) Freemius entitlement wins when it still grants access.
-        //
-        // IMPORTANT: a canceled entitlement (recurring billing stopped at
-        // period end) STILL grants access until `expiration`. A HARD
-        // cancellation/refund/revocation stops access immediately, regardless
-        // of expiration. We reuse the model's single access rule so there is
-        // no duplicated logic. A tenant may legitimately hold more than one
-        // license, so we pick the most recent one that grants access.
-        $entitlement = FsEntitlement::where('tenant_id', $tenantId)
-            ->whereNotNull('plan_id')
-            ->latest('synced_at')
-            ->get()
-            ->first(fn (FsEntitlement $e) => $e->isActive());
-
-        if ($entitlement) {
-            $candidates[] = [
-                'source' => self::SOURCE_FREEMIUS,
-                'plan_id' => $entitlement->plan_id,
-                'status' => $entitlement->status ?: 'active',
-                'billing_cycle' => $entitlement->metadata['billing_cycle'] ?? null,
-                'ends_at' => $entitlement->expiration,
-                'trial_ends_at' => null,
-                'subscription_id' => $entitlement->fs_subscription_id,
-                'entitlement_id' => $entitlement->id,
-                'cancel_at_period_end' => (bool) $entitlement->is_canceled,
-                'priority' => 3,
-            ];
+        if ($tenantIds === []) {
+            return [];
         }
 
-        // 2) Legacy local subscription (historic rows, pre-Freemius).
-        //
-        // EXCLUDE Freemius-owned rows: a Freemius subscription's local mirror
-        // must never re-grant access on its own (that would "revive" access
-        // after the license expired or was deleted). Only genuinely legacy
-        // rows (no billing_source / non-freemius) are consulted here.
-        $subscription = TenantSubscription::where('tenant_id', $tenantId)
+        $now = now();
+        $entitlementsByTenant = FsEntitlement::query()
+            ->whereIn('tenant_id', $tenantIds)
+            ->whereNotNull('plan_id')
+            ->orderByDesc('synced_at')
+            ->get()
+            ->groupBy(fn (FsEntitlement $entitlement) => (string) $entitlement->tenant_id);
+
+        $legacyByTenant = TenantSubscription::withoutTenant()
+            ->whereIn('tenant_id', $tenantIds)
             ->whereIn('status', ['active', 'trialing'])
-            ->where(function ($q) {
-                $q->whereNull('billing_source')->orWhere('billing_source', '!=', 'freemius');
+            ->where(function ($query) {
+                $query->whereNull('billing_source')->orWhere('billing_source', '!=', self::SOURCE_FREEMIUS);
             })
             ->whereNull('fs_license_id')
-            ->latest('starts_at')
+            ->orderByDesc('starts_at')
             ->get()
-            ->first(function (TenantSubscription $s): bool {
-                if ($s->status === 'trialing' && $s->trial_ends_at && now()->gt($s->trial_ends_at)) {
-                    return false;
-                }
+            ->groupBy(fn (TenantSubscription $subscription) => (string) $subscription->tenant_id);
 
-                if ($s->status === 'active' && $s->ends_at && now()->gt($s->ends_at)) {
-                    return false;
-                }
-
-                return true;
-            });
-
-        if ($subscription) {
-            // A trialing row runs out at `trial_ends_at` (its `ends_at` is
-            // normally null until it becomes a paid period). Reporting the
-            // trial end here keeps the admin UI, the plan engine and the
-            // teacher dashboard honest about when access actually lapses —
-            // and stops a trial from being mistaken for a lifetime grant.
-            $legacyEnd = $subscription->status === 'trialing' && $subscription->trial_ends_at
-                ? $subscription->trial_ends_at
-                : $subscription->ends_at;
-
-            $candidates[] = [
-                'source' => self::SOURCE_LEGACY,
-                'plan_id' => $subscription->plan_id,
-                'status' => $subscription->status,
-                'billing_cycle' => $subscription->billing_cycle,
-                'ends_at' => $legacyEnd,
-                'trial_ends_at' => $subscription->trial_ends_at,
-                'subscription_id' => $subscription->id,
-                'entitlement_id' => null,
-                'cancel_at_period_end' => false,
-                'priority' => 2,
-            ];
-        }
-
-        // 3) Administrative grant — read straight from the dedicated
-        //    `admin_ends_at` field, regardless of the row's status,
-        //    billing_source or fs_license_id. It therefore survives a
-        //    Freemius mirror re-sync and a license deletion (both only
-        //    rewrite those other columns) as long as the date is in the future.
-        $adminGrant = TenantSubscription::where('tenant_id', $tenantId)
+        $adminGrantsByTenant = TenantSubscription::withoutTenant()
+            ->whereIn('tenant_id', $tenantIds)
             ->whereNotNull('admin_ends_at')
-            ->where('admin_ends_at', '>', now())
+            ->where('admin_ends_at', '>', $now)
             ->orderByDesc('admin_ends_at')
-            ->first();
+            ->get()
+            ->groupBy(fn (TenantSubscription $subscription) => (string) $subscription->tenant_id);
 
-        if ($adminGrant) {
-            $candidates[] = [
-                'source' => self::SOURCE_ADMIN,
-                'plan_id' => $adminGrant->plan_id,
-                'status' => $adminGrant->status ?: 'active',
-                'billing_cycle' => $adminGrant->billing_cycle,
-                'ends_at' => $adminGrant->admin_ends_at,
-                'trial_ends_at' => null,
-                'subscription_id' => $adminGrant->id,
-                'entitlement_id' => null,
-                'cancel_at_period_end' => false,
-                'priority' => 1,
-            ];
+        $states = [];
+
+        foreach ($tenantIds as $tenantId) {
+            /** @var list<array<string, mixed>> $candidates */
+            $candidates = [];
+
+            // A canceled license continues to grant access until expiration;
+            // a hard revocation/refund is rejected by FsEntitlement::isActive.
+            $entitlement = $entitlementsByTenant->get($tenantId, collect())
+                ->first(fn (FsEntitlement $candidate) => $candidate->isActive());
+
+            if ($entitlement) {
+                $candidates[] = [
+                    'source' => self::SOURCE_FREEMIUS,
+                    'plan_id' => $entitlement->plan_id,
+                    'status' => $entitlement->status ?: 'active',
+                    'billing_cycle' => $entitlement->metadata['billing_cycle'] ?? null,
+                    'ends_at' => $entitlement->expiration,
+                    'trial_ends_at' => null,
+                    'subscription_id' => $entitlement->fs_subscription_id,
+                    'entitlement_id' => $entitlement->id,
+                    'cancel_at_period_end' => (bool) $entitlement->is_canceled,
+                    'priority' => 3,
+                ];
+            }
+
+            // A trial is effective only inside its explicit trial window. An
+            // active subscription may have no end (lifetime), but a future
+            // start date never grants access early.
+            $subscription = $legacyByTenant->get($tenantId, collect())
+                ->first(function (TenantSubscription $candidate) use ($now): bool {
+                    if ($candidate->starts_at && $candidate->starts_at->gt($now)) {
+                        return false;
+                    }
+
+                    if ($candidate->status === 'trialing') {
+                        return $candidate->trial_ends_at !== null
+                            && $candidate->trial_ends_at->gt($now);
+                    }
+
+                    return $candidate->status === 'active'
+                        && ($candidate->ends_at === null || $candidate->ends_at->gt($now));
+                });
+
+            if ($subscription) {
+                $legacyEnd = $subscription->status === 'trialing'
+                    ? $subscription->trial_ends_at
+                    : $subscription->ends_at;
+
+                $candidates[] = [
+                    'source' => self::SOURCE_LEGACY,
+                    'plan_id' => $subscription->plan_id,
+                    'status' => $subscription->status,
+                    'billing_cycle' => $subscription->billing_cycle,
+                    'ends_at' => $legacyEnd,
+                    'trial_ends_at' => $subscription->trial_ends_at,
+                    'subscription_id' => $subscription->id,
+                    'entitlement_id' => null,
+                    'cancel_at_period_end' => false,
+                    'priority' => 2,
+                ];
+            }
+
+            // Admin access is independent of the row's billing status.
+            $adminGrant = $adminGrantsByTenant->get($tenantId, collect())->first();
+
+            if ($adminGrant) {
+                $candidates[] = [
+                    'source' => self::SOURCE_ADMIN,
+                    'plan_id' => $adminGrant->plan_id,
+                    'status' => $adminGrant->status ?: 'active',
+                    'billing_cycle' => $adminGrant->billing_cycle,
+                    'ends_at' => $adminGrant->admin_ends_at,
+                    'trial_ends_at' => null,
+                    'subscription_id' => $adminGrant->id,
+                    'entitlement_id' => null,
+                    'cancel_at_period_end' => false,
+                    'priority' => 1,
+                ];
+            }
+
+            $states[$tenantId] = $this->selectEffectiveCandidate($candidates) ?? $this->empty();
         }
 
+        return $states;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $candidates
+     * @return array<string, mixed>|null
+     */
+    private function selectEffectiveCandidate(array $candidates): ?array
+    {
         if ($candidates === []) {
-            return $this->empty();
+            return null;
         }
 
         usort($candidates, function (array $a, array $b): int {
@@ -202,9 +240,9 @@ class SubscriptionState
                 return 1;
             }
 
-            $cmp = $bEnd <=> $aEnd; // later end first
+            $comparison = $bEnd <=> $aEnd;
 
-            return $cmp !== 0 ? $cmp : ($b['priority'] <=> $a['priority']);
+            return $comparison !== 0 ? $comparison : ($b['priority'] <=> $a['priority']);
         });
 
         $best = $candidates[0];
@@ -235,5 +273,4 @@ class SubscriptionState
             'cancel_at_period_end' => false,
         ];
     }
-
 }
