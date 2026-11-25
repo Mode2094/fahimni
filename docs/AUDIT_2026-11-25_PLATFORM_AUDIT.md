@@ -1,8 +1,8 @@
 # تقرير تدقيق منصة فهمني — 2026-11-25
 
 **الفرع:** `release/launch-2026-11-rc`
-**الإصدار المُنشَر (pinned):** `81abbbbf095cd721ddfc2fa5814ad91d24f159f6`
-**صورة الإنتاج:** `prod-brand4` — مُتحقَّق منها على `https://fahimni.me` (health 200، الشعار والأمان مطابقان).
+**الإصدار المُنشَر (pinned):** `d2ff3a47c6ffc0704a60ad619569240adbbb6ca5`
+**صورة الإنتاج:** `prod-brand5` — مُتحقَّق منها على `https://fahimni.me` (health 200، الشعار والأمان مطابقان، الترحيل المُعتمَد مُطبَّق).
 **النطاق:** مستودع `fahimni` فقط. لم تُلمس أسعار/خطط/عقود، ولم تُمس بيانات المعلمين/الطلاب الحقيقية.
 
 > قاعدة الحالة في هذا المستند: `PASS` تعني أن اختبارًا/فحصًا نُفِّذ فعليًا على هذه الشجرة ونجح.
@@ -286,6 +286,42 @@ Google OAuth الحقيقي · رحلة البريد كاملةً · الفيد�
 - 4 عيوب جديدة مُثبَتة بالإصلاح (AUD-19…AUD-22) + عيبان مكمّلان (AUD-23/24)، كلها مع اختبار انحدار.
 - صفحات المشرف اليتيمة (AUD-18) صارت مربوطة ومنصّةً-كاملة.
 - الحزمة الكاملة خضراء: 919 PHPUnit · 356 Vitest · بناء نظيف · 24+9 Playwright.
+
+---
+
+## 7. النشر والإنتاج (Round 2)
+
+نُشر الإصدار عبر الآلية المعتمَدة `deploy/scripts/fahimni-golive.sh` حصرًا، بعد نسخة احتياطية **مُختبَرة فعليًا**.
+
+| الخطوة | الدليل |
+| --- | --- |
+| النسخة الاحتياطية | `db-20261125T030908Z.dump` (PGDMP، 676K) أُنشئت قبل النشر مباشرة |
+| اختبار الاسترجاع | `restore drill: OK` · `backup freshness ok: 0h old` · **133 migrations · 18 users · 16 tenants · 20MB** (PostgreSQL معزول، `--network none`) |
+| بوّابة السلامة | `db_preflight`: كل ترحيل معلّق على قائمة الاعتماد · زر الحفظ == النسخة المُعتمَدة (`a673d6d6…`) |
+| الإصدار المُنشَر | `current → releases/d2ff3a47c6ffc0704a60ad619569240adbbb6ca5` · `IMAGE_TAG=prod-brand5` |
+| الحاويات | app/frontend/scheduler/horizon على `prod-brand5` بحالة `healthy` |
+| الصحة العامة | `/up` `/api/health/live` `/api/health/ready` `/` → **200** · `https://fahimni.me` → **200** |
+| الهوية والشعار | `platform-settings` = «منصة فهمني» · `/logo.png` مطابق (6e08e7c9…) · العنوان `<title>… منصة فهمني</title>` |
+| اختبار الإطلاق | **34 فحصًا مُنفَّذًا، 0 فشل** · 6 رِحلات BLOCKED (حساب/مزوّد حقيقي) |
+| الترحيل | `2026_11_25_000001` مُطبَّق قبل القطع (`migrations:pending` بعده = `<none>`) |
+
+**تحقّق إصلاح البوّابات على الإنتاج (قراءة فقط، عبر محرّك الخطط الحقيقي):**
+
+```
+tenant 01a1ef7f-…  assignments=true blog=true domain=true
+tenant 01a20d8e-…  assignments=true blog=true domain=true
+tenant 01a1f556-…  assignments=true blog=true domain=true   (وغيرها)
+```
+
+كل الخطط الثلاث تحمل الآن `assignments_enabled/blog_enabled/custom_domain = true`، والفواصل المقصودة محفوظة
+(Starter: `custom_branding_enabled=false`, `multi_teacher_enabled=false`)، و`live_recording_enabled` ما زال غائبًا عن قصد.
+الأرقام لم تتغيّر: starter 29/299 · professional 59/599 · enterprise 89/899 (عرض الـ29$ محفوظ)، والحدود كما هي.
+
+**ما بقي BLOCKED (لم يتغيّر):** Google OAuth الحقيقي · رحلة البريد كاملةً · الفيديو/البث الحقيقي · رفع Bunny · دفع Freemius
+(sandbox/حيّ) · حساب مشرف/طالب حقيقي على الإنتاج · دومين عام مملوك لاختبار DNS/SSL · Docker محلي (اختبارا `caddy-*`).
+
+**أمر التراجع الجاهز** مكتوب على المضيف في `backups/rollback-prod-brand5.20261125T030941Z.txt` (يرجع إلى `prod-brand4`/`81abbbb`
+دون عكس الترحيل الإضافي، وهو متوافق مع الإصدار السابق).
 
 ---
 
