@@ -64,7 +64,7 @@ export default function ExamsPage() {
               {t('اختبر معلوماتك وقِس تقدمك — النتائج تظهر فور التسليم.', 'Test your knowledge and measure your progress — results appear instantly after submission.')}
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2.5 min-w-[240px]">
+          <div className="grid grid-cols-3 gap-2.5 w-full sm:w-auto sm:min-w-[240px]">
             {[
               { icon: ClipboardList, label: t('الاختبارات', 'Exams'), value: published.length },
               { icon: Target, label: t('حد النجاح', 'Pass mark'), value: avgPassMark !== null ? `${avgPassMark}%` : '—' },

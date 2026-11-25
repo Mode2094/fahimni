@@ -840,10 +840,10 @@ class AdminController extends Controller
         $assignments = Assignment::withoutTenant()->where('tenant_id', $tenantId)->count();
 
         // ── Cards ─────────────────────────────────────
-        $cardsTotal = ActivationCard::where('tenant_id', $tenantId)->count();
-        $cardsRedeemed = ActivationCard::where('tenant_id', $tenantId)
+        $cardsTotal = ActivationCard::withoutTenant()->where('tenant_id', $tenantId)->count();
+        $cardsRedeemed = ActivationCard::withoutTenant()->where('tenant_id', $tenantId)
             ->where('status', 'redeemed')->count();
-        $cardsAvailable = ActivationCard::where('tenant_id', $tenantId)
+        $cardsAvailable = ActivationCard::withoutTenant()->where('tenant_id', $tenantId)
             ->where('status', 'generated')->count();
 
         return response()->json([
@@ -1202,14 +1202,38 @@ class AdminController extends Controller
 
         $payments = $rows->map(fn (Payment $p) => $this->paymentPayload($p));
 
+        // Sum completed/refunded amounts per currency. Never collapse different
+        // currencies into one scalar — that would report a meaningless total.
+        $currencyExpr = DB::raw("UPPER(COALESCE(NULLIF(currency, ''), 'USD'))");
+        $completedByCurrency = Payment::withoutTenant()
+            ->where('status', 'completed')
+            ->selectRaw('UPPER(COALESCE(NULLIF(currency, \'\'), \'USD\')) as code, SUM(amount) as total')
+            ->groupBy($currencyExpr)
+            ->pluck('total', 'code')
+            ->map(fn ($v) => round((float) $v, 2))
+            ->all();
+        $refundedByCurrency = Payment::withoutTenant()
+            ->where('status', 'refunded')
+            ->selectRaw('UPPER(COALESCE(NULLIF(currency, \'\'), \'USD\')) as code, SUM(amount) as total')
+            ->groupBy($currencyExpr)
+            ->pluck('total', 'code')
+            ->map(fn ($v) => round((float) $v, 2))
+            ->all();
+        ksort($completedByCurrency);
+        ksort($refundedByCurrency);
+
         $stats = [
             'total' => Payment::withoutTenant()->count(),
             'completed' => Payment::withoutTenant()->where('status', 'completed')->count(),
             'pending' => Payment::withoutTenant()->where('status', 'pending')->count(),
             'failed' => Payment::withoutTenant()->where('status', 'failed')->count(),
             'refunded' => Payment::withoutTenant()->where('status', 'refunded')->count(),
-            'revenue' => Payment::withoutTenant()->where('status', 'completed')->sum('amount'),
-            'refunded_total' => Payment::withoutTenant()->where('status', 'refunded')->sum('amount'),
+            // Platform-currency scalar kept for backwards compatibility; the UI
+            // renders the per-currency map so multiple currencies never mix.
+            'revenue' => round((float) ($completedByCurrency['USD'] ?? 0), 2),
+            'revenue_by_currency' => $completedByCurrency,
+            'refunded_total' => round((float) ($refundedByCurrency['USD'] ?? 0), 2),
+            'refunded_total_by_currency' => $refundedByCurrency,
         ];
 
         return response()->json(['payments' => $payments, 'stats' => $stats]);

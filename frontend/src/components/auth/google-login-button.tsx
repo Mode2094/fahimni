@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { safeInternalPath } from '@/lib/auth-routes';
 import { isPlatformBrowserHost } from '@/lib/request-origin';
 
@@ -37,7 +38,7 @@ export default function GoogleLoginButton({
 
   const start = async () => {
     if (!isPlatformBrowserHost()) {
-      alert('تسجيل الدخول عبر Google غير متاح على الدومين المخصص — استخدم البريد وكلمة المرور.');
+      toast.error('تسجيل الدخول عبر Google غير متاح على الدومين المخصص — استخدم البريد وكلمة المرور.');
       return;
     }
 
@@ -61,10 +62,10 @@ export default function GoogleLoginButton({
       if (d.url) {
         window.location.href = d.url;
       } else {
-        alert(d.message || 'Google OAuth غير مضبوط — أضف GOOGLE_CLIENT_ID في الإعدادات');
+        toast.error(d.message || 'Google OAuth غير مضبوط — أضف GOOGLE_CLIENT_ID في الإعدادات');
       }
     } catch {
-      alert('تعذر بدء تسجيل الدخول عبر Google');
+      toast.error('تعذر بدء تسجيل الدخول عبر Google');
     }
   };
 

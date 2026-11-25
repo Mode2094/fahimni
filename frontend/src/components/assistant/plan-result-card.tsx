@@ -105,7 +105,7 @@ export default function PlanResultCard({ result }: { result: PlanRecommendationR
             <p className="mb-2 text-[11px] font-bold text-slate-400 uppercase tracking-wide">
               {isAr ? 'ميزات هذه الخطة' : 'This plan includes'}
             </p>
-            <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+            <div className="max-h-56 space-y-1 overflow-y-auto pe-1">
               {plan!.features.filter((f: any) => f.value === '1' || f.value === 'true' || f.value === 'on').map((f: any) => {
                 const isBool = f.type === 'boolean';
                 const display = isAr ? f.display_ar : f.display_en;

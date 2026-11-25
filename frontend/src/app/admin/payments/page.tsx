@@ -15,6 +15,7 @@ import { Alert } from '@/components/ui/alert';
 import { CreditCard, Search, RefreshCcw, Eye, AlertCircle, Wallet, User, ReceiptText, Hash, Building2, Landmark, ImageIcon, MessageSquareText } from 'lucide-react';
 import { toast } from 'sonner';
 import SalesTabs from '@/components/admin/sales-tabs';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { curr, date, currencyLabel } from '@/lib/utils';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -31,6 +32,13 @@ const stLabel = (s: string, locale: string) => {
   return { completed: 'Completed', pending: 'Pending', failed: 'Failed', refunded: 'Refunded' }[s] || s;
 };
 
+/** Render a per-currency income map so currencies are never summed together. */
+const amountLabel = (amounts?: Record<string, number> | null, fallback = 0): string => {
+  const entries = Object.entries(amounts || {}).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return curr(fallback);
+  return entries.map(([code, amount]) => `${Number(amount).toFixed(2)} ${code}`).join(' · ');
+};
+
 export default function AdminPaymentsPage() {
   const { check } = useAuth();
   const { locale } = useLocale();
@@ -45,6 +53,7 @@ export default function AdminPaymentsPage() {
   const [search, setSearch] = useState('');
   const [detail, setDetail] = useState<any>(null);
   const [error, setError] = useState('');
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const headers = () => ({ 'Content-Type': 'application/json', Accept: 'application/json' });
 
@@ -75,6 +84,22 @@ export default function AdminPaymentsPage() {
   };
 
   const setStatus = async (id: string, status: string) => {
+    const labels: Record<string, [string, string, boolean]> = {
+      completed: ['تأكيد الدفعة', 'Confirm payment', false],
+      failed: ['تعليم الدفعة كفاشلة', 'Mark payment as failed', true],
+      refunded: ['استرداد الدفعة', 'Refund payment', true],
+    };
+    const [titleAr, titleEn, danger] = labels[status] ?? ['تحديث حالة الدفعة', 'Update payment status', true];
+    const ok = await confirmDialog({
+      danger,
+      title: t(titleAr, titleEn),
+      description: t(
+        'لا يمكن التراجع عن هذا التغيير في حالة الدفعة. هل تريد المتابعة؟',
+        'This payment state change cannot be undone. Continue?',
+      ),
+    });
+    if (!ok) return;
+    setPendingId(id);
     try {
       const res = await fetch(`${API}/admin/payments/${id}/status`, { method: 'PUT', headers: headers(), body: JSON.stringify({ status }) });
       const d = await res.json();
@@ -82,6 +107,7 @@ export default function AdminPaymentsPage() {
       toast.success(t('تم تحديث الحالة', 'Status updated'));
       load();
     } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
+    finally { setPendingId(null); }
   };
 
   const statCards = [
@@ -90,7 +116,7 @@ export default function AdminPaymentsPage() {
     { label: t('معلقة', 'Pending'), value: stats?.pending ?? 0, color: 'text-yellow-600' },
     { label: t('فاشلة', 'Failed'), value: stats?.failed ?? 0, color: 'text-red-500' },
     { label: t('مستردة', 'Refunded'), value: stats?.refunded ?? 0, color: 'text-gray-500' },
-    { label: t('الإيرادات', 'Revenue'), value: curr(stats?.revenue ?? 0), color: 'text-emerald-600' },
+    { label: t('الإيرادات', 'Revenue'), value: amountLabel(stats?.revenue_by_currency, stats?.revenue ?? 0), color: 'text-emerald-600' },
   ];
 
   return (
@@ -156,17 +182,17 @@ export default function AdminPaymentsPage() {
                     {p.plan && <p className="text-[11px] text-teal-700 mt-0.5">{t('الخطة', 'Plan')}: {p.plan.name} {p.invoice ? `· ${t('فاتورة', 'Invoice')} ${p.invoice.number}` : ''}</p>}
                   </div>
                   <div className="text-end">
-                    <p className="font-semibold">{curr(p.amount)}</p>
+                    <p className="font-semibold">{curr(p.amount, p.currency || 'USD')}</p>
                     <Badge className={`mt-1 text-xs ${meta[1]}`}>{meta[0]}</Badge>
                   </div>
                   {p.status === 'pending' && (
                     <div className="flex flex-col gap-1">
-                      <Button size="sm" className="text-xs bg-green-600 hover:bg-green-700" onClick={() => setStatus(p.id, 'completed')}>{t('تأكيد', 'Confirm')}</Button>
-                      <Button size="sm" variant="outline" className="text-xs text-red-500" onClick={() => setStatus(p.id, 'failed')}>{t('فشل', 'Fail')}</Button>
+                      <Button size="sm" disabled={pendingId === p.id} className="text-xs bg-green-600 hover:bg-green-700" onClick={() => setStatus(p.id, 'completed')}>{t('تأكيد', 'Confirm')}</Button>
+                      <Button size="sm" variant="outline" disabled={pendingId === p.id} className="text-xs text-red-500" onClick={() => setStatus(p.id, 'failed')}>{t('فشل', 'Fail')}</Button>
                     </div>
                   )}
                   {p.status === 'completed' && (
-                    <Button size="sm" variant="outline" className="text-xs text-gray-500" onClick={() => setStatus(p.id, 'refunded')}>{t('استرداد', 'Refund')}</Button>
+                    <Button size="sm" variant="outline" disabled={pendingId === p.id} className="text-xs text-gray-500" onClick={() => setStatus(p.id, 'refunded')}>{t('استرداد', 'Refund')}</Button>
                   )}
                   <Button size="sm" variant="ghost" className="text-xs gap-1 text-teal-700" onClick={() => openDetail(p.id)}><Eye className="h-3.5 w-3.5" /> {t('تفاصيل', 'Details')}</Button>
                 </div>

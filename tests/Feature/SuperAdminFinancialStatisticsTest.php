@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Models\ActivationCard;
+use App\Models\Course;
 use App\Models\FsEntitlement;
 use App\Models\Payment;
 use App\Models\PlatformSetting;
@@ -307,5 +309,114 @@ class SuperAdminFinancialStatisticsTest extends TenantTestCase
 
         $this->assertSame('cancelled', $a->fresh()->status);
         $this->assertSame('canceled', $b->fresh()->status);
+    }
+
+    public function test_a_multi_workspace_teacher_is_counted_in_exactly_one_state(): void
+    {
+        // Same person owns a paid workspace and a trial workspace. They must
+        // appear once — as a paid subscriber — never in both buckets.
+        $paidTenant = $this->makeTenant();
+        $trialTenant = $this->makeTenant();
+        $teacher = $this->teacher($paidTenant);
+        $this->attachToTenant($teacher, $trialTenant, 'owner');
+        $trialTenant->update(['owner_id' => $teacher->id]);
+
+        $plan = $this->plan();
+        $paidSubscription = $this->subscription($paidTenant, $plan, 'active');
+        $this->confirmedSubscriptionPayment($paidTenant, $paidSubscription, 20);
+        $this->subscription($trialTenant, $plan, 'trialing', overrides: ['trial_ends_at' => now()->addDays(7)]);
+
+        $metrics = app(SuperAdminStatisticsService::class)->snapshot()['subscription_metrics'];
+
+        $this->assertSame(1, $metrics['total_teachers']);
+        $this->assertSame(1, $metrics['paid_subscribers']);
+        $this->assertSame(0, $metrics['valid_trials']);
+        $this->assertSame(1, $metrics['effective_access']);
+    }
+
+    public function test_a_trial_workspace_outranks_an_expired_one_for_the_same_teacher(): void
+    {
+        $trialTenant = $this->makeTenant();
+        $expiredTenant = $this->makeTenant();
+        $teacher = $this->teacher($trialTenant);
+        $this->attachToTenant($teacher, $expiredTenant, 'owner');
+        $expiredTenant->update(['owner_id' => $teacher->id]);
+
+        $plan = $this->plan();
+        $this->subscription($trialTenant, $plan, 'trialing', overrides: ['trial_ends_at' => now()->addDays(7)]);
+        $this->subscription($expiredTenant, $plan, 'trialing', overrides: ['trial_ends_at' => now()->subDay()]);
+
+        $metrics = app(SuperAdminStatisticsService::class)->snapshot()['subscription_metrics'];
+
+        $this->assertSame(1, $metrics['total_teachers']);
+        $this->assertSame(1, $metrics['valid_trials']);
+        $this->assertSame(0, $metrics['expired_access']);
+        $this->assertSame(1, $metrics['effective_access']);
+    }
+
+    public function test_admin_payments_stats_keep_currencies_separate(): void
+    {
+        $tenant = $this->makeTenant();
+
+        foreach ([
+            ['amount' => 100, 'currency' => 'USD', 'status' => 'completed'],
+            ['amount' => 50, 'currency' => 'JOD', 'status' => 'completed'],
+            ['amount' => 25, 'currency' => 'USD', 'status' => 'refunded'],
+        ] as $row) {
+            Payment::withoutTenant()->create([
+                'id' => UuidV7::generate(),
+                'tenant_id' => $tenant->id,
+                'transaction_id' => 'txn-'.UuidV7::generate(),
+                'gateway' => 'legacy',
+                'amount' => $row['amount'],
+                'currency' => $row['currency'],
+                'status' => $row['status'],
+                'payment_method' => 'card',
+                'gateway_data' => [],
+                'paid_at' => now(),
+            ]);
+        }
+
+        $res = $this->getJson('/api/v1/admin/payments', $this->superAdminHeaders())->assertOk();
+
+        $this->assertSame(100.0, (float) $res->json('stats.revenue_by_currency.USD'));
+        $this->assertSame(50.0, (float) $res->json('stats.revenue_by_currency.JOD'));
+        // Legacy scalar is the platform currency only — never a mixed total.
+        $this->assertSame(100.0, (float) $res->json('stats.revenue'));
+        $this->assertSame(25.0, (float) $res->json('stats.refunded_total_by_currency.USD'));
+    }
+
+    public function test_teacher_show_card_stats_ignore_a_foreign_tenant_header(): void
+    {
+        $teacherTenant = $this->makeTenant();
+        $otherTenant = $this->makeTenant();
+        $teacher = $this->teacher($teacherTenant);
+
+        $course = Course::withoutTenant()->create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $teacherTenant->id,
+            'title' => 'Course',
+            'slug' => 'course-'.UuidV7::generate(),
+            'status' => 'published',
+        ]);
+
+        foreach (['generated', 'generated', 'redeemed'] as $i => $status) {
+            ActivationCard::withoutTenant()->create([
+                'id' => UuidV7::generate(),
+                'tenant_id' => $teacherTenant->id,
+                'course_id' => $course->id,
+                'code' => 'CARD-'.UuidV7::generate(),
+                'status' => $status,
+                'metadata' => [],
+            ]);
+        }
+
+        $headers = array_merge($this->superAdminHeaders(), ['X-Tenant-Id' => $otherTenant->id]);
+
+        $res = $this->getJson('/api/v1/admin/teachers/'.$teacher->id, $headers)->assertOk();
+
+        $this->assertSame(3, $res->json('stats.cards'));
+        $this->assertSame(2, $res->json('stats.cards_available'));
+        $this->assertSame(1, $res->json('stats.cards_redeemed'));
     }
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import GoogleLoginButton from './google-login-button';
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 describe('GoogleLoginButton student context', () => {
   it('passes the teacher slug and a safe card return path through signed OAuth state', async () => {
@@ -38,5 +41,17 @@ describe('GoogleLoginButton student context', () => {
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]), window.location.origin);
     expect(requestUrl.searchParams.has('redirect_to')).toBe(false);
+  });
+
+  it('reports a missing OAuth configuration with a toast, never a native alert', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ message: 'Google OAuth is not configured yet.' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<GoogleLoginButton role="teacher" label="Continue" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(toast.error).toHaveBeenCalled();
   });
 });

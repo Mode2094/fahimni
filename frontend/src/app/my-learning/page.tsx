@@ -226,7 +226,7 @@ export default function MyLearningPage() {
               <a href="/leaderboard"><Button variant="ghost" className="gap-2 rounded-full text-white border border-white/25 glass hover:bg-white/10"><TrendingUp className="h-4 w-4" /> {t('لوحة الأوائل', 'Leaderboard')}</Button></a>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2.5 min-w-[240px]">
+          <div className="grid grid-cols-3 gap-2.5 w-full sm:w-auto sm:min-w-[240px]">
             {[
               { icon: BookOpen, label: t('نشط', 'Active'), value: loading || courseLoadError ? '—' : active },
               { icon: CheckCircle, label: t('مكتمل', 'Done'), value: loading || courseLoadError ? '—' : completed },

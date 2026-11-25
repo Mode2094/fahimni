@@ -27,6 +27,7 @@ function CheckoutInner() {
   const [cycle, setCycle] = useState<'monthly' | 'yearly'>(() => (search.get('cycle') === 'yearly' ? 'yearly' : 'monthly'));
   const [gateway, setGateway] = useState<Gateway>({ enabled: false, configured: false });
   const [loading, setLoading] = useState(true);
+  const [planError, setPlanError] = useState(false);
   const [paying, setPaying] = useState(false);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ function CheckoutInner() {
         // Fire `checkout_start` once when a real plan intent is present.
         track('checkout_start', { content_name: 'platform_subscription', plan_id: found.id, billing_cycle: search.get('cycle') === 'yearly' ? 'yearly' : 'monthly' });
       } else router.replace('/pricing');
-    }).catch(() => {});
+    }).catch(() => setPlanError(true));
     fetch(`${API}/payment-gateways`).then(r => r.json()).then(d => {
       setGateway(d.freemius || { enabled: false, configured: false });
     }).catch(() => {})
@@ -163,6 +164,11 @@ function CheckoutInner() {
                     </Badge>
                   )}
                 </>
+              ) : planError ? (
+                <div className="text-center py-6">
+                  <p className="text-sm text-muted-foreground">{t('تعذر تحميل تفاصيل الخطة', 'Could not load the plan details')}</p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => router.replace('/pricing')}>{t('اختر خطة أخرى', 'Choose another plan')}</Button>
+                </div>
               ) : (
                 <Loader2 className="w-5 h-5 animate-spin" />
               )}

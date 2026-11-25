@@ -204,7 +204,7 @@ export function ConfirmDialogHost() {
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={opts.description ? descId : undefined}
-        className="relative z-10 w-full max-w-md rounded-2xl bg-card p-6 text-start shadow-2xl"
+        className="relative z-10 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl bg-card p-6 text-start shadow-2xl"
       >
         <div className="flex items-start gap-3">
           {danger && (

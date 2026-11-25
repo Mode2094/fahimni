@@ -93,6 +93,10 @@ function StudentsPageInner() {
   };
 
   const resetDevices = async (s: any) => {
+    if (!(await confirmDialog({
+      danger: true,
+      description: t(`إعادة تعيين أجهزة ${s.name}؟ سيتم فصل كل أجهزته الحالية ويمكنه الدخول من جهاز جديد.`, `Reset ${s.name}'s devices? All current devices will be unbound and they can log in from a new one.`),
+    }))) return;
     setBusyId(s.id);
     try {
       const res = await fetch(`${API}/teacher/students/${s.id}/reset-devices`, { method: 'POST', headers: headers() });

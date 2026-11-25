@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Alert } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import AdminSubscriptionMetrics from '@/components/admin/subscription-metrics';
@@ -18,7 +19,7 @@ import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
   Wallet, TrendingUp, ClipboardList, FileText, Percent, Layers, Timer, Award, Star, Play,
-  ExternalLink, Copy, Phone, MessageCircle, CalendarPlus, History,
+  ExternalLink, Copy, Phone, MessageCircle, CalendarPlus, History, AlertCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -30,6 +31,7 @@ export default function AdminTeachersPanel() {
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
   const [teachers, setTeachers] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState(false);
   const [subscriptionMetrics, setSubscriptionMetrics] = useState<any>(null);
   const [plans, setPlans] = useState<any[]>([]);
   const [search, setSearch] = useState('');
@@ -59,12 +61,13 @@ export default function AdminTeachersPanel() {
     if (statusFilter === 'active' || statusFilter === 'inactive') q.set('is_active', statusFilter === 'active' ? '1' : '0');
     if (subscriptionStateFilter) q.set('subscription_state', subscriptionStateFilter);
     fetch(`${API}/admin/teachers?${q}`, { headers: headers(), cache: 'no-store' })
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => {
         setTeachers(d.teachers || []);
         setSubscriptionMetrics(d.subscription_metrics || null);
+        setLoadError(false);
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [search, statusFilter, subscriptionStateFilter]);
 
@@ -363,6 +366,15 @@ export default function AdminTeachersPanel() {
         </div>
       </div>
 
+      {loadError && (
+        <Alert variant="error" icon={AlertCircle}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{t('تعذر تحميل قائمة المعلمين', 'Could not load the teachers list')}</span>
+            <Button size="sm" variant="outline" onClick={load}>{t('إعادة المحاولة', 'Retry')}</Button>
+          </div>
+        </Alert>
+      )}
+
       {loading ? <CardSkeleton count={6} /> :
         teachers.length === 0 ? (
           <EmptyState icon={Users} title={t('لا يوجد معلمون', 'No teachers')} description={t('ابدأ بإضافة أول معلم وتفعيل منصته', 'Start by adding your first teacher to activate their platform')} action={<Button onClick={() => setShowForm(true)} className="gap-2 rounded-full"><Plus className="h-4 w-4" /> {t('إضافة معلم', 'Add Teacher')}</Button>} />
@@ -377,7 +389,7 @@ export default function AdminTeachersPanel() {
                     : <Badge className="bg-rose-100 text-rose-600 border-0">{t('موقوف', 'Suspended')}</Badge>}
                 </div>
                 <h3 className="font-semibold">{teach.name}</h3>
-                <p className="text-sm text-gray-500 mt-1 flex items-center gap-1 truncate"><Mail className="h-3 w-3 shrink-0" /> {teach.email}</p>
+                <p title={teach.email} className="text-sm text-gray-500 mt-1 flex items-center gap-1 truncate"><Mail className="h-3 w-3 shrink-0" /> {teach.email}</p>
                 <div className="text-sm mt-1 flex items-center gap-1">
                   <Phone className="h-3 w-3 shrink-0 text-gray-400" />
                   {hasPhone(teach.phone) ? (
@@ -557,7 +569,7 @@ export default function AdminTeachersPanel() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-1 space-y-4">
+              <div className="flex-1 overflow-y-auto pe-1 space-y-4">
                 {detailTab === 'overview' && (
                   <>
                     {/* Contact & account data — name, phone and email are the

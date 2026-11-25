@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Loader2, Globe, Search, CheckCircle2, XCircle, ExternalLink, Copy, Rocket, ShieldCheck, ArrowRight, Link2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -36,6 +37,7 @@ export default function DomainManager() {
   const [slugDraft, setSlugDraft] = useState('');
   const [slugStatus, setSlugStatus] = useState<{ state: 'idle' | 'checking' | 'available' | 'taken' | 'reserved' | 'invalid' | 'error' }>({ state: 'idle' });
   const [savingSlug, setSavingSlug] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -117,12 +119,23 @@ export default function DomainManager() {
   };
 
   const disconnect = async () => {
+    const ok = await confirmDialog({
+      danger: true,
+      title: t('فصل الدومين', 'Disconnect domain'),
+      description: t(
+        `سيتم فصل «${data?.domain || ''}» وسيتوقف موقعك عن العمل على هذا الدومين. هل أنت متأكد؟`,
+        `"${data?.domain || ''}" will be disconnected and your site will stop working on this domain. Are you sure?`,
+      ),
+    });
+    if (!ok) return;
+    setDisconnecting(true);
     try {
       const res = await fetch(`${API}/teacher/domain`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم فصل الدومين', 'Domain disconnected'));
       load();
     } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
+    setDisconnecting(false);
   };
 
   const copy = async (v: string, label: string) => {
@@ -231,7 +244,7 @@ export default function DomainManager() {
                   <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={verify} disabled={checking}>
                     {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}{t('تحقق من الربط', 'Verify now')}
                   </Button>
-                  <Button variant="ghost" size="sm" className="gap-1.5 rounded-full text-xs text-red-500" onClick={disconnect}><Trash2 className="h-3.5 w-3.5" />{t('فصل', 'Disconnect')}</Button>
+                  <Button variant="ghost" size="sm" className="gap-1.5 rounded-full text-xs text-red-500" onClick={disconnect} disabled={disconnecting}>{disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}{t('فصل', 'Disconnect')}</Button>
                 </div>
                 {verifyResult && (
                   <div className={`mt-4 p-4 rounded-xl text-sm ${verifyResult.ok ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>

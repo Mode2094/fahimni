@@ -373,7 +373,7 @@ class SuperAdminStatisticsService
 
     private function isValidTrial(TenantSubscription $subscription, Carbon $now): bool
     {
-        return $subscription->status === 'trialing'
+        return $this->normalizeStatus((string) $subscription->status) === 'trialing'
             && $subscription->trial_ends_at !== null
             && $subscription->trial_ends_at->gt($now)
             && ($subscription->starts_at === null || $subscription->starts_at->lte($now))
@@ -424,6 +424,12 @@ class SuperAdminStatisticsService
     }
 
     /**
+     * Resolve each teacher to exactly ONE subscription state so the counters
+     * form a partition: a teacher who owns/teaches in several workspaces (e.g. a
+     * paid tenant and a trial tenant) is never counted in more than one bucket.
+     * The priority mirrors {@see teacherSubscriptionSummaries()} so the counters
+     * and the per-teacher badges always agree.
+     *
      * @param  array<string, bool>  $paidTenantIds
      * @param  array<string, bool>  $trialTenantIds
      * @param  array<string, bool>  $adminTenantIds
@@ -442,6 +448,56 @@ class SuperAdminStatisticsService
         array $unverifiedTenantIds,
         array $effectiveTeacherIds,
     ): array {
+        // Higher rank wins; only one state is retained per teacher.
+        $priority = [
+            'paid' => 6,
+            'admin' => 5,
+            'valid_trial' => 4,
+            'unverified' => 3,
+            'expired' => 2,
+        ];
+
+        $best = [];            // teacherId => ['state' => string, 'rank' => int]
+        $effective = [];       // teacherId => true
+        $activeAccount = [];   // teacherId => true
+
+        foreach ($tenantTeacherIds as $tenantId => $teacherIds) {
+            $tenantState = null;
+            $rank = 0;
+
+            if (isset($paidTenantIds[$tenantId])) {
+                $tenantState = 'paid';
+                $rank = $priority['paid'];
+            } elseif (isset($adminTenantIds[$tenantId])) {
+                $tenantState = 'admin';
+                $rank = $priority['admin'];
+            } elseif (isset($trialTenantIds[$tenantId])) {
+                $tenantState = 'valid_trial';
+                $rank = $priority['valid_trial'];
+            } elseif (isset($unverifiedTenantIds[$tenantId])) {
+                $tenantState = 'unverified';
+                $rank = $priority['unverified'];
+            } elseif (isset($expiredTenantIds[$tenantId])) {
+                $tenantState = 'expired';
+                $rank = $priority['expired'];
+            }
+
+            foreach ($teacherIds as $teacherId) {
+                if (! isset($teacherInfo[$teacherId])) {
+                    continue;
+                }
+                if ($teacherInfo[$teacherId]['is_active']) {
+                    $activeAccount[$teacherId] = true;
+                }
+                if (isset($effectiveTeacherIds[$teacherId])) {
+                    $effective[$teacherId] = true;
+                }
+                if ($tenantState !== null && (! isset($best[$teacherId]) || $rank > $best[$teacherId]['rank'])) {
+                    $best[$teacherId] = ['state' => $tenantState, 'rank' => $rank];
+                }
+            }
+        }
+
         $states = [
             'paid' => [],
             'valid_trial' => [],
@@ -452,38 +508,12 @@ class SuperAdminStatisticsService
             'active_account' => [],
         ];
 
-        foreach ($tenantTeacherIds as $tenantId => $teacherIds) {
-            foreach ($teacherIds as $teacherId) {
-                if (! isset($teacherInfo[$teacherId])) {
-                    continue;
-                }
-                if (isset($paidTenantIds[$tenantId])) {
-                    $states['paid'][$teacherId] = true;
-                }
-                if (isset($trialTenantIds[$tenantId])) {
-                    $states['valid_trial'][$teacherId] = true;
-                }
-                if (isset($adminTenantIds[$tenantId]) && $teacherInfo[$teacherId]['is_active']) {
-                    $states['admin'][$teacherId] = true;
-                }
-                if (isset($expiredTenantIds[$tenantId])) {
-                    $states['expired'][$teacherId] = true;
-                }
-                if (isset($unverifiedTenantIds[$tenantId])) {
-                    $states['unverified'][$teacherId] = true;
-                }
-                if (isset($effectiveTeacherIds[$teacherId])) {
-                    $states['effective'][$teacherId] = true;
-                }
-                if ($teacherInfo[$teacherId]['is_active']) {
-                    $states['active_account'][$teacherId] = true;
-                }
-            }
+        foreach ($best as $teacherId => $info) {
+            $states[$info['state']][] = (string) $teacherId;
         }
 
-        foreach ($states as $key => $ids) {
-            $states[$key] = array_keys($ids);
-        }
+        $states['effective'] = array_keys($effective);
+        $states['active_account'] = array_keys($activeAccount);
 
         return $states;
     }

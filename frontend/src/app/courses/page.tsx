@@ -10,11 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { BookOpen, Plus, Loader2, Trash2, Pencil, Eye, EyeOff, Layers, FileQuestion, ClipboardList, Users, Award } from 'lucide-react';
+import { Alert } from '@/components/ui/alert';
+import { BookOpen, Plus, Loader2, Trash2, Pencil, Eye, EyeOff, Layers, FileQuestion, ClipboardList, Users, Award, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { track } from '@/lib/analytics';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -26,6 +28,8 @@ export default function CoursesPage() {
 
   const [courses, setCourses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editing, setEditing] = useState<any>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<any>({ title: '', description: '', short_description: '', price: '0', drip_enabled: false, drip_interval_days: '1', prerequisites_enabled: false, prerequisites: '', certificate_enabled: false, certificate_template: 'classic', certificate_accent_color: '#0d9488', certificate_signature_name: '', certificate_signature_title: '' });
@@ -37,8 +41,11 @@ export default function CoursesPage() {
   };
 
   const load = () => {
+    setLoadError('');
     fetch(`${API}/courses`, { headers: headers() })
-      .then(r => r.json()).then(d => setCourses(d.courses || [])).catch(() => {})
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(d => setCourses(d.courses || []))
+      .catch(() => setLoadError(t('تعذر تحميل الكورسات', 'Could not load courses')))
       .finally(() => setLoading(false));
   };
   useEffect(() => { if (check()) load(); }, [check()]);
@@ -73,11 +80,24 @@ export default function CoursesPage() {
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الكورس', 'Could not save the course'))); }
   };
 
-  const remove = async (id: string) => {
+  const remove = async (course: any) => {
+    const ok = await confirmDialog({
+      danger: true,
+      title: t('حذف الكورس', 'Delete course'),
+      description: t(
+        `سيتم حذف «${course.title}» مع كل الأقسام والدروس والاختبارات المرتبطة. لا يمكن التراجع.`,
+        `"${course.title}" and all its sections, lessons and exams will be deleted. This cannot be undone.`,
+      ),
+      confirmLabel: t('حذف', 'Delete'),
+    });
+    if (!ok) return;
+    setDeletingId(course.id);
     try {
-      await fetch(`${API}/courses/${id}`, { method: 'DELETE', headers: headers() });
+      const res = await fetch(`${API}/courses/${course.id}`, { method: 'DELETE', headers: headers() });
+      if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الكورس', 'Could not delete the course'))); }
+    setDeletingId(null);
   };
 
   const togglePublish = async (c: any) => {
@@ -101,10 +121,20 @@ export default function CoursesPage() {
             <p className="text-muted-foreground mt-1">{t('أنشئ وأدر كورساتك: المحتوى، الاختبارات، بنك الأسئلة', 'Create & manage: content, exams, question bank')}</p>
           </div>
         </div>
-        <Button onClick={openAdd} className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
-          <Plus className="h-4 w-4" /> {t('كورس جديد', 'New Course')}
-        </Button>
+        {!loading && courses.length > 0 && (
+          <Button onClick={openAdd} className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+            <Plus className="h-4 w-4" /> {t('كورس جديد', 'New Course')}
+          </Button>
+        )}
       </div>
+      {loadError && (
+        <Alert variant="error" icon={AlertCircle}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{loadError}</span>
+            <Button size="sm" variant="outline" onClick={load}>{t('إعادة المحاولة', 'Retry')}</Button>
+          </div>
+        </Alert>
+      )}
       {loading ? <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div> :
         courses.length === 0 ? (
           <Card className="border-0 shadow-sm overflow-hidden">
@@ -147,11 +177,11 @@ export default function CoursesPage() {
                     <a href={`/courses/${c.id}`} className="flex-1">
                       <Button size="sm" className="w-full rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>{t('إدارة', 'Manage')}</Button>
                     </a>
-                    <Button size="icon" variant="outline" className="h-8 w-8 rounded-full" onClick={() => togglePublish(c)} title={c.is_published ? t('إخفاء', 'Unpublish') : t('نشر', 'Publish')}>
+                    <Button size="icon" variant="outline" className="h-8 w-8 rounded-full" onClick={() => togglePublish(c)} title={c.is_published ? t('إخفاء', 'Unpublish') : t('نشر', 'Publish')} aria-label={c.is_published ? t('إخفاء', 'Unpublish') : t('نشر', 'Publish')}>
                       {c.is_published ? <EyeOff className="h-3.5 w-3.5 text-gray-400" /> : <Eye className="h-3.5 w-3.5 text-green-600" />}
                     </Button>
-                    <Button size="icon" variant="outline" className="h-8 w-8 rounded-full" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5 text-teal-700" /></Button>
-                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full text-red-500" onClick={() => remove(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="outline" className="h-8 w-8 rounded-full" onClick={() => openEdit(c)} title={t('تعديل', 'Edit')} aria-label={t('تعديل', 'Edit')}><Pencil className="h-3.5 w-3.5 text-teal-700" /></Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full text-red-500" onClick={() => remove(c)} disabled={deletingId === c.id} title={t('حذف', 'Delete')} aria-label={t('حذف', 'Delete')}>{deletingId === c.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}</Button>
                   </div>
                 </CardContent>
               </Card>

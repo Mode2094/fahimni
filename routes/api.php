@@ -397,10 +397,12 @@ Route::prefix('v1')->group(function () {
 
             // Payment initiation (subscription checkout — Freemius only)
             Route::post('videos/upload', [FileUploadController::class, 'uploadDirect'])->middleware('throttle:video-upload');
-            Route::post('subscriptions/freemius/checkout', [FreemiusCheckoutController::class, 'initiate'])->middleware('throttle:checkout');
+            // Subscription management is tenant-staff only: a student or any
+            // non-staff member must never start/cancel the workspace's billing.
+            Route::post('subscriptions/freemius/checkout', [FreemiusCheckoutController::class, 'initiate'])->middleware('role:teacher,owner,admin', 'throttle:checkout');
             Route::get('subscriptions/freemius/complete', [FreemiusCheckoutController::class, 'complete'])->middleware('throttle:checkout');
-            Route::post('subscriptions/freemius/portal', [FreemiusCheckoutController::class, 'portal']);
-            Route::post('subscriptions/freemius/cancel', [FreemiusCheckoutController::class, 'cancel']);
+            Route::post('subscriptions/freemius/portal', [FreemiusCheckoutController::class, 'portal'])->middleware('role:teacher,owner,admin');
+            Route::post('subscriptions/freemius/cancel', [FreemiusCheckoutController::class, 'cancel'])->middleware('role:teacher,owner,admin');
 
             // ─── Support Tickets (teacher/student side) ──
             Route::get('tickets', [AdminController::class, 'myTickets']);
@@ -553,9 +555,9 @@ Route::prefix('v1')->group(function () {
             // ─── Tenant Subscriptions ─────────────────────
             Route::get('subscriptions', [TenantSubscriptionController::class, 'index']);
             Route::get('subscriptions/current', [TenantSubscriptionController::class, 'current']);
-            Route::post('subscriptions', [TenantSubscriptionController::class, 'subscribe']);
-            Route::get('subscriptions/{subscription}', [TenantSubscriptionController::class, 'show']);
-            Route::post('subscriptions/{subscription}/cancel', [TenantSubscriptionController::class, 'cancel']);
+            Route::post('subscriptions', [TenantSubscriptionController::class, 'subscribe'])->middleware('role:teacher,owner,admin');
+            Route::get('subscriptions/{subscription}', [TenantSubscriptionController::class, 'show'])->middleware('role:teacher,owner,admin');
+            Route::post('subscriptions/{subscription}/cancel', [TenantSubscriptionController::class, 'cancel'])->middleware('role:teacher,owner,admin');
 
             // ─── Payments ─────────────────────────────────
             Route::get('payments', [PaymentController::class, 'index']);

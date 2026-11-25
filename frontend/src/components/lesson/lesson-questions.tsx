@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '@/store/locale';
 import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { MessageCircleQuestion, Trash2, Loader2, Send, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -70,6 +71,12 @@ export default function LessonQuestions({ lessonId }: { lessonId: string }) {
   };
 
   const deleteQuestion = async (id: string) => {
+    const ok = await confirmDialog({
+      danger: true,
+      description: t('حذف هذا السؤال؟ لا يمكن التراجع.', 'Delete this question? This cannot be undone.'),
+      confirmLabel: t('حذف', 'Delete'),
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       const res = await fetch(`${API}/lesson-questions/${id}`, { method: 'DELETE', headers: headers() });

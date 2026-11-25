@@ -58,7 +58,7 @@ export default function ResultsPage() {
               {t('كل محاولة خطوة للأمام — راقب تقدمك وحسّن مستواك', 'Every attempt is a step forward — track your progress and improve')}
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2.5 min-w-[240px]">
+          <div className="grid grid-cols-3 gap-2.5 w-full sm:w-auto sm:min-w-[240px]">
             {[
               { icon: Award, label: t('ناجح', 'Passed'), value: passed },
               { icon: TrendingUp, label: t('المتوسط', 'Average'), value: `${avg}%` },

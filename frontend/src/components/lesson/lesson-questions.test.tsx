@@ -41,4 +41,22 @@ describe('LessonQuestions', () => {
     expect(post).toBeTruthy();
     expect(post!.body).toContain('سؤال جديد');
   });
+
+  it('does not delete a question until the confirmation is accepted', async () => {
+    // No <ConfirmDialogHost> is mounted here, so confirmDialog falls back to the
+    // native window.confirm, which jsdom does not confirm (returns falsy).
+    global.fetch = vi.fn((input: any, init?: any) => {
+      const url = String(input);
+      calls.push({ url, method: init?.method || 'GET', body: init?.body || '' });
+      if (url.includes('/questions')) return json({ questions: [{ id: 'q1', body: 'سؤالي', mine: true, answered_at: null }] });
+      return json({});
+    }) as any;
+
+    render(<LessonQuestions lessonId="l1" />);
+    await screen.findByText('سؤالي');
+
+    await userEvent.click(screen.getByRole('button', { name: 'حذف' }));
+
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
 });
