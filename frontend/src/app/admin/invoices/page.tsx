@@ -220,9 +220,9 @@ export default function AdminInvoicesPage() {
 
             {/* المبالغ */}
             <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4">
-              <div><p className="text-[11px] text-gray-500">{t('المبلغ', 'Amount')}</p><p className="font-bold">{curr(Number(selected.amount) || 0, currencyOf(selected))}</p></div>
-              <div><p className="text-[11px] text-gray-500">{t('الضريبة', 'Tax')}</p><p className="font-bold">{curr(Number(selected.tax_amount) || 0, currencyOf(selected))}</p></div>
-              <div><p className="text-[11px] text-gray-500">{t('الإجمالي', 'Total')}</p><p className="font-bold text-teal-700">{curr(Number(selected.total_amount) || 0, currencyOf(selected))}</p></div>
+              <div className="min-w-0"><p className="text-[11px] text-gray-500">{t('المبلغ', 'Amount')}</p><p className="font-bold break-words">{curr(Number(selected.amount) || 0, currencyOf(selected))}</p></div>
+              <div className="min-w-0"><p className="text-[11px] text-gray-500">{t('الضريبة', 'Tax')}</p><p className="font-bold break-words">{curr(Number(selected.tax_amount) || 0, currencyOf(selected))}</p></div>
+              <div className="min-w-0"><p className="text-[11px] text-gray-500">{t('الإجمالي', 'Total')}</p><p className="font-bold text-teal-700 break-words">{curr(Number(selected.total_amount) || 0, currencyOf(selected))}</p></div>
             </div>
 
             {/* المؤسسة والاشتراك */}

@@ -11,9 +11,6 @@ export const auth = {
 export const tenants = {
   list: () => api.get<{ tenants: Tenant[] }>('/tenants').then(r => r.data.tenants),
   create: (d: { name: string; slug: string }) => api.post<{ tenant: Tenant }>('/tenants', d).then(r => r.data.tenant),
-  get: (id: string) => api.get<{ tenant: Tenant }>(`/tenants/${id}`).then(r => r.data.tenant),
-  update: (id: string, d: any) => api.put<{ tenant: Tenant }>(`/tenants/${id}`, d).then(r => r.data.tenant),
-  remove: (id: string) => api.delete(`/tenants/${id}`),
 };
 
 export const courses = {
