@@ -52,14 +52,16 @@
 set -Eeuo pipefail
 
 # ── pinned, approved release (never substitute a moving branch tip) ─────────
-# d7758daa is the current approved Release Candidate on
-# release/launch-2026-11-rc: PR #63/#64/#65 integrated, plus the Super-Admin
-# trial extension, per-teacher custom domains, and the custom-domain closeout
-# (session/CSRF for VERIFIED teacher domains, tenant-site-only proxy rewrite,
-# Google safely disabled off-platform). It changes NO migration relative to the
-# previously deployed 65982899, and it carries the approved a1c0bf4f… rollout
-# script (image tag prod-brand2) pinned below.
-RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-d7758daacba3b6bf603ad7e72557902477e730e9}"
+# 89cd6f64 is the current approved Release Candidate on
+# release/launch-2026-11-rc: it builds on d7758daa (PR #63/#64/#65, the
+# Super-Admin trial extension, per-teacher custom domains and the custom-domain
+# closeout) and adds the Super-Admin financial audit — one platform-wide
+# statistics source for the dashboard/teachers/subscriptions panels, verified
+# Freemius payment totals, valid-trial date rules and admin-grant = access not
+# revenue. It changes NO migration relative to the previously deployed
+# d7758daa, and it carries the approved a1c0bf4f… rollout script (image tag
+# prod-brand2) pinned below.
+RELEASE_SHA="${FAHIMNI_RELEASE_SHA:-89cd6f64c965167379b3a1f0dfb0edc439ca879e}"
 RELEASE_BRANCH="${FAHIMNI_RELEASE_BRANCH:-release/launch-2026-11-rc}"
 APPROVED_SCRIPT_SHA256="${FAHIMNI_APPROVED_SCRIPT_SHA256:-a1c0bf4f8797b6efb73f9f4855fca24c6381c9736cddfe77e741bfc69a3479c1}"
 APPROVED_MIGRATION="${FAHIMNI_APPROVED_MIGRATIONS:-2026_11_16_000001_add_lesson_id_to_assignments.php}"

@@ -2,7 +2,7 @@
 
 **Release branch (carries the final SHA):** `release/launch-2026-11-rc`
 **Base (RC) code SHA:** `b41494d1c18d0db022cb44dd1e37518c03a084a4`
-**Final unified SHA (pinned — CI-green):** `659828997ff0b9a93312674e39e2b00eaa7d564b`
+**Final unified SHA (pinned — CI-green):** `89cd6f64c965167379b3a1f0dfb0edc439ca879e`
 **P0 fixes in this revision:**
 - **PR #63 / #64 / #65 integrated** on the RC line: tenant-scoped card/video test
   alignment (#64), the branded home `<title>` and live launch-smoke routes (#65).
@@ -261,7 +261,7 @@ default (`dd13c63` on `integration/launch-2026-11`) stays intact as a safe fallb
 does not):
 
 ```
-659828997ff0b9a93312674e39e2b00eaa7d564b
+89cd6f64c965167379b3a1f0dfb0edc439ca879e
 ```
 
 Confirm it is on the branch — read-only, and exactly what `release_sha_on_branch()`
@@ -269,7 +269,7 @@ enforces before checkout:
 
 ```bash
 # from a clean single-branch clone of release/launch-2026-11-rc
-git merge-base --is-ancestor d7758daacba3b6bf603ad7e72557902477e730e9 \
+git merge-base --is-ancestor 89cd6f64c965167379b3a1f0dfb0edc439ca879e \
   refs/remotes/origin/release/launch-2026-11-rc && echo "on-branch OK"
 ```
 
@@ -284,9 +284,9 @@ so the pinned SHA above is its integrity gate.
 
 **Runner fingerprint.** The single go-live runner on the host is:
 
-- `sha256 = cb3aeeeaf32e12966b60cf32b042360963c3d6de0cc604905eca18ae448a37e8`
-- 31 820 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
-- It pins `d7758daa…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
+- `sha256 = eb41341fc02bb18d6e6b02dcc65a61124dd22adcf93d90d74e024b1d74a1b047`
+- 31 942 bytes, at `/home/fahimni/fahimni-golive.sh` (mode 700, `fahimni`-owned, run via `sudo`).
+- It pins `89cd6f64…` / `release/launch-2026-11-rc` and the deploy-script `sha256` above; it
   re-derives the deploy-script hash from the pinned commit and refuses to run a host copy
   that does not match. On a standalone Fahimni host with **no LooksLoop containers** the
   before/after LooksLoop comparison degrades to a recorded no-op instead of aborting.
@@ -295,7 +295,7 @@ Before running §5, confirm the host copy is byte-identical to the approved one:
 
 ```bash
 deploy/scripts/verify-deploy-script.sh \
-  --git-ref d7758daacba3b6bf603ad7e72557902477e730e9 \
+  --git-ref 89cd6f64c965167379b3a1f0dfb0edc439ca879e \
   --remote fahimni@187.127.87.101 \
   --expect a1c0bf4f8797b6efb73f9f4855fca24c6381c9736cddfe77e741bfc69a3479c1
 ```
@@ -326,7 +326,7 @@ performs the whole release (approved migration → permission fix → brand roll
 ```bash
 sudo env \
   FAHIMNI_RELEASE_BRANCH=release/launch-2026-11-rc \
-  FAHIMNI_RELEASE_SHA=659828997ff0b9a93312674e39e2b00eaa7d564b \
+  FAHIMNI_RELEASE_SHA=89cd6f64c965167379b3a1f0dfb0edc439ca879e \
   FAHIMNI_ALLOW_DB_WRITE=1 \
   FAHIMNI_DB_BACKUP_VERIFIED=1 \
   FAHIMNI_ALLOW_PERMISSION_WRITE=1 \
