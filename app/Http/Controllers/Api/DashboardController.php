@@ -10,11 +10,9 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
-use App\Models\Payment;
-use App\Models\Tenant;
-use App\Models\TenantSubscription;
 use App\Models\User;
 use App\Services\AdminNotificationService;
+use App\Services\SuperAdminStatisticsService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,6 +23,7 @@ class DashboardController extends Controller
 
     public function __construct(
         private readonly AdminNotificationService $adminNotifications,
+        private readonly SuperAdminStatisticsService $superAdminStatistics,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -51,25 +50,31 @@ class DashboardController extends Controller
 
     private function superAdminDashboard(): JsonResponse
     {
-        return response()->json([
-            'total_tenants' => Tenant::count(),
-            'total_users' => User::count(),
-            'total_students' => Enrollment::distinct('user_id')->count('user_id'),
-            'total_courses' => Course::count(),
-            'active_subscriptions' => TenantSubscription::whereIn('status', ['active', 'trialing'])->count(),
-            'total_revenue' => Payment::where('status', 'completed')->sum('amount'),
-            'recent_payments' => Payment::with('subscription')
-                ->orderByDesc('created_at')
-                ->take(10)
-                ->get()
-                ->map(fn ($p) => [
-                    'id' => $p->id,
-                    'amount' => $p->amount,
-                    'currency' => $p->currency,
-                    'status' => $p->status,
-                    'created_at' => $p->created_at,
-                ]),
-        ]);
+        $snapshot = $this->superAdminStatistics->snapshot();
+        $metrics = $snapshot['subscription_metrics'];
+        $financials = $metrics['financials'];
+        $grossByCurrency = $financials['gross_collected_by_currency'];
+
+        // Keep the old scalar for older clients only when it has one known
+        // currency. Never sum unlike currencies into a misleading total.
+        $legacyRevenue = is_array($grossByCurrency) && count($grossByCurrency) === 1
+            ? (float) reset($grossByCurrency)
+            : null;
+        $legacyCurrency = is_array($grossByCurrency) && count($grossByCurrency) === 1
+            ? (string) array_key_first($grossByCurrency)
+            : null;
+
+        return response()->json(array_merge($snapshot['overview'], [
+            // Backward-compatible aliases now use explicit billing semantics.
+            'active_subscriptions' => $metrics['paid_subscribers'],
+            'total_revenue' => $legacyRevenue,
+            'total_revenue_currency' => $legacyCurrency,
+            'total_revenue_by_currency' => $grossByCurrency,
+            'subscription_metrics' => $metrics,
+            // Provider transactions are represented by the financial summary;
+            // do not expose the separate student-to-teacher payments here.
+            'recent_payments' => [],
+        ]));
     }
 
     private function teacherDashboard(string $tenantId, User $user, string $tenantRole): JsonResponse

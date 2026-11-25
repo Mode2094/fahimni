@@ -13,6 +13,7 @@ import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import AdminSubscriptionMetrics from '@/components/admin/subscription-metrics';
 import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
@@ -29,10 +30,12 @@ export default function AdminTeachersPanel() {
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
   const [teachers, setTeachers] = useState<any[]>([]);
-  const [stats, setStats] = useState<any>({ total: 0, active: 0, inactive: 0, with_subscription: 0 });
+  const [subscriptionMetrics, setSubscriptionMetrics] = useState<any>(null);
   const [plans, setPlans] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [subscriptionStateFilter, setSubscriptionStateFilter] = useState('');
+  const [filtersReady, setFiltersReady] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [detailTab, setDetailTab] = useState<'overview' | 'courses' | 'students' | 'sales'>('overview');
@@ -48,30 +51,46 @@ export default function AdminTeachersPanel() {
   const [extending, setExtending] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  const headers = () => ({ Accept: 'application/json' });
+  const headers = () => ({ 'X-Tenant-Id': '', Accept: 'application/json' });
 
   const load = useCallback(() => {
     const q = new URLSearchParams();
     if (search) q.set('search', search);
     if (statusFilter === 'active' || statusFilter === 'inactive') q.set('is_active', statusFilter === 'active' ? '1' : '0');
-    fetch(`${API}/admin/teachers?${q}`, { headers: headers() })
+    if (subscriptionStateFilter) q.set('subscription_state', subscriptionStateFilter);
+    fetch(`${API}/admin/teachers?${q}`, { headers: headers(), cache: 'no-store' })
       .then(r => r.json())
-      .then(d => { setTeachers(d.teachers || []); if (d.stats) setStats(d.stats); })
+      .then(d => {
+        setTeachers(d.teachers || []);
+        setSubscriptionMetrics(d.subscription_metrics || null);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [search, statusFilter]);
+  }, [search, statusFilter, subscriptionStateFilter]);
 
   useEffect(() => {
-    if (!check()) return;
-    load();
-    fetch(`${API}/admin/plans`, { headers: headers() }).then(r => r.json()).then(d => setPlans(d.plans || [])).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [check()]);
+    const params = new URLSearchParams(window.location.search);
+    const state = params.get('subscription_state') || '';
+    const allowedStates = ['valid_trial', 'paid', 'admin', 'expired', 'unverified', 'effective'];
+
+    if (allowedStates.includes(state)) setSubscriptionStateFilter(state);
+    const isActive = params.get('is_active');
+    if (isActive === '1') setStatusFilter('active');
+    if (isActive === '0') setStatusFilter('inactive');
+    setFiltersReady(true);
+  }, []);
 
   useEffect(() => {
-    const id = setTimeout(load, 400);
+    if (!filtersReady || !check()) return;
+    const id = setTimeout(load, 250);
     return () => clearTimeout(id);
-  }, [search, statusFilter, load]);
+  }, [filtersReady, search, statusFilter, subscriptionStateFilter, load]);
+
+  useEffect(() => {
+    if (!filtersReady || !check()) return;
+    fetch(`${API}/admin/plans`, { headers: headers(), cache: 'no-store' })
+      .then(r => r.json()).then(d => setPlans(d.plans || [])).catch(() => {});
+  }, [filtersReady, check()]);
 
   const create = async () => {
     if (!form.name || !form.email) { toast.error(t('أكمل الاسم والبريد', 'Fill name & email')); return; }
@@ -119,12 +138,60 @@ export default function AdminTeachersPanel() {
     try {
       setDetailTab('overview');
       const d = await fetch(`${API}/admin/teachers/${teach.id}`, { headers: headers() }).then(r => r.json());
-      setDetail(d);
+      setDetail({
+        ...d,
+        teacher: {
+          ...d.teacher,
+          subscription_summary: teach.subscription_summary ?? d.teacher?.subscription_summary,
+        },
+      });
     } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
   };
 
-  const subBadge = (s: any) => {
+  const subBadge = (s: any, summary?: any) => {
+    if (summary?.state && summary.state !== 'none') {
+      const state = summary.state;
+      const styles: Record<string, string> = {
+        paid: 'bg-emerald-100 text-emerald-700 border-0',
+        valid_trial: 'bg-sky-100 text-sky-700 border-0',
+        admin: 'bg-teal-100 text-teal-800 border-0',
+        expired: 'bg-rose-100 text-rose-600 border-0',
+        pending: 'bg-amber-100 text-amber-700 border-0',
+        unverified: 'bg-orange-100 text-orange-700 border-0',
+      };
+      const labels: Record<string, string> = {
+        paid: t('مشترك مدفوع', 'Paid subscriber'),
+        valid_trial: t('تجربة مجانية', 'Free trial'),
+        admin: t('وصول إداري', 'Administrative access'),
+        expired: t('منتهي', 'Expired'),
+        pending: t('قيد الدفع', 'Pending payment'),
+        unverified: t('وصول غير مثبت الدفع', 'Unverified access'),
+      };
+      const endDate = state === 'valid_trial'
+        ? summary.trial_ends_at
+        : state === 'admin'
+          ? summary.ends_at
+          : null;
+      const formattedEnd = endDate
+        ? new Date(endDate).toLocaleDateString(locale === 'ar' ? 'ar' : 'en')
+        : null;
+
+      return (
+        <div className="flex flex-col items-start gap-1">
+          <Badge className={styles[state] || 'bg-gray-100 text-gray-500 border-0'}>
+            {summary.plan_name ? `${summary.plan_name} · ` : ''}{labels[state] || state}
+          </Badge>
+          {formattedEnd && (
+            <span className="text-[11px] text-muted-foreground" data-testid={state === 'valid_trial' ? 'teacher-trial-end' : 'teacher-admin-end'}>
+              {state === 'valid_trial' ? t('تنتهي التجربة', 'Trial ends') : t('ينتهي الوصول', 'Access ends')}: {formattedEnd}
+            </span>
+          )}
+        </div>
+      );
+    }
+
     if (!s) return <Badge className="bg-gray-100 text-gray-500 border-0">{t('بدون خطة', 'No plan')}</Badge>;
+    const rawStatus = s.status === 'canceled' || s.status === 'cancelled' ? 'canceled' : s.status;
     const map: Record<string, string> = {
       active: 'bg-emerald-100 text-emerald-700 border-0',
       trialing: 'bg-sky-100 text-sky-700 border-0',
@@ -137,7 +204,11 @@ export default function AdminTeachersPanel() {
       canceled: t('ملغى', 'Canceled'), pending: t('قيد الدفع', 'Pending'),
     };
     const planName = s.plan_name || s.plan?.name || t('بدون اسم', 'No name');
-    return <Badge className={map[s.status] || ''}>{planName} · {label[s.status] || s.status}</Badge>;
+    if (rawStatus === 'trialing' && (!s.trial_ends_at || new Date(s.trial_ends_at).getTime() <= Date.now())) {
+      return <Badge className={map.expired}>{planName} · {t('منتهي', 'Expired')}</Badge>;
+    }
+
+    return <Badge className={map[rawStatus] || ''}>{planName} · {label[rawStatus] || rawStatus}</Badge>;
   };
 
   const detailSubscriptions = (): any[] => {
@@ -274,22 +345,7 @@ export default function AdminTeachersPanel() {
         <Button onClick={() => setShowForm(true)} className="gap-2 rounded-full"><Plus className="h-4 w-4" /> {t('إضافة معلم', 'Add Teacher')}</Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          { label: t('إجمالي المعلمين', 'Total'), value: stats.total, icon: Users, color: 'bg-teal-50 text-teal-700' },
-          { label: t('نشط', 'Active'), value: stats.active, icon: CheckCircle2, color: 'bg-emerald-50 text-emerald-600' },
-          { label: t('موقوف', 'Suspended'), value: stats.inactive, icon: Ban, color: 'bg-rose-50 text-rose-500' },
-          { label: t('بأشتراك فعال', 'With subscription'), value: stats.with_subscription, icon: Crown, color: 'bg-amber-50 text-amber-600' },
-        ].map((s, i) => (
-          <Card key={i} className="group border-0 shadow-sm card-hover overflow-hidden relative">
-            <CardContent className="p-5 flex items-center gap-3">
-              <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${s.color}`}><s.icon className="h-6 w-6" /></span>
-              <div className="min-w-0"><div className="text-2xl font-black tracking-tight">{s.value}</div><div className="text-xs text-muted-foreground mt-1">{s.label}</div></div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <AdminSubscriptionMetrics metrics={subscriptionMetrics} />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
@@ -346,7 +402,7 @@ export default function AdminTeachersPanel() {
                     <ExternalLink className="h-3 w-3 shrink-0" />{window.location.origin}/t/{teach.tenant.slug}
                   </a>
                 )}
-                <div className="mt-3">{subBadge(teach.subscription)}</div>
+                <div className="mt-3">{subBadge(teach.subscription, teach.subscription_summary)}</div>
                 <div className="flex items-center gap-1.5 mt-4 flex-wrap">
                   {teach.tenant && (
                     <Button size="sm" className="rounded-full gap-1" onClick={() => window.open(platformUrl(teach.tenant.slug), '_blank')}>

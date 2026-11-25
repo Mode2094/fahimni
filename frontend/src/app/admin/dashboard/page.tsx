@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
+import AdminSubscriptionMetrics from '@/components/admin/subscription-metrics';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SectionCard, StatTile, useIsDesktop } from '@/components/dashboard/dashboard-kit';
+import { SectionCard, useIsDesktop } from '@/components/dashboard/dashboard-kit';
 import { cn } from '@/lib/utils';
 import {
-  Users, GraduationCap, BookOpen, CreditCard, UserPlus, Wallet, TrendingUp,
+  Users, GraduationCap, BookOpen, UserPlus,
   Crown, Ticket, FileText, BellRing, LayoutGrid, ShieldCheck, Activity, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 
@@ -18,16 +19,14 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 /**
  * Super-Admin dashboard — mobile-first redesign.
  *
- * One responsive layout serves every width: the phone opens on a compact
- * header, a single revenue card and a 2×2 statistics grid, while desktop keeps
- * the same components laid out 4-up with roomier spacing. Revenue is shown
- * exactly once, secondary stats live in their own section, and every tile
- * links to a real admin page.
+ * One platform-wide snapshot serves the dashboard, teachers and subscriptions
+ * pages. The headline metrics stay compact on mobile; payment and record-level
+ * details are expandable and never mix currencies.
  */
 export default function AdminDashboardPage() {
   const { check, user } = useAuth();
   const { locale } = useLocale();
-  const { formatPrice, load: loadSettings } = useSettings();
+  const { load: loadSettings } = useSettings();
   const isDesktop = useIsDesktop();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
@@ -39,9 +38,11 @@ export default function AdminDashboardPage() {
     setLoading(true);
     setError(false);
     try {
-      const tid = localStorage.getItem('tenant_id');
       const res = await fetch(`${API}/dashboard`, {
-        headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' },
+        // Prevent the global authenticated-fetch helper from appending a
+        // stale tenant_id from localStorage to this platform-wide request.
+        headers: { 'X-Tenant-Id': '', Accept: 'application/json' },
+        cache: 'no-store',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setStats(await res.json());
@@ -61,14 +62,6 @@ export default function AdminDashboardPage() {
 
   const firstName = (user?.name || '').trim().split(/\s+/)[0] || '';
 
-  // 2×2 on phones · 4-up from lg — the four headline platform statistics.
-  const primaryStats = [
-    { label: t('المعلمون', 'Teachers'), value: stats?.total_tenants ?? 0, href: '/admin/teachers', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
-    { label: t('الطلاب', 'Students'), value: stats?.total_students ?? 0, href: '/admin/students', icon: GraduationCap, tone: 'bg-violet-500/10 text-violet-600' },
-    { label: t('الكورسات', 'Courses'), value: stats?.total_courses ?? 0, href: '/admin/teachers', icon: BookOpen, tone: 'bg-emerald-500/10 text-emerald-600' },
-    { label: t('الاشتراكات النشطة', 'Active subscriptions'), value: stats?.active_subscriptions ?? 0, href: '/admin/subscriptions', icon: CreditCard, tone: 'bg-sky-500/10 text-sky-600' },
-  ];
-
   // Every destination below is a real, existing admin page.
   const quickActions = [
     { label: t('إدارة المعلمين', 'Manage teachers'), href: '/admin/teachers', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
@@ -82,7 +75,6 @@ export default function AdminDashboardPage() {
     return (
       <div className="mx-auto max-w-6xl space-y-4 sm:space-y-6" data-testid="admin-dashboard-loading">
         <Skeleton className="h-28 w-full rounded-3xl" />
-        <Skeleton className="h-20 w-full rounded-2xl" />
         <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" />
         </div>
@@ -134,31 +126,7 @@ export default function AdminDashboardPage() {
         </div>
       </section>
 
-      {/* ─── الإيرادات (بطاقة واحدة، بلا تكرار) ─────── */}
-      <Card className="border-0 shadow-sm" data-testid="revenue-card">
-        <CardContent className="flex items-center gap-4 p-4 sm:p-5">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-teal-500/10">
-            <Wallet className="h-6 w-6 text-teal-600" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-muted-foreground">{t('إجمالي إيرادات المنصة', 'Platform total revenue')}</p>
-            <p className="mt-1 break-words text-2xl font-black leading-none tabular-nums sm:text-3xl" data-testid="revenue-value">
-              {formatPrice(stats?.total_revenue ?? 0)}
-            </p>
-            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
-              {t('جميع الإيرادات المكتملة', 'All completed revenue')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── الإحصائيات الرئيسية (2×2 على الهاتف) ────── */}
-      <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" data-testid="stats-grid">
-        {primaryStats.map((s, i) => (
-          <StatTile key={i} testId={`stat-${i}`} label={s.label} value={s.value} href={s.href} icon={s.icon} tone={s.tone} />
-        ))}
-      </div>
+      <AdminSubscriptionMetrics metrics={stats?.subscription_metrics} />
 
       {/* ─── إجراءات سريعة ──────────────────────────── */}
       <SectionCard
@@ -191,12 +159,20 @@ export default function AdminDashboardPage() {
         forceOpen={isDesktop}
         testId="platform-overview"
       >
-        <div className="flex items-center gap-3 rounded-2xl border border-border bg-background p-4">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600">
-            <UserPlus className="h-5 w-5" />
-          </span>
-          <p className="min-w-0 flex-1 text-sm font-semibold text-muted-foreground">{t('مستخدمو المنصة', 'Platform users')}</p>
-          <p className="shrink-0 text-2xl font-bold tabular-nums">{stats?.total_users ?? 0}</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {[
+            { label: t('مستخدمو المنصة', 'Platform users'), value: stats?.total_users ?? 0, icon: UserPlus },
+            { label: t('الطلاب', 'Students'), value: stats?.total_students ?? 0, icon: GraduationCap },
+            { label: t('الكورسات', 'Courses'), value: stats?.total_courses ?? 0, icon: BookOpen },
+          ].map((item) => (
+            <div key={item.label} className="flex min-h-16 items-center gap-3 rounded-xl border border-border bg-background p-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <item.icon className="h-4 w-4" />
+              </span>
+              <p className="min-w-0 flex-1 text-xs font-semibold text-muted-foreground">{item.label}</p>
+              <p className="shrink-0 text-xl font-bold tabular-nums">{item.value}</p>
+            </div>
+          ))}
         </div>
       </SectionCard>
     </div>

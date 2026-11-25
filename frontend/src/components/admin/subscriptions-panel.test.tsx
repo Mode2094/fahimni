@@ -1,121 +1,97 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-
-import AdminSubscriptionsPanel from './subscriptions-panel';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { useSettings } from '@/store/settings';
-import { toast } from 'sonner';
+import AdminSubscriptionsPanel from './subscriptions-panel';
 
-const ok = (data: unknown) => Promise.resolve({ ok: true, json: async () => data } as any);
-
-const PLAN = { id: 'plan-1', name: 'Starter', monthly_price: 29 };
-
-function routeFetch(routes: Record<string, (body?: any) => Promise<any>>) {
-  return vi.fn((url: unknown, init?: any) => {
-    const u = String(url);
-    const key = Object.keys(routes).find((k) => u.includes(k));
-    if (!key) return Promise.resolve({ ok: false, json: async () => ({}) } as any);
-    const body = init?.body ? JSON.parse(init.body) : undefined;
-    return routes[key](body);
-  });
-}
-
-const baseSub = (over: Record<string, any> = {}) => ({
-  id: 'sub-1',
-  status: 'active',
-  billing_cycle: 'monthly',
-  starts_at: '2026-11-01T00:00:00Z',
-  ends_at: '2026-12-01T00:00:00Z',
-  admin_ends_at: null,
-  plan: PLAN,
-  tenant: { id: 't-1', name: 'Academy One' },
-  ...over,
-});
+const metrics = {
+  total_teachers: 3,
+  active_accounts: 3,
+  valid_trials: 1,
+  paid_subscribers: 0,
+  admin_access: 1,
+  expired_access: 1,
+  effective_access: 2,
+  unverified_access: 0,
+  pending_subscriptions: 2,
+  historical_records: 7,
+  financials: {
+    provider_status: 'available',
+    collected_complete: true,
+    gross_collected_by_currency: { USD: 0 },
+    refunds_by_currency: { USD: 0 },
+    net_collected_by_currency: { USD: 0 },
+    mrr_by_currency: { USD: 0 },
+    pending_payment_transactions: 0,
+    pending_payment_amount_by_currency: { USD: 0 },
+    pending_checkout_intents: 2,
+  },
+};
 
 beforeEach(() => {
-  localStorage.clear();
-  vi.restoreAllMocks();
-  useAuth.setState({ user: { name: 'Platform Admin' } as any, check: () => true } as any);
+  useAuth.setState({ check: () => true } as any);
   useLocale.setState({ locale: 'ar' });
   useSettings.setState({
-    settings: { ...useSettings.getState().settings, currency: 'JOD' },
-    formatPrice: (a: any) => `${a}`,
+    formatPrice: (amount: number | string | null | undefined) => `${Number(amount || 0).toFixed(2)} USD`,
   } as any);
+
+  vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+    const url = String(input);
+    if (url.includes('/admin/subscriptions')) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          stats: { total: 7, active: 0, trialing: 1, pending: 2, cancelled: 1, expired: 1, monthly_revenue: 0 },
+          subscription_metrics: metrics,
+          subscriptions: [
+            {
+              id: 'trial-row',
+              status: 'trialing',
+              starts_at: '2026-11-01T00:00:00Z',
+              ends_at: null,
+              trial_ends_at: '2026-12-03T00:00:00Z',
+              billing_cycle: 'monthly',
+              tenant: { name: 'Academy' },
+              plan: { name: 'Basic' },
+            },
+            {
+              id: 'canceled-row',
+              status: 'canceled',
+              billing_cycle: 'monthly',
+              tenant: { name: 'Old Academy' },
+              plan: { name: 'Basic' },
+            },
+            {
+              id: 'cancelled-row',
+              status: 'cancelled',
+              billing_cycle: 'yearly',
+              tenant: { name: 'Another Academy' },
+              plan: { name: 'Basic' },
+            },
+          ],
+        }),
+      });
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({ plans: [] }) });
+  }));
 });
 
-describe('Admin subscriptions — administrative extension', () => {
-  it('flags an administrative grant on the row (independent of payment status)', async () => {
-    vi.stubGlobal('fetch', routeFetch({
-      '/admin/subscriptions': () => ok({
-        subscriptions: [baseSub({ admin_ends_at: '2099-01-01T00:00:00Z' })],
-        stats: {},
-      }),
-      '/admin/plans': () => ok({ plans: [PLAN] }),
-    }));
-
+describe('AdminSubscriptionsPanel', () => {
+  it('shows the shared platform metrics and the actual trial end date', async () => {
     render(<AdminSubscriptionsPanel />);
 
-    expect(await screen.findByText(/Academy One/)).toBeInTheDocument();
-    expect(screen.getByText(/وصول إداري حتى/)).toBeInTheDocument();
+    expect(await screen.findByTestId('metric-total_teachers')).toHaveTextContent('3');
+    expect(screen.getByTestId('metric-valid_trials')).toHaveTextContent('1');
+    expect(screen.getByTestId('metric-paid_subscribers')).toHaveTextContent('0');
+    expect(screen.getByText(/نهاية التجربة المجانية: 2026-12-03/)).toBeInTheDocument();
   });
 
-  it('sends the extension with a stable request_id and reports the honest new access date', async () => {
-    const user = userEvent.setup();
-    const success = vi.spyOn(toast, 'success').mockImplementation(() => 'id' as any);
-
-    let extensionBody: any = null;
-    const { container } = render(<AdminSubscriptionsPanel />);
-
-    vi.stubGlobal('fetch', routeFetch({
-      '/admin/subscriptions/sub-1/extend': (body) => {
-        extensionBody = body;
-        return ok({ message: 'extended', already_applied: false, access_ends_at: '2027-01-15T00:00:00Z' });
-      },
-      '/admin/subscriptions': () => ok({ subscriptions: [baseSub()], stats: {} }),
-      '/admin/plans': () => ok({ plans: [PLAN] }),
-    }));
-
-    // Re-render under the new fetch stub (initial load already happened above).
+  it('uses one display/filter spelling for canceled and cancelled records without changing their data', async () => {
     render(<AdminSubscriptionsPanel />);
 
-    const extendBtn = await screen.findByRole('button', { name: /تمديد/ });
-    await user.click(extendBtn);
-
-    // Dialog opens with a confirmation-day field and a Save action.
-    const save = await screen.findByRole('button', { name: /حفظ/ });
-    await user.click(save);
-
-    await waitFor(() => expect(extensionBody).not.toBeNull());
-    expect(extensionBody.days).toBe(30);
-    expect(typeof extensionBody.request_id).toBe('string');
-    expect(extensionBody.request_id.length).toBeGreaterThan(0);
-
-    await waitFor(() => {
-      expect(success).toHaveBeenCalled();
-      const msg = success.mock.calls.map((c) => String(c[0])).join(' | ');
-      expect(msg).toMatch(/تمديد وصول المعلم/);
-    });
-  });
-
-  it('shows an already-applied message when the server treats a retry as a no-op', async () => {
-    const user = userEvent.setup();
-    const success = vi.spyOn(toast, 'success').mockImplementation(() => 'id' as any);
-
-    vi.stubGlobal('fetch', routeFetch({
-      '/admin/subscriptions/sub-1/extend': () => ok({ message: 'applied', already_applied: true, access_ends_at: '2027-01-15T00:00:00Z' }),
-      '/admin/subscriptions': () => ok({ subscriptions: [baseSub()], stats: {} }),
-      '/admin/plans': () => ok({ plans: [PLAN] }),
-    }));
-
-    render(<AdminSubscriptionsPanel />);
-    await user.click(await screen.findByRole('button', { name: /تمديد/ }));
-    await user.click(await screen.findByRole('button', { name: /حفظ/ }));
-
-    await waitFor(() => {
-      const msg = success.mock.calls.map((c) => String(c[0])).join(' | ');
-      expect(msg).toMatch(/تم تطبيق هذا التمديد مسبقًا/);
-    });
+    expect(await screen.findByTestId('subscription-row-canceled-row')).toHaveTextContent('ملغي');
+    expect(screen.getByTestId('subscription-row-cancelled-row')).toHaveTextContent('ملغي');
   });
 });

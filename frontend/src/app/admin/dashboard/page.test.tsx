@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import AdminDashboardPage from './page';
@@ -12,7 +12,7 @@ const ok = (data: unknown) => Promise.resolve({ ok: true, json: async () => data
 
 /** Route a stubbed global fetch by URL substring. */
 function routeFetch(routes: Record<string, () => Promise<any>>) {
-  return vi.fn((url: unknown) => {
+  return vi.fn((url: unknown, _options?: RequestInit) => {
     const u = String(url);
     const key = Object.keys(routes).find((k) => u.includes(k));
     return key ? routes[key]() : Promise.resolve({ ok: false, json: async () => ({}) } as any);
@@ -24,13 +24,62 @@ const STATS = {
   total_users: 348,
   total_students: 1200,
   total_courses: 57,
-  active_subscriptions: 9,
-  total_revenue: 4820.5,
+  subscription_metrics: {
+    total_teachers: 12,
+    active_accounts: 11,
+    valid_trials: 4,
+    paid_subscribers: 2,
+    admin_access: 1,
+    expired_access: 3,
+    effective_access: 10,
+    unverified_access: 0,
+    pending_subscriptions: 4,
+    historical_records: 28,
+    financials: {
+      provider_status: 'available',
+      collected_complete: true,
+      gross_collected_by_currency: { USD: 4820.5 },
+      refunds_by_currency: { USD: 20 },
+      net_collected_by_currency: { USD: 4800.5 },
+      mrr_by_currency: { USD: 250 },
+      pending_payment_transactions: 0,
+      pending_payment_amount_by_currency: { USD: 0 },
+      pending_checkout_intents: 4,
+    },
+  },
   recent_payments: [],
 };
 
 const SUCCESS = { '/dashboard': () => ok(STATS) };
-const EMPTY = { '/dashboard': () => ok({ total_tenants: 0, total_users: 0, total_students: 0, total_courses: 0, active_subscriptions: 0, total_revenue: 0 }) };
+const EMPTY = { '/dashboard': () => ok({
+  total_tenants: 0,
+  total_users: 0,
+  total_students: 0,
+  total_courses: 0,
+  subscription_metrics: {
+    total_teachers: 0,
+    active_accounts: 0,
+    valid_trials: 0,
+    paid_subscribers: 0,
+    admin_access: 0,
+    expired_access: 0,
+    effective_access: 0,
+    unverified_access: 0,
+    pending_subscriptions: 0,
+    historical_records: 0,
+    financials: {
+      provider_status: 'available',
+      collected_complete: true,
+      gross_collected_by_currency: { USD: 0 },
+      refunds_by_currency: { USD: 0 },
+      net_collected_by_currency: { USD: 0 },
+      mrr_by_currency: { USD: 0 },
+      pending_payment_transactions: 0,
+      pending_payment_amount_by_currency: { USD: 0 },
+      pending_checkout_intents: 0,
+    },
+  },
+}) };
 
 beforeEach(() => {
   localStorage.clear();
@@ -57,44 +106,47 @@ describe('Admin Dashboard', () => {
     expect(screen.queryByTestId('stats-grid')).toBeNull();
   });
 
-  it('renders the real figures (Arabic / RTL) once the endpoint responds', async () => {
+  it('renders distinct teacher, trial and paid counts from the shared snapshot', async () => {
     vi.stubGlobal('fetch', routeFetch(SUCCESS));
 
     render(<AdminDashboardPage />);
 
     expect(await screen.findByTestId('stats-grid')).toBeInTheDocument();
-    expect(screen.getByText('12')).toBeInTheDocument(); // teachers
+    expect(screen.getByTestId('metric-total_teachers')).toHaveTextContent('12');
+    expect(screen.getByTestId('metric-active_accounts')).toHaveTextContent('11');
+    expect(screen.getByTestId('metric-valid_trials')).toHaveTextContent('4');
+    expect(screen.getByTestId('metric-paid_subscribers')).toHaveTextContent('2');
     expect(screen.getByText('1200')).toBeInTheDocument(); // students
     expect(screen.getByText('57')).toBeInTheDocument(); // courses
-    expect(screen.getByText('9')).toBeInTheDocument(); // active subscriptions
     expect(screen.getByText('348')).toBeInTheDocument(); // platform users (overview section)
-    expect(screen.getByText('4820.5 USD')).toBeInTheDocument(); // revenue, once
     expect(screen.getByText('لوحة الإدارة')).toBeInTheDocument();
   });
 
-  it('shows the revenue exactly once — the repeated totals are gone', async () => {
-    vi.stubGlobal('fetch', routeFetch(SUCCESS));
-
-    const { container } = render(<AdminDashboardPage />);
-    await screen.findByTestId('stats-grid');
-
-    // One revenue card, one value, one label — everywhere.
-    expect(container.querySelectorAll('[data-testid="revenue-card"]').length).toBe(1);
-    expect(container.querySelectorAll('[data-testid="revenue-value"]').length).toBe(1);
-    expect(screen.getAllByText('إجمالي إيرادات المنصة').length).toBe(1);
-    expect(screen.getAllByText('4820.5 USD').length).toBe(1);
-  });
-
-  it('uses the platform currency from settings for the revenue value', async () => {
-    useSettings.setState({
-      settings: { ...useSettings.getState().settings, currency: 'JOD' },
-      formatPrice: () => '1,234.5 JOD',
-    } as any);
+  it('keeps financial figures in the expandable detail section', async () => {
     vi.stubGlobal('fetch', routeFetch(SUCCESS));
 
     render(<AdminDashboardPage />);
+    await screen.findByTestId('stats-grid');
 
-    expect(await screen.findByText('1,234.5 JOD')).toBeInTheDocument();
+    const details = screen.getByText('تفاصيل الاشتراكات والمالية').closest('details');
+    expect(details?.open).toBe(false);
+    screen.getByText('تفاصيل الاشتراكات والمالية').click();
+    expect(details?.open).toBe(true);
+    expect(screen.getByTestId('collected-value')).toHaveTextContent('4820.50 USD');
+    expect(screen.getByTestId('refunds-value')).toHaveTextContent('20.00 USD');
+    expect(screen.getByTestId('mrr-value')).toHaveTextContent('250.00 USD');
+  });
+
+  it('blocks the global fetch helper from forwarding a stale browser-selected tenant', async () => {
+    localStorage.setItem('tenant_id', 'stale-tenant-id');
+    const fetchMock = routeFetch(SUCCESS);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AdminDashboardPage />);
+    await screen.findByTestId('stats-grid');
+
+    const dashboardRequest = fetchMock.mock.calls.find(([url]) => String(url).includes('/dashboard'));
+    expect(dashboardRequest?.[1]?.headers).toEqual({ 'X-Tenant-Id': '', Accept: 'application/json' });
   });
 
   it('renders zeroes only after an empty payload loads, never as a placeholder', async () => {
@@ -125,7 +177,7 @@ describe('Admin Dashboard', () => {
     expect(screen.getByText('12')).toBeInTheDocument();
   });
 
-  it('lays out a 2×2 statistics grid and quick actions that all point to real pages', async () => {
+  it('lays out compact mobile metrics and quick actions that point to real pages', async () => {
     vi.stubGlobal('fetch', routeFetch(SUCCESS));
 
     const { container } = render(<AdminDashboardPage />);
@@ -136,10 +188,10 @@ describe('Admin Dashboard', () => {
     expect(statsGrid.className).toContain('grid-cols-2');
     expect(statsGrid.className).toContain('lg:grid-cols-4');
 
-    // Every statistic keeps a real destination.
+    // Count tiles open a list using the same definition as the metric.
     expect(container.querySelector('a[href="/admin/teachers"]')).toBeTruthy();
-    expect(container.querySelector('a[href="/admin/students"]')).toBeTruthy();
-    expect(container.querySelector('a[href="/admin/subscriptions"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/admin/teachers?subscription_state=paid"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/admin/teachers?subscription_state=valid_trial"]')).toBeTruthy();
 
     // Quick actions: every link resolves to an existing admin page (no dead ends).
     const quick = screen.getByTestId('quick-actions');
@@ -174,7 +226,7 @@ describe('Admin Dashboard', () => {
 
     expect(await screen.findByText('Admin Dashboard')).toBeInTheDocument();
     expect(screen.getByText('Teachers')).toBeInTheDocument();
-    expect(screen.getByText('Active subscriptions')).toBeInTheDocument();
+    expect(screen.getByText('Paid subscribers')).toBeInTheDocument();
     expect(screen.getByText('Quick actions')).toBeInTheDocument();
     expect(screen.getByText('Platform users')).toBeInTheDocument();
   });

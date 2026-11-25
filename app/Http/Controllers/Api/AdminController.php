@@ -33,7 +33,9 @@ use App\Plans\SubscriptionState;
 use App\Plans\TeacherTrialProgram;
 use App\Rules\ValidPhoneNumber;
 use App\Services\EnrollmentService;
+use App\Services\NotificationService;
 use App\Services\PaymentCompletionService;
+use App\Services\SuperAdminStatisticsService;
 use App\Services\TenantSlugService;
 use App\Support\AuditLogger;
 use App\Support\PhoneNumber;
@@ -44,40 +46,62 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\Uid\UuidV7;
 
 class AdminController extends Controller
 {
+    public function __construct(
+        private readonly SuperAdminStatisticsService $superAdminStatistics,
+    ) {}
+
     // ─── Subscriptions ────────────────────────────────
 
     public function subscriptions(Request $request): JsonResponse
     {
+        $validated = $request->validate([
+            'status' => 'nullable|in:active,trialing,pending,canceled,cancelled,expired,past_due',
+            'search' => 'nullable|string|max:255',
+        ]);
+        $snapshot = $this->superAdminStatistics->snapshot();
+        $metrics = $snapshot['subscription_metrics'];
+
         // Platform-wide view: ignore the tenant scope entirely (super admin only).
         $query = TenantSubscription::withoutTenant()->with(['tenant', 'plan']);
 
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
+        if (! empty($validated['status'])) {
+            $status = strtolower($validated['status']);
+
+            if (in_array($status, ['canceled', 'cancelled'], true)) {
+                $query->whereIn('status', ['canceled', 'cancelled']);
+            } else {
+                $query->whereRaw('LOWER(status) = ?', [$status]);
+            }
         }
-        if ($request->filled('search')) {
-            $query->whereHas('tenant', fn ($q) => $q->where('name', 'like', '%'.$request->search.'%'));
+        if (! empty($validated['search'])) {
+            $search = trim($validated['search']);
+            $query->whereHas('tenant', fn ($q) => $q->where('name', 'like', '%'.$search.'%'));
         }
 
         $subscriptions = $query->orderByDesc('created_at')->get();
+        $recordStatuses = $metrics['record_status_counts'];
 
         $stats = [
-            'total' => TenantSubscription::withoutTenant()->count(),
-            'active' => TenantSubscription::withoutTenant()->where('status', 'active')->count(),
-            'trialing' => TenantSubscription::withoutTenant()->where('status', 'trialing')->count(),
-            'cancelled' => TenantSubscription::withoutTenant()->where('status', 'cancelled')->count(),
-            'expired' => TenantSubscription::withoutTenant()->where('status', 'expired')->count(),
-            'monthly_revenue' => (float) TenantSubscription::withoutTenant()
-                ->where('tenant_subscriptions.status', 'active')
-                ->join('subscription_plans', 'subscription_plans.id', '=', 'tenant_subscriptions.plan_id')
-                ->sum('subscription_plans.monthly_price'),
+            'total' => $metrics['historical_records'],
+            'active' => $recordStatuses['active'] ?? 0,
+            'trialing' => $recordStatuses['trialing'] ?? 0,
+            'pending' => $metrics['pending_subscriptions'],
+            'cancelled' => $recordStatuses['canceled'] ?? 0,
+            'expired' => $recordStatuses['expired'] ?? 0,
+            'monthly_revenue' => $metrics['financials']['mrr_by_currency']['USD'] ?? 0,
         ];
 
-        return response()->json(['subscriptions' => $subscriptions, 'stats' => $stats]);
+        return response()->json([
+            'subscriptions' => $subscriptions,
+            'stats' => $stats,
+            'subscription_metrics' => $metrics,
+        ]);
     }
 
     public function subscriptionStatus(Request $request, string $id): JsonResponse
@@ -492,7 +516,7 @@ class AdminController extends Controller
         // Mid-cycle plan swaps never restart the billing period silently:
         // the ends_at stays anchored so the tenant keeps their remaining
         // days (admin can extend separately when needed).
-        \App\Support\AuditLogger::log($request, 'admin.subscription_plan_changed', 'tenant_subscription', $sub->id, [
+        AuditLogger::log($request, 'admin.subscription_plan_changed', 'tenant_subscription', $sub->id, [
             'from_plan' => $oldPlanId,
             'to_plan' => $request->plan_id,
             'ends_at' => $sub->ends_at?->toIso8601String(),
@@ -505,19 +529,36 @@ class AdminController extends Controller
 
     public function teachers(Request $request): JsonResponse
     {
+        $validated = $request->validate([
+            'subscription_state' => 'nullable|in:valid_trial,paid,admin,expired,unverified,effective',
+        ]);
+        $snapshot = $this->superAdminStatistics->snapshot();
+        $metrics = $snapshot['subscription_metrics'];
+
         $base = User::role('Teacher')
             ->with([
-                'tenantPivots.tenant.settings',
-                // All rows (newest first) so `subscription` shows the latest
-                // while `admin_extension` can see a grant on any row.
-                'tenantPivots.tenant.subscriptions' => fn ($q) => $q->latest('starts_at'),
+                'tenantPivots' => fn ($query) => $query->withoutTenant(),
+                'tenantPivots.tenant.settings' => fn ($query) => $query->withoutTenant(),
+                // All platform rows (newest first): the effective state is
+                // supplied separately by the shared statistics resolver.
+                'tenantPivots.tenant.subscriptions' => fn ($query) => $query->withoutTenant()->latest('starts_at'),
             ]);
 
         if ($request->filled('is_active')) {
             $base->where('is_active', $request->boolean('is_active'));
         }
         if ($request->filled('plan_id')) {
-            $base->whereHas('tenantPivots.tenant.subscriptions', fn ($s) => $s->where('plan_id', $request->plan_id)->whereIn('status', ['active', 'trialing']));
+            $base->whereHas('tenantPivots', fn ($pivot) => $pivot
+                ->withoutTenant()
+                ->where('status', 'active')
+                ->whereHas('tenant.subscriptions', fn ($subscription) => $subscription
+                    ->withoutTenant()
+                    ->where('plan_id', $request->plan_id)
+                    ->whereIn('status', ['active', 'trialing'])));
+        }
+        if (! empty($validated['subscription_state'])) {
+            $teacherIds = $snapshot['teacher_ids_by_state'][$validated['subscription_state']] ?? [];
+            $base->whereIn('users.id', $teacherIds);
         }
 
         $search = $request->filled('search') ? trim((string) $request->input('search')) : null;
@@ -532,7 +573,9 @@ class AdminController extends Controller
             $rows->where(fn ($q) => $q
                 ->where('name', $like, '%'.$search.'%')
                 ->orWhere('email', $like, '%'.$search.'%')
-                ->orWhereHas('tenantPivots.tenant', fn ($t) => $t->where('name', $like, '%'.$search.'%')));
+                ->orWhereHas('tenantPivots', fn ($pivot) => $pivot
+                    ->withoutTenant()
+                    ->whereHas('tenant', fn ($tenant) => $tenant->where('name', $like, '%'.$search.'%'))));
         }
 
         $rows = $rows->orderByDesc('created_at')->limit(200)->get();
@@ -553,19 +596,27 @@ class AdminController extends Controller
             $rows = $rows->concat($phoneMatches)->unique('id')->sortByDesc('created_at')->values();
         }
 
-        $teachers = $rows->map(fn (User $u) => $this->teacherPayload($u));
+        $teachers = $rows->map(function (User $user) use ($snapshot) {
+            $payload = $this->teacherPayload($user);
+            $payload['subscription_summary'] = $snapshot['teacher_subscription_by_id'][(string) $user->id] ?? null;
+
+            return $payload;
+        });
 
         $stats = [
-            'total' => User::role('Teacher')->count(),
-            'active' => User::role('Teacher')->where('is_active', true)->count(),
-            'inactive' => User::role('Teacher')->where('is_active', false)->count(),
-            'with_subscription' => TenantSubscription::withoutTenant()
-                ->whereIn('status', ['active', 'trialing'])
-                ->distinct('tenant_id')
-                ->count('tenant_id'),
+            'total' => $metrics['total_teachers'],
+            'active' => $metrics['active_accounts'],
+            'inactive' => $metrics['total_teachers'] - $metrics['active_accounts'],
+            // Deprecated compatibility alias: this is effective access,
+            // not a count of paid subscriptions or subscription rows.
+            'with_subscription' => $metrics['effective_access'],
         ];
 
-        return response()->json(['teachers' => $teachers, 'stats' => $stats]);
+        return response()->json([
+            'teachers' => $teachers,
+            'stats' => $stats,
+            'subscription_metrics' => $metrics,
+        ]);
     }
 
     public function teacherStore(Request $request): JsonResponse
@@ -665,8 +716,13 @@ class AdminController extends Controller
     {
         $user = User::role('Teacher')
             ->with([
-                'tenantPivots.tenant.settings',
-                'tenantPivots.tenant.subscriptions.plan',
+                'tenantPivots' => fn ($pivots) => $pivots->withoutTenant()->with([
+                    'tenant.settings' => fn ($settings) => $settings->withoutTenant(),
+                    'tenant.subscriptions' => fn ($subscriptions) => $subscriptions
+                        ->withoutTenant()
+                        ->with('plan')
+                        ->latest('starts_at'),
+                ]),
             ])
             ->findOrFail($id);
 
@@ -792,7 +848,13 @@ class AdminController extends Controller
 
         return response()->json([
             'teacher' => $this->teacherPayload($user),
-            'tenant' => $tenant ? new TenantResource($tenant->load('settings', 'subscriptions.plan')) : null,
+            'tenant' => $tenant ? new TenantResource($tenant->load([
+                'settings' => fn ($settings) => $settings->withoutTenant(),
+                'subscriptions' => fn ($subscriptions) => $subscriptions
+                    ->withoutTenant()
+                    ->with('plan')
+                    ->latest('starts_at'),
+            ])) : null,
             'access' => $this->accessInfo($tenantId),
             'stats' => [
                 'courses' => $courses->count(),
@@ -1180,11 +1242,11 @@ class AdminController extends Controller
 
         $proofPath = ($payment->gateway_data ?? [])['proof_path'] ?? null;
 
-        if (! $proofPath || ! \Illuminate\Support\Facades\Storage::disk('local')->exists($proofPath)) {
+        if (! $proofPath || ! Storage::disk('local')->exists($proofPath)) {
             abort(404, 'Proof not found.');
         }
 
-        return \Illuminate\Support\Facades\Storage::disk('local')->response(
+        return Storage::disk('local')->response(
             $proofPath,
             'proof-'.$payment->id.'.'.pathinfo($proofPath, PATHINFO_EXTENSION)
         );
@@ -1212,14 +1274,14 @@ class AdminController extends Controller
                 // Manual (Click/wallet) payments: tell the tenant owner their
                 // plan is now active.
                 if ($payment->gateway === 'manual') {
-                    $owner = \App\Models\TenantUser::withoutTenant()
+                    $owner = TenantUser::withoutTenant()
                         ->where('tenant_id', $payment->tenant_id)
                         ->whereIn('role', ['teacher', 'owner', 'admin'])
                         ->first()?->user;
 
                     if ($owner) {
                         try {
-                            app(\App\Services\NotificationService::class)->notify(
+                            app(NotificationService::class)->notify(
                                 notifiable: $owner,
                                 type: 'payment.approved',
                                 title: 'تم قبول دفعتك',
@@ -1284,13 +1346,13 @@ class AdminController extends Controller
         // اسم الدافع الحقيقي: صاحب حساب المنصة (أول مستخدم بصلاحيات مالك).
         $payerName = null;
         if ($p->tenant_id) {
-            $owner = \App\Models\TenantUser::where('tenant_id', $p->tenant_id)
+            $owner = TenantUser::where('tenant_id', $p->tenant_id)
                 ->whereIn('role', ['owner', 'admin'])
                 ->where('status', 'active')
                 ->orderBy('created_at')
                 ->first();
 
-            $payerName = $owner ? (\App\Models\User::find($owner->user_id)?->name ?? null) : null;
+            $payerName = $owner ? (User::find($owner->user_id)?->name ?? null) : null;
         }
 
         $payload = [
