@@ -293,6 +293,53 @@ class FreemiusGateway
     }
 
     /**
+     * List one bounded page of product payment records for read-only financial
+     * reporting. The requested fields deliberately exclude customer identity.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public static function listPayments(int $offset = 0, int $count = 50): array
+    {
+        if ($offset < 0 || $count < 1 || $count > 50) {
+            throw new \InvalidArgumentException('Invalid Freemius payment page.');
+        }
+
+        $config = self::config();
+
+        if (! $config['enabled'] || $config['api_token'] === '' || $config['product_id'] === '') {
+            throw new FreemiusApiException('Freemius payments are not configured.');
+        }
+
+        try {
+            $response = self::client()->get(
+                "/v1/products/{$config['product_id']}/payments.json",
+                [
+                    'count' => $count,
+                    'offset' => $offset,
+                    'fields' => 'id,created,currency,gross,bound_payment_id,subscription_id,type,gateway_fee,vat,is_renewal',
+                ],
+            );
+        } catch (\Throwable $exception) {
+            throw new FreemiusApiException('Freemius payment listing failed.', 0, $exception);
+        }
+
+        if (! $response->successful()) {
+            throw new FreemiusApiException('Freemius payment listing returned HTTP '.$response->status());
+        }
+
+        $payload = $response->json();
+        $payments = is_array($payload) && array_is_list($payload)
+            ? $payload
+            : (is_array($payload) ? ($payload['payments'] ?? $payload['data'] ?? null) : null);
+
+        if (! is_array($payments) || ! array_is_list($payments)) {
+            throw new FreemiusApiException('Freemius payment listing returned an invalid response.');
+        }
+
+        return $payments;
+    }
+
+    /**
      * Generate a Customer Portal magic-login link for a customer email.
      *
      * @return string|null The portal URL, or null on failure.
