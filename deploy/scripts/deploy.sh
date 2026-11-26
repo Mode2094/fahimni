@@ -150,22 +150,42 @@ fail_with_restore() {
 # Keep the env file's IMAGE_TAG truthful after a successful deploy. fresh-install
 # and the brand/golive rollouts all read it back, so a stale pin left here
 # misleads them (and any operator) about which build is running.
+# Resolve a (possibly symlinked) path to its real target. Portable across GNU
+# and BSD `readlink` (which lacks `-f`), unlike a bare `readlink -f`.
+resolve_env_file() {
+  local p="$1" n
+  while [ -L "$p" ]; do
+    n="$(readlink "$p" 2>/dev/null)" || break
+    case "$n" in
+      /*) p="$n" ;;
+      *)  p="$(dirname "$p")/$n" ;;
+    esac
+  done
+  printf '%s' "$p"
+}
+
 persist_image_tag() {
-  local file="$1" value="$2" mode tmp
-  [[ -w "$file" ]] || { warn "cannot persist IMAGE_TAG to $file (not writable)"; return 0; }
-  mode="$(stat -Lc '%a' "$file" 2>/dev/null || stat -Lf '%Lp' "$file")"
-  tmp="$(mktemp "${file}.XXXXXX")" || { warn "could not create a temp file for $file"; return 0; }
+  local file="$1" value="$2" target mode tmp
+  # `.env` is normally a SYMLINK to the real secret file (/etc/fahimni/…). Write
+  # the REAL file, never the link: `mv` onto a symlink replaces it with a copy,
+  # silently breaking the single-source-of-truth link (and the `-ef` check that
+  # guards the next deploy).
+  target="$(resolve_env_file "$file")"
+  [[ -n "$target" ]] || target="$file"
+  [[ -w "$target" ]] || { warn "cannot persist IMAGE_TAG to $target (not writable)"; return 0; }
+  mode="$(stat -Lc '%a' "$target" 2>/dev/null || stat -Lf '%Lp' "$target")"
+  tmp="$(mktemp "${target}.XXXXXX")" || { warn "could not create a temp file for $target"; return 0; }
   if awk -v v="$value" '
         /^IMAGE_TAG=/ { print "IMAGE_TAG=" v; seen=1; next }
         { print }
         END { if (!seen) print "IMAGE_TAG=" v }
-      ' "$file" > "$tmp"; then
+      ' "$target" > "$tmp"; then
     chmod "$mode" "$tmp" 2>/dev/null || true
     # GNU coreutils only; harmless no-op elsewhere.
-    chown --reference="$file" "$tmp" 2>/dev/null || true
-    mv -f "$tmp" "$file"
+    chown --reference="$target" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$target"
   else
-    warn "could not rewrite $file; leaving IMAGE_TAG as-is"
+    warn "could not rewrite $target; leaving IMAGE_TAG as-is"
     rm -f "$tmp"
   fi
 }
