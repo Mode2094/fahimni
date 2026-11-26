@@ -62,12 +62,14 @@ check_present 'deploy persists the effective tag' \
 # ── T4: exercise the REAL persist_image_tag (no duplication of its logic) ────
 printf '\n-- T4 persist_image_tag rewrites, appends and preserves mode\n'
 fn="$(sed -n '/^persist_image_tag() {/,/^}/p' "$DEPLOY")"
-if [ -z "$fn" ]; then
-  fail 'could not extract persist_image_tag from deploy.sh'
+resolver="$(sed -n '/^resolve_env_file() {/,/^}/p' "$DEPLOY")"
+if [ -z "$fn" ] || [ -z "$resolver" ]; then
+  fail 'could not extract persist_image_tag/resolve_env_file from deploy.sh'
 else
   # invoked indirectly through the eval'd helper below
   # shellcheck disable=SC2329
   warn(){ :; }
+  eval "$resolver"
   eval "$fn"
 
   envf="$work/replace.env"
@@ -86,6 +88,23 @@ else
   printf 'APP_ENV=production\n' > "$envf2"
   persist_image_tag "$envf2" "fresh_sha"
   check_present 'a missing pin is appended' -qx 'IMAGE_TAG=fresh_sha' "$envf2"
+
+  # ── the production layout: `<release>/.env` is a symlink to /etc/fahimni ────
+  # `mv` onto a symlink would replace it with a COPY (and write the wrong file),
+  # which is exactly the bug this locks out.
+  real="$work/real.env"
+  printf 'APP_ENV=production\nIMAGE_TAG=stale_sha\n' > "$real"
+  chmod 600 "$real"
+  link="$work/link.env"
+  ln -s "$real" "$link"
+  persist_image_tag "$link" "fresh_sha"
+  if [ -L "$link" ]; then
+    pass 'persisting through a symlink keeps it a symlink'
+  else
+    fail 'persist replaced the .env symlink with a copy'
+  fi
+  check_present 'the REAL env file gets the fresh pin' -qx 'IMAGE_TAG=fresh_sha' "$real"
+  check_mode 'the real env file keeps its mode (600)' "$real" 600
 fi
 
 printf '\n'
