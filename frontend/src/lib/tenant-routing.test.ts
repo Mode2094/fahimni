@@ -62,6 +62,15 @@ describe('tenantSitePath', () => {
     expect(tenantSitePath('/register/teacher', 'ahmad')).toBeNull();
     expect(tenantSitePath('/register/anything-else', 'ahmad')).toBeNull();
   });
+
+  it('keeps the teacher course builder reachable on a teacher host', () => {
+    // `/courses` is the tenant's PUBLIC catalogue on a teacher host, so the
+    // teacher's own builder lives at `/teacher/courses` — which must NEVER be
+    // rewritten, or a teacher on their custom domain could not manage courses.
+    expect(tenantSitePath('/teacher/courses', 'ahmad')).toBeNull();
+    expect(tenantSitePath('/teacher/courses/42', 'ahmad')).toBeNull();
+    expect(isTenantSitePath('/teacher/courses')).toBe(false);
+  });
 });
 
 describe('isTenantSitePath', () => {

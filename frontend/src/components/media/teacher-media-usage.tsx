@@ -72,7 +72,7 @@ export default function TeacherMediaUsage() {
               <p className="text-[11px] text-muted-foreground">{t('التخزين والبث والتسجيلات', 'Storage, live & recordings')}</p>
             </div>
           </div>
-          <button onClick={() => router.push('/courses')} className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-3.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100">
+          <button onClick={() => router.push('/teacher/courses')} className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-3.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100">
             {t('إدارة المحتوى', 'Manage content')}
           </button>
         </div>

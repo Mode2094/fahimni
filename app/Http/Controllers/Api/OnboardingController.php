@@ -62,12 +62,12 @@ class OnboardingController extends Controller
         // [key, done, included, target page, optional]
         $definitions = [
             ['profile', filled($user->phone), true, '/teacher/complete-profile', false],
-            ['course', Course::withoutTenant()->where('tenant_id', $tenantId)->exists(), true, '/courses', false],
-            ['lesson', Lesson::withoutTenant()->where('tenant_id', $tenantId)->exists(), true, '/courses', false],
-            ['content', $hasContent, $contentIncluded, '/courses', false],
+            ['course', Course::withoutTenant()->where('tenant_id', $tenantId)->exists(), true, '/teacher/courses', false],
+            ['lesson', Lesson::withoutTenant()->where('tenant_id', $tenantId)->exists(), true, '/teacher/courses', false],
+            ['content', $hasContent, $contentIncluded, '/teacher/courses', false],
             ['exam', Exam::withoutTenant()->where('tenant_id', $tenantId)->exists(), $examsIncluded, '/teacher/exams', true],
             ['enrollment', $enrollmentReady, true, $cardsEnabled ? '/teacher/cards' : '/students', false],
-            ['assignment', Assignment::withoutTenant()->where('tenant_id', $tenantId)->exists(), $engine->hasFeature($tenantId, 'assignments_enabled'), '/courses', true],
+            ['assignment', Assignment::withoutTenant()->where('tenant_id', $tenantId)->exists(), $engine->hasFeature($tenantId, 'assignments_enabled'), '/teacher/courses', true],
             ['live', LiveSession::withoutTenant()->where('tenant_id', $tenantId)->exists(), $engine->hasFeature($tenantId, 'live_stream_enabled'), '/teacher/live', true],
             ['schedule', ScheduledLesson::withoutTenant()->where('tenant_id', $tenantId)->exists(), $engine->hasFeature($tenantId, 'scheduled_lessons_enabled'), '/teacher/schedule', true],
         ];

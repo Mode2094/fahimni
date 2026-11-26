@@ -124,7 +124,7 @@ describe('Teacher Dashboard', () => {
     expect(screen.getByText('طلبات حجز معلقة')).toBeInTheDocument();
     expect(screen.getByText('إشعارات إدارة غير مقروءة')).toBeInTheDocument();
     expect(container.querySelector('a[href="/teacher/exams"]')).toBeTruthy();
-    expect(container.querySelector('a[href="/courses"]')).toBeTruthy();
+    expect(container.querySelector('a[href="/teacher/courses"]')).toBeTruthy();
     expect(container.querySelector('a[href="/teacher/appointments"]')).toBeTruthy();
     expect(container.querySelector('a[href="/teacher/notifications"]')).toBeTruthy();
   });
@@ -280,7 +280,7 @@ describe('Teacher Dashboard', () => {
 
     // Every statistic keeps its real destination.
     expect(container.querySelector('a[href="/students"]')).toBeTruthy();
-    expect(container.querySelectorAll('a[href="/courses"]').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('a[href="/teacher/courses"]').length).toBeGreaterThan(0);
     expect(container.querySelector('a[href="/analytics"]')).toBeTruthy();
 
     // The statistics container is 2-up on phones and 4-up on desktop.

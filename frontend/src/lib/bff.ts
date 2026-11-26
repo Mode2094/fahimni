@@ -15,7 +15,7 @@ export const LARAVEL_API_BASE = (
   'http://localhost:8080/api/v1'
 ).replace(/\/+$/, '');
 
-const AUTH_PATHS = new Set(['/auth/login', '/auth/register', '/auth/complete-profile', '/auth/2fa/confirm', '/auth/logout']);
+const AUTH_PATHS = new Set(['/auth/login', '/auth/register', '/auth/complete-profile', '/auth/2fa/confirm', '/auth/logout', '/auth/google/redeem']);
 
 export type CookieJar = Map<string, string>;
 
@@ -187,7 +187,7 @@ export async function statefulPost(
   // A failed credential check must never hand the browser a fresh session
   // cookie: that would replace a still-valid session with an anonymous one
   // (the "wrong password logged me out" bug). The existing cookie stays.
-  const credentials = path === '/auth/login' || path === '/auth/register' || path === '/auth/complete-profile' || path === '/auth/2fa/confirm';
+  const credentials = path === '/auth/login' || path === '/auth/register' || path === '/auth/complete-profile' || path === '/auth/2fa/confirm' || path === '/auth/google/redeem';
   const cookies = credentials && result.status >= 400 ? [] : result.cookies;
 
   return { status: result.status, data: result.data, cookies };

@@ -265,8 +265,8 @@ export default function TeacherDashboard() {
 
   const stats = [
     { label: t('الطلاب', 'Students'), value: usageValue(usage?.students?.used), href: '/students', icon: Users, tone: 'bg-teal-500/10 text-teal-600' },
-    { label: t('الكورسات', 'Courses'), value: usageValue(usage?.courses?.used), href: '/courses', icon: BookOpen, tone: 'bg-sky-500/10 text-sky-600' },
-    { label: t('الاختبارات', 'Exams'), value: usageValue(usage?.exams?.used), href: '/courses', icon: ClipboardList, tone: 'bg-violet-500/10 text-violet-600' },
+    { label: t('الكورسات', 'Courses'), value: usageValue(usage?.courses?.used), href: '/teacher/courses', icon: BookOpen, tone: 'bg-sky-500/10 text-sky-600' },
+    { label: t('الاختبارات', 'Exams'), value: usageValue(usage?.exams?.used), href: '/teacher/courses', icon: ClipboardList, tone: 'bg-violet-500/10 text-violet-600' },
     { label: t('المحاولات', 'Attempts'), value: attemptsValue(), href: '/analytics', icon: FileQuestion, tone: 'bg-amber-500/10 text-amber-600' },
   ];
 
@@ -283,7 +283,7 @@ export default function TeacherDashboard() {
     ...(workItems && workItems.pending_assignment_submissions > 0 ? [{
       key: 'assignment-reviews',
       count: workItems.pending_assignment_submissions,
-      href: '/courses',
+      href: '/teacher/courses',
       icon: ClipboardCheck,
       label: t('واجبات تحتاج مراجعة', 'Assignments need review'),
     }] : []),
@@ -347,13 +347,13 @@ export default function TeacherDashboard() {
             )}
 
             <div className="grid grid-cols-2 gap-2.5 lg:flex lg:gap-2.5" data-testid="quick-actions">
-              <a href="/courses" className="rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 lg:rounded-full">
+              <a href="/teacher/courses" className="rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 lg:rounded-full">
                 <Button className="h-auto min-h-11 w-full gap-2 rounded-2xl bg-white px-3 py-2.5 font-bold text-teal-700 shadow-sm hover:bg-teal-50 lg:h-9 lg:min-h-0 lg:w-auto lg:rounded-full lg:px-4 lg:py-0">
                   <Plus className="h-4 w-4 shrink-0" />
                   {t('إنشاء كورس', 'New course')}
                 </Button>
               </a>
-              <a href="/courses" className="rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 lg:rounded-full">
+              <a href="/teacher/courses" className="rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 lg:rounded-full">
                 <Button variant="outline" className="h-auto min-h-11 w-full gap-2 rounded-2xl border-white/30 bg-white/10 px-3 py-2.5 font-bold text-white hover:bg-white/20 hover:text-white lg:h-9 lg:min-h-0 lg:w-auto lg:rounded-full lg:px-4 lg:py-0">
                   <LayoutGrid className="h-4 w-4 shrink-0" />
                   {t('إدارة الكورسات', 'Manage courses')}

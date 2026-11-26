@@ -293,7 +293,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
             <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
             <span className="flex-1 min-w-[200px]">{t('وضع المعاينة (كما يراها الطالب): لا تُسجَّل محاولة، ولا تُحفظ درجات، ولا تُحتسب ضدّ الطلاب. تظهر حتى لو كان الاختبار غير منشور.', 'Preview mode (exactly as a student sees it): no attempt is recorded, no score is saved, and nothing counts against students. Works even for an unpublished exam.')}</span>
             {exam?.course_id && (
-              <a href={`/courses/${exam.course_id}`} className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-700 shrink-0">
+              <a href={`/teacher/courses/${exam.course_id}`} className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-700 shrink-0">
                 <Pencil className="h-3.5 w-3.5" />{t('العودة للتحرير', 'Back to editing')}
               </a>
             )}

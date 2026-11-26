@@ -11,7 +11,9 @@ use App\Models\TenantUser;
 use App\Models\User;
 use App\Plans\TeacherTrialProgram;
 use App\Services\NewTeacherNotifier;
+use App\Services\TenantDomainResolver;
 use App\Services\TenantSlugService;
+use App\Support\GoogleHandoff;
 use App\Support\PhoneNumber;
 use App\Support\WebSessionAuth;
 use Illuminate\Database\QueryException;
@@ -66,6 +68,27 @@ class GoogleAuthController extends Controller
         $name = trim((string) $request->query('name', ''));
         $phone = trim((string) $request->query('phone', ''));
 
+        // A custom-domain sign-in must hand the session back to the teacher's
+        // OWN host. The destination host comes from the request Origin (the BFF
+        // calls us server-to-server on behalf of that host) and is only trusted
+        // after the domain resolver confirms it is a live tenant address; a
+        // platform host keeps the existing single-host flow.
+        $handoffHost = $this->handoffHost($request);
+        $bindingHash = null;
+
+        if ($handoffHost !== null) {
+            $rawBinding = $request->query('binding');
+            $bindingHash = is_string($rawBinding) && strlen($rawBinding) >= 16 && strlen($rawBinding) <= 128
+                ? GoogleHandoff::bindingHash($rawBinding)
+                : null;
+
+            // Without a browser binding the ticket could be fixed onto another
+            // session (login CSRF): refuse rather than downgrade.
+            if ($bindingHash === null) {
+                return response()->json(['message' => 'Invalid OAuth handoff request.'], 422);
+            }
+        }
+
         // Signed, expiring OAuth state: the callback refuses any state it did
         // not issue, so `role`/registration hints cannot be tampered with.
         $state = $this->signState([
@@ -74,6 +97,8 @@ class GoogleAuthController extends Controller
             'phone' => $phone !== '' ? Str::limit($phone, 40, '') : null,
             'tenant_slug' => $tenantSlug,
             'redirect_to' => $redirectTo,
+            'handoff_host' => $handoffHost,
+            'bh' => $bindingHash,
             'exp' => time() + 600,
             'n' => bin2hex(random_bytes(8)),
         ]);
@@ -125,6 +150,24 @@ class GoogleAuthController extends Controller
 
         // Staff (teacher/admin) identities own a workspace tenant.
         $wantsStaffTenant = in_array($role, ['teacher', 'admin'], true);
+
+        // Cross-host handoff target (a teacher's own custom domain), if any.
+        // Present only when `redirect()` verified a live tenant host and a
+        // browser binding; a platform host leaves both null and keeps the
+        // existing single-host session flow untouched.
+        $handoffHost = is_string($state['handoff_host'] ?? null) ? $state['handoff_host'] : null;
+        $bindingHash = is_string($state['bh'] ?? null) ? $state['bh'] : null;
+
+        // On a teacher's own host the tenant is resolved from the host — the
+        // internal slug never has to travel in a URL. Fall back to it only when
+        // the signup form did not already supply a slug.
+        if ($handoffHost !== null && empty($regData['tenant_slug'])) {
+            $handoffTenant = app(TenantDomainResolver::class)->tenantForHost($handoffHost);
+
+            if ($handoffTenant) {
+                $regData['tenant_slug'] = $handoffTenant->slug;
+            }
+        }
 
         try {
             $google = Socialite::driver('google')->stateless()->user();
@@ -184,6 +227,13 @@ class GoogleAuthController extends Controller
 
         // Google login must never bypass an enabled second factor.
         if ($user && $user->two_factor_enabled) {
+            // On a teacher's own host the platform's session-bound 2FA confirm
+            // step is unreachable, and 2FA must never be skipped: send the user
+            // to that host's own login (email/password + 2FA) instead.
+            if ($handoffHost !== null) {
+                return redirect()->away('https://'.$handoffHost.'/auth/google/complete?error=two_factor_required');
+            }
+
             if ($request->hasSession()) {
                 // Web session flow: the pending challenge stays server-side.
                 $request->session()->put('auth.2fa_pending', [
@@ -301,6 +351,25 @@ class GoogleAuthController extends Controller
         $needsProfile = $role === 'teacher' && ! filled($user->phone);
         $studentTenantId = $this->studentTenantId($user, $regData['tenant_slug']);
 
+        // Custom teacher domain: never sign the PLATFORM session. Mint a
+        // single-use ticket bound to {user, tenant, host, initiating browser}
+        // and send the browser to the teacher host, whose BFF redeems it for a
+        // host-only session. The ticket id lives in the URL FRAGMENT, so it is
+        // never sent to a server and cannot leak into access logs or Referer.
+        if ($handoffHost !== null && $bindingHash !== null && $this->isLiveHandoffHost($handoffHost)) {
+            $ticket = GoogleHandoff::issue([
+                'user_id' => $user->id,
+                'tenant_id' => $studentTenantId ?? $tenant?->id,
+                'role' => $role,
+                'redirect_to' => $regData['redirect_to'],
+                'needs_profile' => $needsProfile,
+                'host' => $handoffHost,
+                'bh' => $bindingHash,
+            ]);
+
+            return redirect()->away('https://'.$handoffHost.'/auth/google/complete#ticket='.$ticket);
+        }
+
         // Web browser flow: sign in with an HttpOnly session cookie — the
         // Sanctum token never leaves the server. Mobile keeps using the
         // bearer-token flow of /api/v1/mobile/auth/google.
@@ -332,8 +401,8 @@ class GoogleAuthController extends Controller
             'trial_started' => $trialStarted ? '1' : '0',
             'needs_profile_completion' => $needsProfile ? '1' : '0',
             'user' => json_encode([
-                'id'    => $user->id,
-                'name'  => $user->name,
+                'id' => $user->id,
+                'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone ?? null,
                 'roles' => $user->roles->pluck('name')->toArray(),
@@ -341,6 +410,107 @@ class GoogleAuthController extends Controller
         ]);
 
         return redirect()->away($frontend.'/auth/google/callback#'.$fragment);
+    }
+
+    /**
+     * Redeem a cross-host handoff ticket on the teacher's OWN domain.
+     *
+     * Called by that host's BFF (server-to-server, stateful session) with the
+     * opaque ticket and the browser's HttpOnly binding secret. On success it
+     * starts a session for THIS host and returns the Set-Cookie the BFF forwards
+     * to the browser — no token is ever placed in a URL.
+     */
+    public function redeem(Request $request): JsonResponse
+    {
+        $host = $this->handoffHost($request);
+        $ticket = (string) $request->input('ticket', '');
+        $binding = (string) $request->input('binding', '');
+
+        if ($host === null || $ticket === '' || $binding === '') {
+            return response()->json(['message' => 'Invalid sign-in handoff.'], 422);
+        }
+
+        // Single-use: a replay (or an expired ticket) finds nothing.
+        $claims = GoogleHandoff::consume($ticket);
+
+        if ($claims === null) {
+            return response()->json(['message' => 'This sign-in link expired or was already used. Please try again.'], 410);
+        }
+
+        // The ticket is usable only by the host it was minted for AND the browser
+        // that started the flow (defeats cross-host replay, login CSRF and
+        // session-fixation onto another user).
+        if (! hash_equals((string) ($claims['host'] ?? ''), $host)
+            || ! hash_equals((string) ($claims['bh'] ?? ''), GoogleHandoff::bindingHash($binding))) {
+            return response()->json(['message' => 'This sign-in link is not valid for this site.'], 403);
+        }
+
+        $user = User::withTrashed()->find($claims['user_id'] ?? null);
+
+        if (! $user || $user->trashed() || ! $user->is_active) {
+            return response()->json(['message' => 'Account unavailable.'], 403);
+        }
+
+        WebSessionAuth::login($request, $user);
+
+        $tenantId = is_string($claims['tenant_id'] ?? null) ? $claims['tenant_id'] : null;
+
+        if ($tenantId) {
+            $request->session()->put('current_tenant_id', $tenantId);
+        } else {
+            $request->session()->forget('current_tenant_id');
+        }
+
+        return response()->json([
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone ?? null,
+                'roles' => $user->roles->pluck('name')->toArray(),
+            ],
+            'tenant_id' => $tenantId,
+            'needs_profile_completion' => (bool) ($claims['needs_profile'] ?? false),
+            'redirect_to' => $claims['redirect_to'] ?? null,
+        ]);
+    }
+
+    /**
+     * The verified, non-platform destination host for a cross-host handoff, or
+     * null when this request is not for a live teacher domain (platform hosts
+     * keep the single-host session flow).
+     */
+    private function handoffHost(Request $request): ?string
+    {
+        $host = $this->requestOriginHost($request);
+
+        if ($host === null || ! $this->isLiveHandoffHost($host)) {
+            return null;
+        }
+
+        return $host;
+    }
+
+    /** Hostname from the request Origin (preferred) or Referer, lowercased. */
+    private function requestOriginHost(Request $request): ?string
+    {
+        $value = $request->headers->get('origin') ?: $request->headers->get('referer');
+
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+
+        $host = parse_url($value, PHP_URL_HOST);
+
+        return is_string($host) && $host !== '' ? strtolower($host) : null;
+    }
+
+    /** A live host of an ACTIVE tenant — never one of the platform's own hosts. */
+    private function isLiveHandoffHost(string $host): bool
+    {
+        $resolver = app(TenantDomainResolver::class);
+
+        return ! $resolver->isPlatformHost($host) && $resolver->belongsToActiveTenant($host);
     }
 
     /**

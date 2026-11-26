@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Mail\PlatformNotification;
+use App\Support\RequestFrontend;
 use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -125,7 +126,9 @@ class User extends Authenticatable
      */
     public function sendPasswordResetNotification($token): void
     {
-        $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+        // Keep the reset on the teacher's own domain when the request came from
+        // it; otherwise the platform frontend URL.
+        $frontend = RequestFrontend::baseUrl();
         $url = $frontend.'/reset-password?token='.$token.'&email='.urlencode((string) $this->email);
 
         try {

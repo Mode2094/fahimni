@@ -127,7 +127,7 @@ export function DuplicateDialog({ open, onOpenChange, kind, id, originalTitle, o
             kind === 'course' && result.newId ? (
               <>
                 <Button variant="outline" onClick={() => onOpenChange(false)}>{t('إغلاق', 'Close')}</Button>
-                <a href={`/courses/${result.newId}`}><Button>{t('فتح النسخة', 'Open copy')}</Button></a>
+                <a href={`/teacher/courses/${result.newId}`}><Button>{t('فتح النسخة', 'Open copy')}</Button></a>
               </>
             ) : (
               <Button onClick={() => onOpenChange(false)}>{t('تم', 'Done')}</Button>

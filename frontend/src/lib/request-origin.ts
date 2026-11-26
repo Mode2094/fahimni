@@ -218,9 +218,19 @@ export async function resolveRequestOrigin(request: OriginRequestLike): Promise<
 export function isPlatformBrowserHost(): boolean {
   if (typeof window === 'undefined') return true;
 
-  const name = hostnameOf(window.location.hostname);
+  return isPlatformHostName(window.location.hostname);
+}
 
-  if (!name) return true;
+/**
+ * True when `host` is one of the platform's OWN hosts (apex / `www.` / `api.`)
+ * or a loopback dev host. A teacher subdomain (`teacher.fahimni.me`) is NOT a
+ * platform host — it is a tenant site and needs the same cross-host handoff as
+ * a custom domain. Server-safe (takes the host as a string).
+ */
+export function isPlatformHostName(host: string | null | undefined): boolean {
+  const name = hostnameOf(host ?? '');
+
+  if (!name) return false;
   if (LOCAL_HOSTS.includes(name)) return true;
 
   return platformHosts().some(

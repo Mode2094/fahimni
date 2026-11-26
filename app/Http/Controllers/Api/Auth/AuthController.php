@@ -18,11 +18,13 @@ use App\Rules\ValidPhoneNumber;
 use App\Services\NewTeacherNotifier;
 use App\Services\StudentGamificationService;
 use App\Services\TenantSlugService;
+use App\Support\AdminSupportSession;
 use App\Support\AuditLogger;
 use App\Support\DevicePolicy;
 use App\Support\MailDelivery;
 use App\Support\MathCaptcha;
 use App\Support\PhoneNumber;
+use App\Support\RequestFrontend;
 use App\Support\TOTP;
 use App\Support\WebSessionAuth;
 use Illuminate\Http\JsonResponse;
@@ -36,6 +38,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Uid\UuidV7;
 
 class AuthController extends Controller
@@ -189,7 +192,7 @@ class AuthController extends Controller
 
         // بريد ترحيبي (منفصل عن بريد التفعيل) — يُرسَل عبر الطابور عبر Resend.
         try {
-            $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $frontend = RequestFrontend::baseUrl($request);
             $isTeacher = $role === 'Teacher';
 
             if ($isTeacher && $trialGranted) {
@@ -451,7 +454,7 @@ class AuthController extends Controller
         if ($tenantId) {
             $error = DevicePolicy::register($request, $tenantId, $user);
             if ($error) {
-                throw new \Symfony\Component\HttpKernel\Exception\HttpException($error['status'], $error['message']);
+                throw new HttpException($error['status'], $error['message']);
             }
 
             $this->recordLoginReward($user, $tenantId);
@@ -679,7 +682,7 @@ class AuthController extends Controller
         return response()->json([
             'user' => new UserResource($user),
             'view_as' => $this->viewAsState($request),
-            'admin_support' => \App\Support\AdminSupportSession::payload($request),
+            'admin_support' => AdminSupportSession::payload($request),
         ]);
     }
 
@@ -775,7 +778,9 @@ class AuthController extends Controller
         ])->save();
 
         try {
-            $frontend = rtrim(config('app.frontend_url') ?: config('app.url'), '/');
+            // Return to the teacher's own domain when the signup/verify request
+            // came from it, so the link keeps the tenant context and branding.
+            $frontend = RequestFrontend::baseUrl();
             $verifyUrl = $frontend.'/verify-email/'.$token;
 
             Mail::to($user->email)->queue(
