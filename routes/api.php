@@ -113,6 +113,9 @@ Route::prefix('v1')->group(function () {
         // ─── تسجيل الدخول عبر Google (معلم/طالب/أدمن) ───
         // الـcallback انتقل إلى routes/web.php ليعمل بجلسة الويب (HttpOnly).
         Route::get('google/redirect', [GoogleAuthController::class, 'redirect']);
+        // Cross-host handoff redemption — called by a teacher domain's BFF
+        // (stateful) to exchange a single-use ticket for a host-only session.
+        Route::post('google/redeem', [GoogleAuthController::class, 'redeem'])->middleware('throttle:login');
         Route::post('forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:forgot-password');
         Route::post('reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:reset-password');
         Route::post('captcha', [SecurityController::class, 'captcha'])->middleware('throttle:captcha');
