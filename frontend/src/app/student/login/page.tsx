@@ -39,6 +39,13 @@ function StudentLoginPageInner() {
   // On a teacher's own host the tenant comes from the host itself; the query
   // param is only needed on the platform (`?tenant_slug=`).
   const tenantSlug = search.get('tenant_slug') || hostTenantSlug || '';
+  // The teacher's own host resolves the tenant itself, so its sign-up link must
+  // not carry the internal slug (`?tenant_slug=` is a platform-only carrier).
+  const registerHref = hostTenantSlug
+    ? '/register/student'
+    : tenantSlug
+      ? `/register/student?tenant_slug=${tenantSlug}`
+      : '/register/student';
   const { settings } = useSettings();
   const from = search.get('from') || '';
   const login = useAuth((s) => s.login);
@@ -219,7 +226,7 @@ function StudentLoginPageInner() {
             )}
           </form>
           <div className="text-center space-y-2">
-            <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href={tenantSlug ? `/register/student?tenant_slug=${tenantSlug}` : '/register/student'} className="text-teal-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>
+            <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href={registerHref} className="text-teal-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>
             <Link href="/" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"><ArrowLeft className="h-3 w-3" /> {locale === 'ar' ? 'العودة للصفحة الرئيسية' : 'Back home'}</Link>
           </div>
         </div>
