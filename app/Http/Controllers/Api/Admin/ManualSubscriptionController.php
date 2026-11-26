@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Exceptions\DuplicatePaymentReferenceException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ManualSubscriptionOperationResource;
 use App\Models\ManualSubscriptionOperation;
@@ -61,16 +62,24 @@ class ManualSubscriptionController extends Controller
         $tenant = $this->tenantForTeacher($teacher);
         $validated = $request->validate($this->service->rules());
 
-        $isFreeGrant = ($validated['operation_type'] ?? null) === 'free_grant'
-            || (float) ($validated['amount'] ?? 0) <= 0;
+        $isFreeGrant = ($validated['operation_type'] ?? null) === 'free_grant';
 
-        // A paid manual operation requires an explicit confirmation that the
-        // admin actually verified receipt of the money (not just a reference).
+        // A paid manual operation requires an honest amount, a payment method and
+        // an explicit confirmation that the admin actually verified receipt of
+        // the money (not just a reference). A missing/zero amount is NEVER
+        // silently treated as a free grant.
         if (! $isFreeGrant) {
             if (empty($validated['payment_method'])) {
                 return response()->json([
                     'message' => 'A payment method is required for a paid operation.',
                     'errors' => ['payment_method' => ['The payment method field is required.']],
+                ], 422);
+            }
+
+            if (! isset($validated['amount']) || ! is_numeric($validated['amount']) || (float) $validated['amount'] <= 0) {
+                return response()->json([
+                    'message' => 'A positive amount is required for a paid operation.',
+                    'errors' => ['amount' => ['A positive amount is required for a paid operation.']],
                 ], 422);
             }
 
@@ -104,6 +113,15 @@ class ManualSubscriptionController extends Controller
 
         try {
             $result = $this->service->apply($request->user(), $tenant, $validated);
+        } catch (DuplicatePaymentReferenceException $e) {
+            if ($proofPath) {
+                Storage::disk('local')->delete($proofPath);
+            }
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => ['payment_reference' => [$e->getMessage()]],
+            ], 422);
         } catch (\InvalidArgumentException $e) {
             if ($proofPath) {
                 Storage::disk('local')->delete($proofPath);

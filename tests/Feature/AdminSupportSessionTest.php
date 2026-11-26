@@ -424,4 +424,33 @@ class AdminSupportSessionTest extends TenantTestCase
         $this->getJson("/api/v1/admin/teachers/{$teacher->id}/domain", $this->stateful($teacher, $tenant))
             ->assertStatus(403);
     }
+
+    // ── Cross-tab / permission isolation ─────────────────────────────
+
+    public function test_admin_power_is_unreachable_from_the_impersonated_session(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $admin = $this->superAdmin($tenant);
+        $teacher = $this->teacherIn($tenant);
+
+        $this->enterSupport($tenant, $admin, $teacher);
+        $base = $this->plainStateful($tenant);
+
+        // The browser session — shared by every tab — is now a plain teacher.
+        // Every admin-only surface is refused server-side, so the admin panel
+        // is unreachable and no admin power can be borrowed from a stray tab.
+        $this->withHeaders($base)->getJson('/api/v1/admin/teachers')->assertStatus(403);
+        $this->withHeaders($base)->getJson('/api/v1/admin/payments')->assertStatus(403);
+
+        // Even starting a new impersonation (or a read-only preview) is refused.
+        $this->withHeaders($base)->postJson("/api/v1/admin/support/{$teacher->id}/begin")->assertStatus(403);
+        $this->withHeaders($base)->postJson("/api/v1/admin/view-as/{$teacher->id}")->assertStatus(403);
+
+        // The session is still exactly the single teacher — nothing escalated.
+        $this->withHeaders($base)->getJson('/api/v1/auth/me')
+            ->assertOk()
+            ->assertJsonPath('user.id', $teacher->id)
+            ->assertJsonPath('admin_support.active', true);
+    }
 }

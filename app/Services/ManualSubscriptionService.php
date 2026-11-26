@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\DuplicatePaymentReferenceException;
 use App\Models\Invoice;
 use App\Models\ManualSubscriptionOperation;
 use App\Models\Payment;
@@ -14,6 +15,7 @@ use App\Plans\PlanEngine;
 use App\Plans\SubscriptionState;
 use App\Plans\UsageService;
 use App\Support\AuditLogger;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -160,6 +162,18 @@ class ManualSubscriptionService
             $previousPlanId = $computed['state']['plan_id'];
             $previousEndsAt = $computed['previous_ends_at'];
 
+            // Resolve money/type BEFORE touching any row. A paid operation must
+            // carry a positive amount + verified receipt, and a reference that
+            // was already recorded must never be replayed onto a second
+            // activation (even under a different `request_id`).
+            $isFree = $this->isFreeGrant($input);
+            $amount = $this->amountOf($input, $plan, $computed['billing_cycle']);
+
+            if (! $isFree) {
+                $this->assertPaidOperation($input, $amount);
+                $this->guardAgainstDuplicateReference($input);
+            }
+
             $target = $this->targetRow($rows);
 
             // Supersede the other active/trialing rows first: the partial
@@ -191,11 +205,14 @@ class ManualSubscriptionService
 
             if (! $providerOwned) {
                 // A locally-managed row: move it to an honest paid active state.
+                // `auto_renew` is FALSE: a manual / CliQ activation has no
+                // gateway mandate to charge again, so it must never be shown as
+                // auto-renewing — and it expires (not "past due") when it ends.
                 $attributes += [
                     'status' => 'active',
                     'trial_ends_at' => null,
                     'cancelled_at' => null,
-                    'auto_renew' => true,
+                    'auto_renew' => false,
                 ];
             }
 
@@ -207,15 +224,13 @@ class ManualSubscriptionService
                     'id' => UuidV7::generate(),
                     'tenant_id' => $tenant->id,
                     'status' => 'active',
-                    'auto_renew' => true,
+                    'auto_renew' => false,
                 ], $attributes));
             }
 
             // ── Accounting ────────────────────────────────────────────────
             // Paid manual operations create a real, linked payment + ledger +
             // paid invoice. Free grants create NOTHING → zero fake revenue.
-            $amount = $this->amountOf($input, $plan, $computed['billing_cycle']);
-            $isFree = $this->isFreeGrant($input);
             $payment = null;
 
             if (! $isFree && $amount > 0) {
@@ -455,32 +470,38 @@ class ManualSubscriptionService
         $reference = $input['payment_reference'] ?? null;
         $paidAt = ! empty($input['payment_date']) ? Carbon::parse($input['payment_date']) : now();
 
-        $payment = Payment::withoutTenant()->create([
-            'id' => UuidV7::generate(),
-            'tenant_id' => $tenant->id,
-            'tenant_subscription_id' => $subscription->id,
-            'transaction_id' => $reference ?: 'manual-'.UuidV7::generate(),
-            'gateway' => 'manual',
-            'amount' => $amount,
-            'currency' => $currency,
-            'status' => 'completed',
-            'payment_method' => $input['payment_method'] ?? 'other',
-            'gateway_data' => [
-                'manual' => true,
-                'operation_type' => $input['operation_type'] ?? null,
-                'payer_name' => $tenant->name,
-                'reference' => $reference,
-                'notes' => $input['notes'] ?? null,
-                // Kept explicit for the CliQ-specific UX/tests.
-                'cliq_reference' => $reference,
-                'admin_notes' => $input['notes'] ?? null,
-                'proof_path' => $proofPath,
-                'performed_by' => $admin->id,
-                'performed_by_name' => $admin->name,
-                'verified_manually' => true,
-            ],
-            'paid_at' => $paidAt,
-        ]);
+        try {
+            $payment = Payment::withoutTenant()->create([
+                'id' => UuidV7::generate(),
+                'tenant_id' => $tenant->id,
+                'tenant_subscription_id' => $subscription->id,
+                'transaction_id' => $reference ?: 'manual-'.UuidV7::generate(),
+                'gateway' => 'manual',
+                'amount' => $amount,
+                'currency' => $currency,
+                'status' => 'completed',
+                'payment_method' => $input['payment_method'] ?? 'other',
+                'gateway_data' => [
+                    'manual' => true,
+                    'operation_type' => $input['operation_type'] ?? null,
+                    'payer_name' => $tenant->name,
+                    'reference' => $reference,
+                    'notes' => $input['notes'] ?? null,
+                    // Kept explicit for the CliQ-specific UX/tests.
+                    'cliq_reference' => $reference,
+                    'admin_notes' => $input['notes'] ?? null,
+                    'proof_path' => $proofPath,
+                    'performed_by' => $admin->id,
+                    'performed_by_name' => $admin->name,
+                    'verified_manually' => true,
+                ],
+                'paid_at' => $paidAt,
+            ]);
+        } catch (UniqueConstraintViolationException $e) {
+            // The unique (gateway, transaction_id) index caught a race between
+            // two requests using the same reference past the pre-check.
+            throw new DuplicatePaymentReferenceException((string) ($reference ?? ''), previous: $e);
+        }
 
         // Ledger entry (accounting-correct: money in).
         Transaction::withoutTenant()->create([
@@ -524,9 +545,59 @@ class ManualSubscriptionService
      */
     private function isFreeGrant(array $input): bool
     {
-        $amount = (float) ($input['amount'] ?? 0);
+        // ONLY an explicit `free_grant` is comped. A missing or zero amount on a
+        // paid operation is NOT a free grant — it is an invalid paid operation
+        // and must be rejected (otherwise a plan could be handed out with no
+        // money collected and nothing recorded).
+        return ($input['operation_type'] ?? null) === 'free_grant';
+    }
 
-        return ($input['operation_type'] ?? null) === 'free_grant' || $amount <= 0;
+    /**
+     * A paid (off-platform) operation always requires an honest amount, the
+     * payment method, and an explicit confirmation that the money was actually
+     * received — never just a reference number.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    private function assertPaidOperation(array $input, float $amount): void
+    {
+        if (trim((string) ($input['payment_method'] ?? '')) === '') {
+            throw new \InvalidArgumentException('A payment method is required for a paid operation.');
+        }
+
+        if ($amount <= 0) {
+            throw new \InvalidArgumentException('A positive amount is required for a paid operation.');
+        }
+
+        if (empty($input['confirm_payment_received'])) {
+            throw new \InvalidArgumentException('You must confirm that you verified receipt of the payment.');
+        }
+    }
+
+    /**
+     * One payment reference (CliQ number / bank reference) identifies exactly one
+     * real transfer, so it can never be recorded twice — even from a different
+     * `request_id` or a different admin. Replaying it would double-count revenue
+     * and double-activate the subscription.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    private function guardAgainstDuplicateReference(array $input): void
+    {
+        $reference = trim((string) ($input['payment_reference'] ?? ''));
+
+        if ($reference === '') {
+            return;
+        }
+
+        $exists = Payment::withoutTenant()
+            ->where('gateway', 'manual')
+            ->where('transaction_id', $reference)
+            ->exists();
+
+        if ($exists) {
+            throw new DuplicatePaymentReferenceException($reference);
+        }
     }
 
     /**

@@ -469,4 +469,93 @@ class AdminManualSubscriptionTest extends TenantTestCase
             ->assertJsonPath('payments.0.transaction_id', 'CLIQ-LIST-42')
             ->assertJsonPath('payments.0.status', 'completed');
     }
+
+    // ── 12. A missing/zero amount is NOT a free grant ────────────────
+
+    public function test_paid_operation_with_zero_or_missing_amount_is_rejected(): void
+    {
+        $tenant = $this->makeTenant();
+        $teacher = $this->teacherIn($tenant);
+        $admin = $this->superAdmin();
+        $plan = $this->makePlan();
+        $this->attachSubscription($tenant, 'trialing');
+
+        // Explicit zero amount → invalid, NOT a comped plan.
+        $this->postJson(
+            "/api/v1/admin/teachers/{$teacher->id}/subscription/manual",
+            $this->payload($plan, ['amount' => 0]),
+            $this->authHeaders($admin, $tenant),
+        )->assertStatus(422)->assertJsonValidationErrors('amount');
+
+        // Omitted amount → also invalid (never silently defaulted/free).
+        $withoutAmount = $this->payload($plan);
+        unset($withoutAmount['amount']);
+
+        $this->postJson(
+            "/api/v1/admin/teachers/{$teacher->id}/subscription/manual",
+            $withoutAmount,
+            $this->authHeaders($admin, $tenant),
+        )->assertStatus(422)->assertJsonValidationErrors('amount');
+
+        // Nothing was activated, charged or recorded.
+        $this->assertDatabaseCount('manual_subscription_operations', 0);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('transactions', 0);
+        $this->assertDatabaseCount('invoices', 0);
+    }
+
+    // ── 13. The same CliQ reference can never be replayed ────────────
+
+    public function test_duplicate_cliq_reference_is_rejected_even_with_a_new_request_id(): void
+    {
+        $tenant = $this->makeTenant();
+        $teacher = $this->teacherIn($tenant);
+        $admin = $this->superAdmin();
+        $plan = $this->makePlan();
+        $this->attachSubscription($tenant, 'trialing');
+
+        $first = $this->payload($plan, ['payment_reference' => 'CLIQ-DUP-4242', 'request_id' => 'req-dup-a']);
+        $this->postJson("/api/v1/admin/teachers/{$teacher->id}/subscription/manual", $first, $this->authHeaders($admin, $tenant))
+            ->assertOk()->assertJsonPath('already_applied', false);
+
+        $end = TenantSubscription::withoutTenant()->where('tenant_id', $tenant->id)->firstOrFail()->ends_at->toIso8601String();
+
+        // Same reference, DIFFERENT request_id → still refused: no replay.
+        $second = $this->payload($plan, ['payment_reference' => 'CLIQ-DUP-4242', 'request_id' => 'req-dup-b']);
+        $this->postJson("/api/v1/admin/teachers/{$teacher->id}/subscription/manual", $second, $this->authHeaders($admin, $tenant))
+            ->assertStatus(422)->assertJsonValidationErrors('payment_reference');
+
+        // Exactly one activation, one payment, one ledger entry, one invoice —
+        // and the paid window is unchanged (no double activation).
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertDatabaseCount('transactions', 1);
+        $this->assertDatabaseCount('invoices', 1);
+        $this->assertDatabaseCount('manual_subscription_operations', 1);
+        $this->assertSame(
+            $end,
+            TenantSubscription::withoutTenant()->where('tenant_id', $tenant->id)->firstOrFail()->ends_at->toIso8601String(),
+        );
+    }
+
+    // ── 14. A manual subscription never claims to auto-renew ─────────
+
+    public function test_manual_subscription_is_not_marked_auto_renewing(): void
+    {
+        $tenant = $this->makeTenant();
+        $teacher = $this->teacherIn($tenant);
+        $admin = $this->superAdmin();
+        $plan = $this->makePlan();
+        $this->attachSubscription($tenant, 'trialing');
+
+        $this->postJson(
+            "/api/v1/admin/teachers/{$teacher->id}/subscription/manual",
+            $this->payload($plan),
+            $this->authHeaders($admin, $tenant),
+        )->assertOk();
+
+        // There is no gateway mandate behind a manual/CliQ activation, so the
+        // subscription must not advertise auto-renew (and must expire, not go
+        // past due, when it lapses).
+        $this->assertFalse((bool) TenantSubscription::withoutTenant()->where('tenant_id', $tenant->id)->firstOrFail()->auto_renew);
+    }
 }

@@ -85,9 +85,21 @@
 - الحزمة الكاملة: **368 اختبارًا ناجحًا / 70 ملفًا**. `tsc --noEmit`: نظيف.
 
 ### الخلفية الكاملة
-- `php artisan test`: **944 اختبارًا ناجحًا / 3999 تأكيدًا**.
+- `php artisan test`: **948 اختبارًا ناجحًا / 4032 تأكيدًا**.
 
 > ملاحظة: لا تُشغَّل حزمتا اختبار PHP متزامنتين على نفس ملف SQLite (يسبب «database is locked»).
+
+---
+
+## (3.b) إصلاحات مراجعة PR #66
+
+| # | المشكلة | الإصلاح | الاختبار |
+|---|---|---|---|
+| 1 | خطأ TypeScript `TS2783` في `teacher-domain-modal.test.tsx` (تكرار `verified` قبل الـspread) | إزالة الخاصية المكرّرة والاعتماد على `status({ verified: true, ... })` | `tsc --noEmit` نظيف |
+| 2 | اعتبار غياب/صفر المبلغ «منحة مجانية»، ما قد يمنح خطة بلا تحصيل | `isFreeGrant` صار `free_grant` الصريح فقط؛ والعملية المدفوعة تتطلب طريقة دفع + مبلغًا موجبًا + تأكيد الاستلام (تحقق في المتحكّم + حارس في الخدمة) | `test_paid_operation_with_zero_or_missing_amount_is_rejected` |
+| 3 | إمكانية تسجيل نفس مرجع CliQ مرتين تحت `request_id` مختلف | حارس مرجع مكرر داخل المعاملة (`payments.gateway='manual'` + `transaction_id`) + التقاط `UniqueConstraintViolationException` كخط دفاع ثانٍ → 422 `payment_reference` | `test_duplicate_cliq_reference_is_rejected_even_with_a_new_request_id` |
+| 4 | عرض الاشتراك اليدوي كـ«تجديد تلقائي» رغم عدم وجود بوابة مرتبطة | `auto_renew = false` للصفوف المُدارة يدويًا (إنشاءً وتحديثًا) | `test_manual_subscription_is_not_marked_auto_renewing` |
+| 5 | مراجعة صلاحيات وضع الدعم والجلسة المشتركة بين التبويبات | إثبات أن الجلسة المُبدَّلة حساب معلم عادي: كل مسارات الأدمن مرفوضة طرف الخادم، وبدء جلسة/معاينة جديدة مرفوض | `test_admin_power_is_unreachable_from_the_impersonated_session` |
 
 ---
 

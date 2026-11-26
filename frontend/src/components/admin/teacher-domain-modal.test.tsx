@@ -41,7 +41,7 @@ function stubFetch(payload: Record<string, any>) {
   return vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method || 'GET').toUpperCase();
-    if (url.includes('/domain/verify')) return { ok: true, json: async () => ({ verified: true, ...status({ status: 'active', verified: true }) }) };
+    if (url.includes('/domain/verify')) return { ok: true, json: async () => status({ status: 'active', verified: true, https_enabled: true }) };
     if (method === 'PUT') return { ok: true, json: async () => ({ ...status(), ...payload.connect }) };
     if (method === 'DELETE') return { ok: true, json: async () => ({ ...status({ domain: null, status: 'none' }) }) };
     return { ok: true, json: async () => payload.status ?? status() };
