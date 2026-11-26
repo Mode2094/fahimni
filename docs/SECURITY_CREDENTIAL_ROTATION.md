@@ -12,6 +12,34 @@ Zone: `fahimni.me` (`c36b9540f5d7d2f649b41d498350705d`)
 
 ---
 
+## 0. Authorized remediation path (fastest)
+
+To let the agent close both findings end-to-end without anyone running terminal
+commands by hand, the owner provides **one** account-scoped token through a
+local form:
+
+1. Open `deploy/security/owner-credential-intake.html` in a browser (double-click
+   the file). It runs entirely on the machine — nothing is sent anywhere except
+   Cloudflare by the agent afterwards.
+2. Create a short-lived custom token in Cloudflare with exactly:
+   `Account → Account API Tokens → Edit` and `User → API Tokens → Edit`.
+3. Paste it into the form and save it as `fahimni/.secrets/cf-account-token`
+   (mode `600`). **Never** paste it into chat, email, or a ticket.
+4. Tell the agent it is ready. The agent then, on the production host:
+   - `deploy/security/revoke-obsolete-r2-token.sh --apply` — revokes the exposed
+     R2 key and proves the active one survives;
+   - runs `deploy/scripts/rotate-cloudflare-token.sh` fed from a freshly created
+     zone-scoped token, then deletes the old production token;
+   - verifies rejections/replacements, reviews audit logs and backup integrity,
+     and deletes the intake file.
+
+If you prefer not to share an account-scoped token, the equivalent is three
+dashboard actions: delete the `adfc4dad…` R2 key, create a replacement
+zone-scoped token, and hand the agent the replacement (or delete the old token
+yourself afterwards).
+
+---
+
 ## 1. Rotate the production Cloudflare API token
 
 **Status:** pending owner action. The token in `/etc/fahimni/production.env` is

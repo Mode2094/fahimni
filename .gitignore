@@ -7,6 +7,11 @@
 deploy/env/*.env
 deploy/state/
 
+# Local owner-supplied credentials (secure intake form writes here) — never commit
+.secrets/
+cf-account-token
+*.cf-account-token
+
 # Laravel
 /vendor
 /storage/*.key
