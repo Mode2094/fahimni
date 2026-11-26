@@ -474,6 +474,7 @@ via headers, but the panel is platform-only).
 | POST `/api/v1/cards/redeem` | student | platform | + `throttle:redeem` (no feature gate) | yes | Cards stay redeemable if plan changes. |
 | GET `/api/v1/cards/{card}` | teacher | platform | tenant group | yes | |
 | POST `/api/v1/cards/{card}/cancel` | teacher | platform | + `role:...,permission:cards.manage` | yes | |
+| POST `/api/v1/cards/{card}/revoke` | teacher | platform | + `role:...,permission:cards.manage` | yes | added §6 — revoke a redeemed card |
 | GET `/api/v1/cards/batch/{batchId}` | teacher | platform | + role/permission + `feature:cards_enabled` | yes | |
 | POST `/api/v1/videos/upload` | teacher | platform | + `throttle:video-upload` | yes | Direct upload. |
 | POST `/api/v1/subscriptions/freemius/checkout` | teacher | platform | + `role:teacher,owner,admin` + `throttle:checkout` | yes | |

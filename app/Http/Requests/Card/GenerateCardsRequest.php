@@ -18,6 +18,10 @@ class GenerateCardsRequest extends FormRequest
             'count' => 'required|integer|min:1|max:1000',
             'batch_id' => 'nullable|string|max:100',
             'expires_at' => 'nullable|date',
+            // Number of days of course access granted on redemption. Null/absent
+            // = lifetime access (legacy behaviour), so existing batches are
+            // unchanged.
+            'access_days' => 'nullable|integer|min:1|max:3650',
             'metadata' => 'nullable|array',
         ];
     }

@@ -21,7 +21,6 @@ use App\Services\StudentSeatService;
 use App\Support\AuditLogger;
 use App\Support\CardExcelParser;
 use App\Support\DevicePolicy;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -69,6 +68,12 @@ class ActivationCardController extends Controller
         $count = $request->integer('count');
         $batchId = $request->input('batch_id', (string) UuidV7::generate());
 
+        // Optional access window granted to the student on redemption.
+        $metadata = $request->input('metadata', []);
+        if ($request->filled('access_days')) {
+            $metadata['access_days'] = (int) $request->input('access_days');
+        }
+
         $cards = [];
         for ($i = 0; $i < $count; $i++) {
             $cards[] = [
@@ -79,7 +84,7 @@ class ActivationCardController extends Controller
                 'code' => strtoupper(substr(bin2hex(random_bytes(12)), 0, 24)),
                 'status' => 'generated',
                 'expires_at' => $request->input('expires_at'),
-                'metadata' => json_encode($request->input('metadata', [])),
+                'metadata' => json_encode($metadata),
                 'created_at' => now(),
                 'updated_at' => now(),
             ];
@@ -219,9 +224,22 @@ class ActivationCardController extends Controller
 
                 // Seat limit, duplicate protection and per-course cap are all
                 // enforced here (tenant row already locked above).
+                //
+                // Access window: a card may grant a fixed number of days. When
+                // set, the enrollment itself carries `expires_at`, so the
+                // `effective()` scope revokes access (and frees the seat) the
+                // moment it lapses — no scheduler needed. A card without
+                // `access_days` keeps the legacy lifetime behaviour.
+                $accessDays = (int) (($locked->metadata ?? [])['access_days'] ?? 0);
+
                 $enrollment = app(EnrollmentService::class)->enroll($course, $user, [
                     'source' => 'card',
-                    'metadata' => ['card_code' => $locked->code, 'card_id' => $locked->id],
+                    'expires_at' => $accessDays > 0 ? now()->addDays($accessDays) : null,
+                    'metadata' => [
+                        'card_code' => $locked->code,
+                        'card_id' => $locked->id,
+                        'access_days' => $accessDays > 0 ? $accessDays : null,
+                    ],
                 ]);
 
                 $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id');
@@ -301,6 +319,65 @@ class ActivationCardController extends Controller
         ]);
     }
 
+    /**
+     * إبطال بطاقة فعّالة: يسحب الوصول الذي منحته البطاقة فوراً.
+     *
+     * A redeemed card can still be revoked (refund, cheat, mistaken issue).
+     * Revoking archives the enrollment the card created — access stops and the
+     * seat is freed — while the card and its redemption history are kept for
+     * audit. Only a redeemed card can be revoked; a generated one is cancelled.
+     */
+    public function revoke(Request $request, string $id): JsonResponse
+    {
+        $card = ActivationCard::findOrFail($id);
+
+        $this->authorize('create', ActivationCard::class);
+
+        if ($card->status !== 'redeemed') {
+            return response()->json(['message' => 'Only a redeemed card can be revoked. Cancel a generated card instead.'], 422);
+        }
+
+        $archived = DB::transaction(function () use ($request, $card) {
+            $redemption = CardRedemption::where('card_id', $card->id)->latest('redeemed_at')->first();
+
+            $archivedEnrollment = false;
+
+            if ($redemption?->enrollment_id) {
+                $enrollment = Enrollment::withoutTenant()->find($redemption->enrollment_id);
+
+                if ($enrollment && $enrollment->isEffective()) {
+                    app(EnrollmentService::class)->archive($enrollment);
+                    $archivedEnrollment = true;
+                }
+            }
+
+            $card->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'metadata' => array_merge($card->metadata ?? [], [
+                    'revoked_at' => now()->toIso8601String(),
+                    'revoked_by' => $request->user()?->id,
+                ]),
+            ]);
+
+            return $archivedEnrollment;
+        });
+
+        AuditLogger::log($request, 'card.revoked', 'card', $card->id, [
+            'code' => $card->code,
+            'course_id' => $card->course_id,
+            'enrollment_archived' => $archived,
+        ]);
+
+        return response()->json([
+            'message' => $archived
+                ? 'Card revoked and the granted access removed.'
+                : 'Card revoked. Its enrollment was already inactive.',
+            'enrollment_archived' => $archived,
+            'card' => new ActivationCardResource($card->fresh()),
+        ]);
+    }
+
     public function import(ImportCardsRequest $request): JsonResponse
     {
         $this->authorize('create', ActivationCard::class);
@@ -332,6 +409,12 @@ class ActivationCardController extends Controller
         $duplicatesInFile = count($raw) - $normalized->uniqueStrict()->count();
 
         $now = now();
+        $metadata = $request->input('metadata', []);
+        if ($request->filled('access_days')) {
+            $metadata['access_days'] = (int) $request->input('access_days');
+        }
+        $metadata['source'] = 'import';
+
         $rows = [];
         foreach ($normalized as $code) {
             if ($existing->has($code)) {
@@ -345,7 +428,7 @@ class ActivationCardController extends Controller
                 'code' => $code,
                 'status' => 'generated',
                 'expires_at' => $request->input('expires_at'),
-                'metadata' => json_encode(array_merge($request->input('metadata', []), ['source' => 'import'])),
+                'metadata' => json_encode($metadata),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];

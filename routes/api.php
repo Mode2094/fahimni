@@ -413,6 +413,7 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/redeem', [ActivationCardController::class, 'redeem'])->middleware('throttle:redeem');
             Route::get('cards/{card}', [ActivationCardController::class, 'show']);
             Route::post('cards/{card}/cancel', [ActivationCardController::class, 'cancel'])->middleware('role:teacher,owner,admin,permission:cards.manage');
+            Route::post('cards/{card}/revoke', [ActivationCardController::class, 'revoke'])->middleware('role:teacher,owner,admin,permission:cards.manage');
             Route::get('cards/batch/{batchId}', [ActivationCardController::class, 'batchInfo'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
 
             // Payment initiation (subscription checkout — Freemius only)

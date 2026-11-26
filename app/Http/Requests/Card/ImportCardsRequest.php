@@ -18,6 +18,8 @@ class ImportCardsRequest extends FormRequest
             'file' => 'required|file|max:10240',
             'batch_id' => 'nullable|string|max:100',
             'expires_at' => 'nullable|date',
+            // Days of course access granted on redemption (optional).
+            'access_days' => 'nullable|integer|min:1|max:3650',
             'metadata' => 'nullable|array',
         ];
     }
