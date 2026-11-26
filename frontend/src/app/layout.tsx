@@ -8,7 +8,7 @@ import type { TenantBranding } from '@/lib/tenant-host';
 import { SITE_NAME, getSiteOrigin, DEFAULT_OG_IMAGE, absoluteUrl } from '@/lib/seo';
 import './globals.css';
 
-export const metadata: Metadata = {
+const PLATFORM_METADATA: Metadata = {
   metadataBase: new URL(getSiteOrigin()),
   title: {
     default: `${SITE_NAME} — منصة تعليمية لكل معلم | Online teaching platform for teachers`,
@@ -70,6 +70,62 @@ export const metadata: Metadata = {
     'apple-mobile-web-app-capable': 'yes',
   },
 };
+
+/**
+ * Metadata for the current request.
+ *
+ * On a teacher's OWN host (custom domain / subdomain) the browser path is
+ * tenant-less after the proxy rewrite, so:
+ *  - `metadataBase` must be the TEACHER's origin: the tenant pages publish a
+ *    root-relative canonical (`/courses`), which Next resolves against this
+ *    base — pointing it at the platform collapsed the teacher's pages onto
+ *    `fahimni.me` in Google and in link previews.
+ *  - the default title/OG must name the teacher, not the platform, so auth and
+ *    app pages that don't set their own title still present the teacher.
+ *
+ * On the platform host this returns the unchanged platform defaults.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const requestHeaders = await headers();
+  const tenantSlug = requestHeaders.get(TENANT_SLUG_HEADER);
+  if (!tenantSlug) return PLATFORM_METADATA;
+
+  // The Host header is attacker-controlled; only build a URL from a plain DNS
+  // hostname, otherwise keep the platform origin.
+  const host = requestHeaders.get('host')?.split(':')[0]?.toLowerCase() || '';
+  const origin = /^[a-z0-9.-]+$/.test(host) ? `https://${host}` : getSiteOrigin();
+  const site = await fetchTenantSite(tenantSlug);
+  const name = (typeof site?.name === 'string' && site.name.trim()) || 'منصتي';
+  const description =
+    (typeof site?.site_config?.about_text === 'string' && site.site_config.about_text.trim()) ||
+    PLATFORM_METADATA.description;
+
+  return {
+    ...PLATFORM_METADATA,
+    metadataBase: new URL(origin),
+    title: { default: name, template: `%s | ${name}` },
+    description,
+    applicationName: name,
+    appleWebApp: { capable: true, statusBarStyle: 'default', title: name },
+    openGraph: {
+      type: 'website',
+      siteName: name,
+      url: `${origin}/`,
+      title: name,
+      description,
+      locale: 'ar_AR',
+      // Relative on purpose: Next resolves it against `metadataBase`, so the
+      // preview image is fetched from the TEACHER's host, not the platform.
+      images: [{ url: DEFAULT_OG_IMAGE, width: 1200, height: 630, alt: name }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: name,
+      description,
+      images: [DEFAULT_OG_IMAGE],
+    },
+  };
+}
 
 export const viewport: Viewport = {
   themeColor: '#0d9488',

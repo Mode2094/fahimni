@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { BookOpen, ArrowLeft, GraduationCap } from 'lucide-react';
 import Link from 'next/link';
 import { CourseCard, BundleCard, useEnrolledCourseIds } from '@/components/site/storefront';
-import { useTenantBasePath } from '@/lib/tenant-host';
+import { useTenantBasePath, useTenantHost } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -22,6 +22,10 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const base = useTenantBasePath(slug);
+  // On the teacher's own host the site name comes from the host branding, so
+  // the header shows the academy name immediately instead of flashing the raw
+  // internal slug while the public site payload loads.
+  const { slug: hostSlug, branding } = useTenantHost();
 
   const [site, setSite] = useState<any>(null);
   const [courses, setCourses] = useState<any[]>([]);
@@ -56,9 +60,9 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
                 <GraduationCap className="h-5 w-5 text-white" />
               </div>
             )}
-            <span className="truncate text-base font-bold sm:text-lg">{site?.name || slug}</span>
+            <span className="truncate text-base font-bold sm:text-lg">{site?.name || branding?.name || ''}</span>
           </Link>
-          <Link href={loggedIn ? '/my-learning' : `/student/login?tenant_slug=${slug}`}>
+          <Link href={loggedIn ? '/my-learning' : hostSlug ? '/student/login' : `/student/login?tenant_slug=${slug}`}>
             <Button size="sm" className="min-h-[40px] rounded-full text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
               {loggedIn ? t('كورساتي', 'My courses') : t('تسجيل دخول', 'Login')}
             </Button>
