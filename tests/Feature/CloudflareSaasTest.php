@@ -43,13 +43,22 @@ class CloudflareSaasTest extends TenantTestCase
             $method = $request->method();
 
             if ($method === 'POST' && str_ends_with($url, '/custom_hostnames')) {
+                $name = (string) ($request->data()['hostname'] ?? 'brand-shop.com');
+                $id = str_starts_with($name, 'www.') ? 'ch_www' : 'ch_123';
+
                 return Http::response(['success' => true, 'result' => [
-                    'id' => 'ch_123',
-                    'hostname' => 'brand-shop.com',
+                    'id' => $id,
+                    'hostname' => $name,
                     'status' => 'pending',
                     'ssl' => ['status' => 'pending_validation', 'validation_records' => []],
-                    'ownership_verification' => ['type' => 'txt', 'name' => '_cf-custom-hostname.brand-shop.com', 'value' => 'own-token'],
+                    'ownership_verification' => ['type' => 'txt', 'name' => '_cf-custom-hostname.'.$name, 'value' => 'own-token'],
                 ]], 200);
+            }
+
+            // Reconciliation lookup by exact hostname returns nothing here, so
+            // the caller creates the hostname.
+            if ($method === 'GET' && str_contains($url, '/custom_hostnames?hostname=')) {
+                return Http::response(['success' => true, 'result' => []], 200);
             }
 
             if ($method === 'GET' && preg_match('#/custom_hostnames/([^/?]+)$#', $url, $m)) {
@@ -57,7 +66,7 @@ class CloudflareSaasTest extends TenantTestCase
 
                 return Http::response(['success' => true, 'result' => array_merge([
                     'id' => $m[1],
-                    'hostname' => 'brand-shop.com',
+                    'hostname' => $m[1] === 'ch_www' ? 'www.brand-shop.com' : 'brand-shop.com',
                 ], $ready)], 200);
             }
 
@@ -103,6 +112,26 @@ class CloudflareSaasTest extends TenantTestCase
             ->assertJsonPath('dns_instructions.cname_value', 'customers.fahimni.me');
 
         Http::assertSent(fn (Request $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/custom_hostnames'));
+    }
+
+    public function test_connect_registers_the_www_hostname_so_https_works_on_both(): void
+    {
+        $this->enableCloudflare();
+        $this->fakeCloudflare();
+
+        $tenant = $this->makeTenant();
+        $teacher = $this->teacherFor($tenant);
+
+        $this->putJson('/api/v1/teacher/domain', ['domain' => 'brand-shop.com'], $this->authHeaders($teacher, $tenant))->assertOk();
+
+        $setting = TenantSetting::withoutTenant()->where('tenant_id', $tenant->id)->first();
+        $this->assertSame('ch_123', $setting->metadata['cf_hostname_id'] ?? null);
+        $this->assertSame('ch_www', $setting->metadata['cf_hostname_id_www'] ?? null);
+
+        // The `www.` sibling is registered as its own custom hostname.
+        Http::assertSent(fn (Request $r) => $r->method() === 'POST'
+            && str_ends_with($r->url(), '/custom_hostnames')
+            && ($r->data()['hostname'] ?? null) === 'www.brand-shop.com');
     }
 
     public function test_verify_marks_active_only_when_hostname_and_certificate_are_active(): void
@@ -182,16 +211,18 @@ class CloudflareSaasTest extends TenantTestCase
             'id' => UuidV7::generate(),
             'tenant_id' => $tenant->id,
             'custom_domain' => 'brand-shop.com',
-            'metadata' => ['domain_verified' => true, 'cf_hostname_id' => 'ch_123'],
+            'metadata' => ['domain_verified' => true, 'cf_hostname_id' => 'ch_123', 'cf_hostname_id_www' => 'ch_www'],
         ]);
 
         $this->deleteJson('/api/v1/teacher/domain', [], $this->authHeaders($teacher, $tenant))->assertOk();
 
         Http::assertSent(fn (Request $r) => $r->method() === 'DELETE' && str_contains($r->url(), '/custom_hostnames/ch_123'));
+        Http::assertSent(fn (Request $r) => $r->method() === 'DELETE' && str_contains($r->url(), '/custom_hostnames/ch_www'));
 
         $setting = TenantSetting::withoutTenant()->where('tenant_id', $tenant->id)->first();
         $this->assertNull($setting->custom_domain);
         $this->assertArrayNotHasKey('cf_hostname_id', $setting->metadata ?? []);
+        $this->assertArrayNotHasKey('cf_hostname_id_www', $setting->metadata ?? []);
     }
 
     public function test_ensure_setup_creates_the_fallback_origin_and_cname_target(): void

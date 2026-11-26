@@ -126,6 +126,28 @@ class CloudflareSaasService
             : [];
     }
 
+    /**
+     * Find a custom hostname by its exact name. Used to reconcile a hostname
+     * that exists in Cloudflare but whose id we lost locally, so we never try to
+     * create a duplicate (Cloudflare rejects that) and never strand a live
+     * certificate.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function findHostnameByName(string $hostname): ?array
+    {
+        $zone = self::config()['zone_id'];
+        $json = self::send('GET', "/zones/{$zone}/custom_hostnames?hostname={$hostname}");
+
+        foreach (($json['result'] ?? []) as $h) {
+            if (is_array($h) && strcasecmp((string) ($h['hostname'] ?? ''), $hostname) === 0) {
+                return $h;
+            }
+        }
+
+        return null;
+    }
+
     /** Idempotent: a hostname that is already gone counts as deleted. */
     public static function deleteHostname(string $id): bool
     {
