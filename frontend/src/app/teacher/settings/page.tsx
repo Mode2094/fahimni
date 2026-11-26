@@ -24,6 +24,7 @@ import DomainManager from '@/components/site/domain-manager';
 import PageBuilder from '@/components/site/page-builder';
 import { dashboardApi } from '@/services/endpoints';
 import { getApiErrorMessage } from '@/services/api';
+import { WatermarkOverlay } from '@/components/video/watermark-overlay';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -515,6 +516,27 @@ export default function TeacherSettingsPage() {
                           ))}
                         </div>
                       </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <p className="font-bold text-sm flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-teal-600" />{t('معاينة مباشرة', 'Live preview')}</p>
+                        <span className="text-[11px] text-muted-foreground">{t('هكذا تظهر للطالب أثناء التشغيل', 'This is how it appears to the student during playback')}</span>
+                      </div>
+                      <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-900">
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">{t('مثال لفيديو الدرس', 'Sample lesson video')}</div>
+                        {videoSecurity.settings?.enabled && (
+                          <WatermarkOverlay
+                            text={t('مثال: أحمد الطالب', 'Sample: Ahmad Student')}
+                            opacity={({ low: 0.2, medium: 0.35, high: 0.5 } as Record<string, number>)[String(videoSecurity.settings?.opacity)] ?? 0.35}
+                            size={({ small: '0.75rem', medium: '1rem', large: '1.3rem' } as Record<string, string>)[String(videoSecurity.settings?.size)] ?? '1rem'}
+                            speed={String(videoSecurity.settings?.speed || 'slow')}
+                          />
+                        )}
+                      </div>
+                      {!videoSecurity.settings?.enabled && (
+                        <p className="text-xs text-muted-foreground mt-2">{t('العلامة المائية متوقفة حالياً — فعّلها ثم احفظ لتظهر للطلاب.', 'Watermark is currently off — enable it and save to show it to students.')}</p>
+                      )}
                     </div>
 
                     <Button onClick={async () => {
