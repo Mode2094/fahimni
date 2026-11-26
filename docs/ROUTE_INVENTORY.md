@@ -462,6 +462,7 @@ via headers, but the panel is platform-only).
 | POST `/api/v1/exams/{exam}/preview/grade` | teacher | platform | tenant group | yes | |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/submit` | student | platform | tenant group | yes | |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/autosave` | student | platform | tenant group | yes | |
+| POST `/api/v1/exams/{exam}/attempts/{attempt}/violation` | student | platform | tenant group (graded only) | yes | added — server-held monotonic anti-cheat count + threshold decision |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/complete` | student | platform | tenant group (practice only) | yes | added §2/§3 ungraded practice |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/grade` | teacher | platform | + `role:teacher,owner,admin,permission:exams.manage` | yes | |
 | GET `/api/v1/exam-attempts/{attempt}` | shared | platform | tenant group | yes | |
@@ -639,6 +640,7 @@ via headers, but the panel is platform-only).
 | PUT `/api/v1/teacher/leaderboard-policy` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students` | teacher | platform | + role/permission | yes | |
 | POST `/api/v1/teacher/students/reset-all-devices` | teacher | platform | + role/permission | yes | |
+| POST `/api/v1/teacher/students/reset-all-limits` | teacher | platform | + role/permission | yes | added — bulk clear of individual device grants (no devices/sessions touched) |
 | GET `/api/v1/teacher/students/{student}` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students/{student}/activity` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students/{student}/video-progress` | teacher | platform | + role/permission | yes | added §11 — per-student video watch report |

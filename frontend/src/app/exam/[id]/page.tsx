@@ -37,6 +37,9 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [violations, setViolations] = useState(0);
   const [antiCheat, setAntiCheat] = useState(false);
+  // The auto-submit threshold comes from the server (single source of truth);
+  // 3 is only a placeholder until the attempt payload arrives.
+  const [violationLimit, setViolationLimit] = useState(3);
   const [warnShown, setWarnShown] = useState(false);
   const [previewAnswers, setPreviewAnswers] = useState<any[]>([]);
   // Ungraded skill-practice completion (practice exams only).
@@ -52,6 +55,44 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const startedAtRef = useRef(0);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef('');
+  // Always points at the latest violation handler so the document listeners
+  // (bound once per exam) never capture stale state.
+  const violationRef = useRef<() => void>(() => {});
+
+  /**
+   * Anti-cheat: the browser is the sensor, the server is the authority.
+   * Every violation is reported so the count lives server-side (monotonic —
+   * a reload can't reset it) and the auto-submit decision comes from the
+   * server's threshold, not a client constant.
+   */
+  const registerViolation = () => {
+    if (submittedRef.current) return;
+    setViolations((v) => v + 1);
+    if (!warnShown) {
+      setWarnShown(true);
+      toast.warning(t(
+        `انتبه: مغادرة صفحة الاختبار تُسجل كمخالفة — ${violationLimit} مخالفات = تسليم تلقائي`,
+        `Warning: leaving the exam page counts as a violation — ${violationLimit} = auto-submit`,
+      ));
+    }
+    if (previewMode || !attemptId) return;
+    try {
+      fetch(`${API}/exams/${id}/attempts/${attemptId}/violation`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'X-Tenant-Id': localStorage.getItem('tenant_id') || '' },
+        keepalive: true,
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.should_submit && !submittedRef.current) {
+            toast.error(t('تم اكتشاف مخالفات متكررة — تم تسليم الاختبار', 'Repeated violations detected — exam submitted'));
+            submitRef.current?.();
+          }
+        })
+        .catch(() => {});
+    } catch { /* never let proctoring break the exam */ }
+  };
+  violationRef.current = registerViolation;
 
   // Ungraded skill practice: no timer, no points, no pass/fail, no anti-cheat.
   // The server decides completion; this only reflects the exam's own mode.
@@ -122,19 +163,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   useEffect(() => {
     if (!started || !antiCheat || submittedRef.current) return;
     const onHide = () => {
-      if (document.hidden) {
-        setViolations((v) => {
-          const nv = v + 1;
-          if (nv >= 3 && !submittedRef.current) {
-            toast.error(t('تم اكتشاف مخالفات متكررة — تم تسليم الاختبار', 'Repeated violations detected — exam submitted'));
-            submitRef.current?.();
-          } else if (nv >= 1 && !warnShown) {
-            setWarnShown(true);
-            toast.warning(t('انتبه: مغادرة صفحة الاختبار تُسجل كمخالفة — 3 مخالفات = تسليم تلقائي', 'Warning: leaving the exam page counts as a violation — 3 = auto-submit'));
-          }
-          return nv;
-        });
-      }
+      if (document.hidden) violationRef.current();
     };
     const onBlur = () => {
       // Focus moving into the interactive-question sandbox iframe is the
@@ -143,10 +172,10 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       const active = document.activeElement as HTMLElement | null;
       if (active?.tagName === 'IFRAME' && active.dataset.fahimniInteractive === 'true') return;
       if (document.hasFocus() === false) {
-        setViolations((v) => v + 1);
+        violationRef.current();
       }
     };
-    const onCopy = (e: ClipboardEvent) => { e.preventDefault(); setViolations((v) => v + 1); };
+    const onCopy = (e: ClipboardEvent) => { e.preventDefault(); violationRef.current(); };
     const onCtx = (e: Event) => e.preventDefault();
     document.addEventListener('visibilitychange', onHide);
     window.addEventListener('blur', onBlur);
@@ -158,7 +187,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       document.removeEventListener('copy', onCopy);
       document.removeEventListener('contextmenu', onCtx);
     };
-  }, [started, antiCheat, warnShown]);
+  }, [started, antiCheat]);
 
   // Autosave: persist in-progress answers (debounced) so a reload, a dropped
   // connection or an accidental close can always resume the same attempt
@@ -205,6 +234,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       if (!previewMode) setAttemptId(d.attempt.id);
       setQuestions(d.questions || []);
       setAntiCheat(previewMode ? false : !!d.exam?.anti_cheat_enabled);
+      setViolationLimit(Number(d.exam?.anti_cheat_violation_limit) || 3);
       setViolations(0);
       setWarnShown(false);
       submittedRef.current = false;
@@ -409,7 +439,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
               {!previewMode && !practice && exam?.anti_cheat_enabled !== false && (
                 <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 text-amber-700 text-xs text-start">
                   <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>{t('وضع منع الغش مفعل: مغادرة الصفحة تُسجل مخالفة، و3 مخالفات = تسليم تلقائي. النسخ والنقر الأيمن معطلان.', 'Anti-cheat is ON: leaving the page counts as a violation, 3 = auto-submit. Copy & right-click are disabled.')}</span>
+                  <span>{t(`وضع منع الغش مفعل: مغادرة الصفحة تُسجل مخالفة، و${violationLimit} مخالفات = تسليم تلقائي. النسخ والنقر الأيمن معطلان.`, `Anti-cheat is ON: leaving the page counts as a violation, ${violationLimit} = auto-submit. Copy & right-click are disabled.`)}</span>
                 </div>
               )}
               {!previewMode && !practice && exam?.max_attempts > 0 && (
@@ -476,8 +506,8 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         <a href="/my-learning" className="flex items-center gap-1 text-sm text-gray-500"><ArrowLeft className="h-4 w-4" /> {t('خروج', 'Exit')}</a>
         <div className="flex items-center gap-2">
           {antiCheat && (
-            <span className={`flex items-center gap-1 text-[11px] ${violations >= 3 ? 'text-red-600 font-bold' : violations > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
-              <ShieldAlert className="h-3.5 w-3.5" />{t('مخالفات', 'Violations')}: {violations}/3
+            <span className={`flex items-center gap-1 text-[11px] ${violations >= violationLimit ? 'text-red-600 font-bold' : violations > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+              <ShieldAlert className="h-3.5 w-3.5" />{t('مخالفات', 'Violations')}: {violations}/{violationLimit}
             </span>
           )}
           {timeLeft !== null && (

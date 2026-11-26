@@ -129,7 +129,7 @@ function StudentsPageInner() {
   const resetAllDevices = async () => {
     if (!(await confirmDialog({
       danger: true,
-      description: t('إعادة تعيين أجهزة جميع الطلاب؟ سيتم فصل كل الأجهزة الحالية لكل طالب، ويمكن لكل طالب الدخول من جهاز جديد. الإجراء لا يمسّ بيانات الدروس أو النتائج.', 'Reset devices for all students? Every current device is unbound and each student can log in from a new one. Lesson data and results are untouched.'),
+      description: t('إعادة تعيين أجهزة جميع الطلاب؟ سيتم فصل كل الأجهزة الحالية لكل طالب، ويمكن لكل طالب الدخول من جهاز جديد. لا يمسّ هذا الإجراء حدود الأجهزة ولا صلاحياتها الفردية، ولا ينهي جلسات الطلاب الحالية، ولا بيانات الدروس أو النتائج.', 'Reset devices for all students? Every current device is unbound and each student can log in from a new one. This does not change any device limit or individual grant, does not end existing student sessions, and leaves lesson data and results untouched.'),
     }))) return;
     setBusyId('__all__');
     try {
@@ -139,6 +139,21 @@ function StudentsPageInner() {
       toast.success(t(`تم إعادة تعيين أجهزة ${d.students ?? students.length} طالباً — يمكنهم الدخول من أجهزة جديدة الآن`, `Devices reset for ${d.students ?? students.length} students — they can log in from new devices now`));
       setProfile(null); load();
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
+    setBusyId('');
+  };
+
+  const resetAllLimits = async () => {
+    if (!(await confirmDialog({
+      description: t('إزالة كل الصلاحيات الفردية للأجهزة؟ سيعود كل طالب إلى الحد الافتراضي للمنصة. هذا تغيير سياسة فقط: لا يُفصل أي جهاز ولا تُنهى أي جلسة.', 'Remove every individual device grant? Every student returns to the platform default limit. This is a policy-only change: no device is unbound and no session is ended.'),
+    }))) return;
+    setBusyId('__limits__');
+    try {
+      const res = await fetch(`${API}/teacher/students/reset-all-limits`, { method: 'POST', headers: headers() });
+      if (!res.ok) throw new Error();
+      const d = await res.json().catch(() => ({}));
+      toast.success(t(`تمت إزالة ${d.removed ?? 0} صلاحية فردية — الجميع على الحد الافتراضي`, `Removed ${d.removed ?? 0} individual grants — everyone on the default limit`));
+      setProfile(null); load();
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة الصلاحيات', 'Could not remove the grants'))); }
     setBusyId('');
   };
 
@@ -220,6 +235,17 @@ function StudentsPageInner() {
           >
             {busyId === '__all__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
             {t('إعادة تعيين أجهزة الجميع', 'Reset all devices')}
+          </Button>
+        )}
+        {students.some((s) => s.override) && (
+          <Button
+            variant="outline"
+            className="h-11 gap-2 rounded-full"
+            disabled={busyId === '__limits__'}
+            onClick={resetAllLimits}
+          >
+            {busyId === '__limits__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+            {t('إزالة صلاحيات الأجهزة الفردية', 'Reset individual device grants')}
           </Button>
         )}
       </div>

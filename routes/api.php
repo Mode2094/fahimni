@@ -398,6 +398,9 @@ Route::prefix('v1')->group(function () {
             // Autosave: persist in-progress answers so a reload/reconnect can
             // resume the same attempt without losing answers or a slot.
             Route::post('exams/{exam}/attempts/{attempt}/autosave', [ExamAttemptController::class, 'autosave']);
+            // Anti-cheat violation report — the server holds the monotonic
+            // count and decides the threshold (graded exams only).
+            Route::post('exams/{exam}/attempts/{attempt}/violation', [ExamAttemptController::class, 'violation']);
             Route::post('exams/{exam}/attempts/{attempt}/grade', [ExamAttemptController::class, 'grade'])->middleware('role:teacher,owner,admin,permission:exams.manage');
             Route::get('exam-attempts/{attempt}', [ExamAttemptController::class, 'show']);
 
@@ -829,6 +832,7 @@ Route::prefix('v1')->group(function () {
                 Route::put('leaderboard-policy', [TeacherLeaderboardController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);
                 Route::post('students/reset-all-devices', [TeacherDeviceController::class, 'resetAllDevices']);
+                Route::post('students/reset-all-limits', [TeacherDeviceController::class, 'resetAllLimits']);
                 Route::get('students/{student}', [TeacherDeviceController::class, 'showStudent']);
                 Route::get('students/{student}/activity', [TeacherDeviceController::class, 'studentActivity']);
                 Route::get('students/{student}/video-progress', [TeacherDeviceController::class, 'videoProgress']);

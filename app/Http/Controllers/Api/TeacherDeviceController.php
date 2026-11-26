@@ -269,13 +269,13 @@ class TeacherDeviceController extends Controller
         $student = User::whereIn('id', Enrollment::where('tenant_id', $tenantId)->pluck('user_id'))
             ->findOrFail($studentId);
 
+        // Unbind the student's registered devices so they can register a new
+        // one. This is deliberately device-scoped: it does NOT change any
+        // device *limit* (default or override) and does NOT force a sign-out —
+        // the student's existing session is theirs and stays valid.
         $deleted = UserDevice::where('tenant_id', $tenantId)
             ->where('user_id', $student->id)
             ->delete();
-
-        // A device reset is a security action: end every existing web session
-        // so the student signs in again on the newly approved device.
-        $student->increment('auth_version');
 
         return response()->json([
             'message' => "Devices reset for {$student->name}. They can now log in from a new device.",
@@ -286,10 +286,10 @@ class TeacherDeviceController extends Controller
     /**
      * إعادة تعيين أجهزة كل طلاب المنصة دفعة واحدة.
      *
-     * A term change / device audit often needs everyone re-approved at once.
-     * One query removes every registered device of this tenant's students, then
-     * one mass update ends their existing sessions so each signs in again on a
-     * fresh device. Scoped strictly to this tenant's own students.
+     * A term change or a device audit often needs everyone re-approved at once.
+     * One query removes every registered device of this tenant's students,
+     * scoped strictly to this tenant. Separate from any limit change and from
+     * per-student overrides; it does not force a sign-out.
      */
     public function resetAllDevices(Request $request): JsonResponse
     {
@@ -306,15 +306,33 @@ class TeacherDeviceController extends Controller
             ->whereIn('user_id', $studentIds)
             ->delete();
 
-        if ($studentIds->isNotEmpty()) {
-            // End every existing web session for these students.
-            User::whereIn('id', $studentIds)->increment('auth_version');
-        }
-
         return response()->json([
             'message' => 'Devices reset for all students. They can now log in from a new device.',
             'deleted' => $deleted,
             'students' => $studentIds->count(),
+        ]);
+    }
+
+    /**
+     * إعادة تعيين تجاوزات الأجهزة الفردية لكل الطلاب دفعة واحدة.
+     *
+     * Clears every per-student device *override*, so every student falls back to
+     * the tenant default limit. This is a policy reset only: it never unbinds a
+     * device and never forces a sign-out — keep it distinct from the device
+     * reset above and from the default-limit control.
+     */
+    public function resetAllLimits(Request $request): JsonResponse
+    {
+        $this->ensureTeacher($request);
+
+        $tenantId = $this->tenantId($request);
+
+        $removed = StudentDeviceLimit::where('tenant_id', $tenantId)->delete();
+
+        return response()->json([
+            'message' => "All individual device grants were removed — every student now uses the default ($removed removed).",
+            'removed' => $removed,
+            'default_max_devices' => DevicePolicy::maxDevices($tenantId),
         ]);
     }
 

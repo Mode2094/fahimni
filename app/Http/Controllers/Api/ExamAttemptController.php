@@ -510,6 +510,7 @@ class ExamAttemptController extends Controller
                 'duration_minutes' => $exam->isPractice() ? null : $exam->duration_minutes,
                 'shuffle_questions' => $exam->shuffle_questions,
                 'anti_cheat_enabled' => $exam->isPractice() ? false : (bool) $exam->anti_cheat_enabled,
+                'anti_cheat_violation_limit' => $exam->isPractice() ? 0 : Exam::ANTI_CHEAT_VIOLATION_LIMIT,
                 'allow_resume' => true,
                 'assessment_mode' => $exam->assessment_mode ?? Exam::MODE_GRADED,
                 'is_practice' => $exam->isPractice(),
@@ -632,6 +633,51 @@ class ExamAttemptController extends Controller
             return response()->json([
                 'attempt' => new ExamAttemptResource($attempt->fresh()),
                 'already_completed' => false,
+            ]);
+        });
+    }
+
+    /**
+     * Record an anti-cheat violation server-side and decide — server-side —
+     * whether the threshold is reached.
+     *
+     * The *event* (tab hidden, window blurred, copy) can only be sensed in the
+     * browser, but the *counter* and the *auto-submit decision* are held here:
+     * the count is monotonic (a replay can never reset it), the threshold is the
+     * server's constant and is never taken from the client, and reaching it is
+     * stamped on the attempt. A practice exercise has no proctoring, so this is
+     * a no-op there.
+     */
+    public function violation(Request $request, string $examId, string $attemptId): JsonResponse
+    {
+        $exam = Exam::findOrFail($examId);
+
+        if ($exam->isPractice() || ! $exam->anti_cheat_enabled) {
+            return response()->json(['violations' => 0, 'limit' => 0, 'should_submit' => false]);
+        }
+
+        return DB::transaction(function () use ($request, $exam, $attemptId) {
+            $attempt = ExamAttempt::where('exam_id', $exam->id)
+                ->where('id', $attemptId)
+                ->where('user_id', $request->user()->id)
+                ->where('status', 'in_progress')
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $metadata = $attempt->metadata ?? [];
+            $count = (int) ($metadata['anti_cheat_violations'] ?? 0) + 1;
+            $metadata['anti_cheat_violations'] = $count;
+
+            if ($count >= Exam::ANTI_CHEAT_VIOLATION_LIMIT) {
+                $metadata['anti_cheat_forced_submit_at'] = now()->toIso8601String();
+            }
+
+            $attempt->update(['metadata' => $metadata]);
+
+            return response()->json([
+                'violations' => $count,
+                'limit' => Exam::ANTI_CHEAT_VIOLATION_LIMIT,
+                'should_submit' => $count >= Exam::ANTI_CHEAT_VIOLATION_LIMIT,
             ]);
         });
     }
@@ -786,9 +832,14 @@ class ExamAttemptController extends Controller
         $passed = ! $needsReview && $percentage >= (float) $exam->pass_mark_percent;
 
         $metadata = $attempt->metadata ?? [];
-        // Anti-cheat violations are client-declared; store them as advisory
-        // metadata only — never as a policy input.
-        $metadata['anti_cheat_violations'] = (int) $request->input('anti_cheat_violations', 0);
+        // Anti-cheat violations: the server-held count (recorded via the
+        // violation endpoint) is authoritative and monotonic; a client-declared
+        // value may only raise it, never lower it. Still advisory metadata —
+        // never a grading input.
+        $metadata['anti_cheat_violations'] = max(
+            (int) ($metadata['anti_cheat_violations'] ?? 0),
+            (int) $request->input('anti_cheat_violations', 0),
+        );
         if ($autoSubmitted) {
             $metadata['auto_submitted'] = true;
         }

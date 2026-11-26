@@ -21,6 +21,13 @@ class Exam extends Model
     /** Ungraded interactive skill practice. */
     public const MODE_PRACTICE = 'practice';
 
+    /**
+     * Anti-cheat threshold for a formal graded exam: reaching this many
+     * server-recorded violations auto-submits the attempt. Single source of
+     * truth — the client is told this number and never invents its own.
+     */
+    public const ANTI_CHEAT_VIOLATION_LIMIT = 3;
+
     public function isPractice(): bool
     {
         return $this->assessment_mode === self::MODE_PRACTICE;

@@ -147,6 +147,59 @@ class LessonProgressCompletionTest extends TenantTestCase
             ->assertJsonPath('sections.0.lessons.0.completed', true);
     }
 
+    public function test_a_later_lighter_update_never_uncompletes_or_shrinks_a_finished_lesson(): void
+    {
+        $tree = $this->courseWithLesson('video', 10);
+
+        // Genuine full watch completes it.
+        $this->complete($tree, 600)->assertOk();
+
+        $row = $this->progressRow($tree['enrollment']->id, $tree['lesson']->id);
+        $this->assertSame('completed', $row->status);
+        $completedAt = $row->completed_at;
+        $this->assertNotNull($completedAt);
+
+        // A stray in-progress tick (a resume or a background position ping)
+        // with a smaller count must not downgrade the lesson or clear its
+        // completion — completion is terminal for a student-side update.
+        $this->withHeaders($this->authHeaders($this->student, $this->tenant))
+            ->putJson("/api/v1/enrollments/{$tree['enrollment']->id}/progress/{$tree['lesson']->id}", [
+                'status' => 'in_progress',
+                'watch_time_seconds' => 10,
+            ])->assertOk();
+
+        $row = $this->progressRow($tree['enrollment']->id, $tree['lesson']->id);
+        $this->assertSame('completed', $row->status);
+        $this->assertNotNull($row->completed_at);
+        $this->assertSame(600, (int) $row->watch_time_seconds);
+        $this->assertSame(100.0, (float) $tree['enrollment']->fresh()->progress_percent);
+    }
+
+    public function test_a_lesson_completed_under_the_old_60_percent_policy_is_never_invalidated(): void
+    {
+        $tree = $this->courseWithLesson('video', 10);
+
+        // A historical completion recorded before the 60% → 90% policy change:
+        // 360s is only 60% of a 10-minute lesson.
+        LessonProgress::create([
+            'id' => UuidV7::generate(), 'tenant_id' => $this->tenant->id,
+            'enrollment_id' => $tree['enrollment']->id, 'lesson_id' => $tree['lesson']->id,
+            'user_id' => $this->student->id, 'status' => 'completed',
+            'watch_time_seconds' => 360, 'completed_at' => now()->subDay(), 'metadata' => [],
+        ]);
+
+        // Any later, lighter update must leave the historical completion intact.
+        $this->withHeaders($this->authHeaders($this->student, $this->tenant))
+            ->putJson("/api/v1/enrollments/{$tree['enrollment']->id}/progress/{$tree['lesson']->id}", [
+                'status' => 'in_progress',
+                'watch_time_seconds' => 30,
+            ])->assertOk();
+
+        $row = $this->progressRow($tree['enrollment']->id, $tree['lesson']->id);
+        $this->assertSame('completed', $row->status);
+        $this->assertNotNull($row->completed_at);
+    }
+
     public function test_a_guest_curriculum_never_leaks_completion_or_an_enrollment(): void
     {
         $tree = $this->courseWithLesson('video', 10);
