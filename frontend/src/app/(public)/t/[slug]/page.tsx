@@ -6,6 +6,7 @@ import {
   tenantOrganizationLd,
   tenantCoursesLd,
   tenantFaqLd,
+  tenantPublicBase,
 } from '@/lib/tenant-seo';
 import { JsonLd } from '@/components/seo/json-ld';
 import TeacherLanding from './landing';
@@ -25,11 +26,11 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const site = await fetchTenantSite(slug);
+  const [site, base] = await Promise.all([fetchTenantSite(slug), tenantPublicBase(slug)]);
   const { name, description, logo } = tenantInfo(site);
 
   return {
-    ...tenantMetadata(slug, site, { title: name, description, path: `/t/${slug}` }),
+    ...tenantMetadata(slug, site, { title: name, description, path: `/t/${slug}`, base }),
     manifest: '/manifest.webmanifest',
     icons: {
       icon: logo || '/icon.png',
@@ -55,17 +56,18 @@ export async function generateViewport({
 
 export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const [site, courses] = await Promise.all([
+  const [site, courses, base] = await Promise.all([
     fetchTenantSite(slug),
     fetchTenantCourses(slug),
+    tenantPublicBase(slug),
   ]);
 
   return (
     <>
       <JsonLd
         data={[
-          ...tenantOrganizationLd(slug, site),
-          tenantCoursesLd(slug, site, courses),
+          ...tenantOrganizationLd(slug, site, base),
+          tenantCoursesLd(slug, site, courses, base),
           tenantFaqLd(site),
         ]}
       />
