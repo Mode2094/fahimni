@@ -77,7 +77,6 @@ Route groups appear in parentheses; dynamic segments in brackets.
 | `/lms-for-teachers` | public | platform | no | no | Marketing. |
 | `/live-online-classes` | public | platform | no | no | Marketing. |
 | `/teacher-website` | public | platform | no | no | Marketing. |
-| `/students` | public | platform | no | no | Public student-facing info page. |
 | `/contact` | public | platform | no | no | Submits `POST public/contact`. |
 | `/privacy` | public | platform | no | no | Legal. |
 | `/terms` | public | platform | no | no | Legal. |
