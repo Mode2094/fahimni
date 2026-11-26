@@ -52,12 +52,55 @@ domain. So Full (strict) is preserved — the zone is **never** downgraded to
 "Full", and the origin certificate is genuinely validated on every request.
 
 Teacher DNS: a single **CNAME / ALIAS** to the platform's CNAME target
-(`customers.fahimni.me`). The apex is supported wherever the registrar offers
-CNAME-flattening — **Hostinger turns a CNAME at `@` into an ALIAS automatically**.
-Apex proxying (A record at the apex) is a **separate, paid** Cloudflare
-entitlement and is deliberately *not* used; the apex works via CNAME-flattening
-and, if ownership validation needs it, the returned `ownership_verification`
-TXT token.
+(`customers.fahimni.me`), added for **`www`** first — that is the host that
+**always** works.
+
+### Apex (`@`) limitation — read this before promising an apex
+
+Cloudflare for SaaS can attach a custom hostname to a domain **apex** only when
+the apex resolves to a **real `CNAME`** into the SaaS zone. A registrar that
+**flattens** the apex (Hostinger turns a `CNAME`/`ALIAS` at `@` into plain `A`
+records) defeats this: Cloudflare then reports
+
+> `custom hostname does not CNAME to this zone.`
+> `The hostname is using Cloudflare and cannot be activated with an TXT or HTTP
+> validation token.`
+
+and the apex hostname stays `pending` **forever**, even after the ownership
+`TXT` matches. The only Cloudflare-native fix is the paid
+[**Apex Proxying**](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/apex-proxying/)
+add-on (Cloudflare-assigned Static IP prefixes / BYOIP, account-team gated) —
+**not enabled** on this account and deliberately not purchased.
+
+Consequences baked into the platform:
+
+* **`www` is authoritative.** A custom domain is marked servable as soon as
+  **either** its apex **or** its `www` sibling is hostname + certificate
+  `active` (`syncCustomHostname` / `TenantDomainResolver`). A pending apex never
+  blocks `www`, and the `ask` gate blesses a host whose **own** custom hostname
+  is already active.
+* **No recreate, no token churn.** A missing hostname is adopted **by name**
+  (`findHostnameByName`) instead of delete/re-create, so the published
+  ownership-verification token is never rotated and no DNS call-to-action
+  changes under the teacher.
+* Onboarding copy tells the teacher to add the `www` CNAME, then offers the apex
+  `CNAME`/`ALIAS` as best-effort, plus the mandatory ownership `TXT`.
+
+**Free, reliable apex → `www` options** (both keep the origin Cloudflare-only —
+never point the apex at the origin IP):
+
+1. **Cloudflare-managed zone redirect (recommended, fully free).** Add the
+   teacher's domain as a **free Cloudflare zone** on the platform account,
+   proxy the apex, and add a single **Redirect Rule**: `apex/*` → `301`
+   `https://www.<domain>/$1`. Universal SSL issues a valid apex certificate, so
+   `https://<apex>` works (301 → `www`). Requires a one-time nameserver change
+   by the domain owner.
+2. **Registrar HTTPS redirect.** Some registrars offer a free apex → `www`
+   redirect **with** TLS. Verify TLS is actually served; many do not.
+
+> **Hostinger's own “Redirect your domain” is NOT a solution**: it forwards
+> over HTTP only and does **not** provision an SSL certificate for the apex, so
+> `https://<apex>` still fails. Do not rely on it.
 
 ## One-time setup
 
@@ -112,12 +155,16 @@ TXT token.
 ## Teacher flow
 
 1. Teacher (or admin) connects the domain — the platform instantly registers a
-   Cloudflare custom hostname and returns the exact records.
-2. Teacher adds a `CNAME`/`ALIAS` → `customers.fahimni.me` (apex + `www`), and a
-   `TXT` if Cloudflare returned an ownership token.
-3. Teacher presses **Verify** (or the daily job reconciles it). Once Cloudflare
-   reports the hostname **and** certificate `active`, the domain is verified and
-   served.
+   Cloudflare custom hostname for the apex **and** for `www`, and returns the
+   exact records.
+2. Teacher adds a `CNAME`/`ALIAS` → `customers.fahimni.me` for **`www`** (the
+   host that always works), the apex `CNAME`/`ALIAS` as best-effort, and the
+   ownership `TXT` if Cloudflare returned one (mandatory whenever the registrar
+   flattens the apex).
+3. Teacher presses **Verify** (or the daily job reconciles it). As soon as
+   **either** host is hostname + certificate `active`, the domain is verified and
+   served — `www` is enough; a flattened apex is expected to stay `pending` and
+   does not hold the site back.
 
 ## Operations
 
