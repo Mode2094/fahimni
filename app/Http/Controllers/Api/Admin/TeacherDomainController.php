@@ -176,6 +176,8 @@ class TeacherDomainController extends Controller
                 $metadata['cf_hostname_id'], $metadata['cf_status'],
                 $metadata['cf_ssl_status'], $metadata['cf_ownership'],
                 $metadata['cf_validation_records'], $metadata['cf_last_synced_at'],
+                $metadata['cf_hostname_id_www'], $metadata['cf_status_www'],
+                $metadata['cf_ssl_status_www'],
             );
             $setting->update(['custom_domain' => null, 'metadata' => $metadata]);
         }

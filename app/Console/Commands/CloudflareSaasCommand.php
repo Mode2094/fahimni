@@ -125,11 +125,13 @@ class CloudflareSaasCommand extends Command
                 $metadata['cf_hostname_id'] ?? '—',
                 $metadata['cf_status'] ?? '—',
                 $metadata['cf_ssl_status'] ?? '—',
+                $metadata['cf_status_www'] ?? '—',
+                $metadata['cf_ssl_status_www'] ?? '—',
                 $ready ? 'LIVE' : 'pending',
             ];
         }
 
-        $this->table(['domain', 'hostname_id', 'status', 'ssl', 'result'], $rows);
+        $this->table(['domain', 'hostname_id', 'status', 'ssl', 'www', 'www_ssl', 'result'], $rows);
 
         return self::SUCCESS;
     }

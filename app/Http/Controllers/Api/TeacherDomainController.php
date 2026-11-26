@@ -228,6 +228,8 @@ class TeacherDomainController extends Controller
                 $metadata['cf_status'], $metadata['cf_ssl_status'],
                 $metadata['cf_ownership'], $metadata['cf_validation_records'],
                 $metadata['cf_last_synced_at'],
+                $metadata['cf_hostname_id_www'], $metadata['cf_status_www'],
+                $metadata['cf_ssl_status_www'],
             );
             $setting->update(['custom_domain' => null, 'metadata' => $metadata]);
         }
@@ -289,6 +291,11 @@ class TeacherDomainController extends Controller
      * Ensure the Cloudflare custom hostname exists and refresh its status into
      * the setting metadata. Returns true only when the hostname AND its edge
      * certificate are both active — the exact moment the domain is safe to serve.
+     *
+     * The apex and its `www.` sibling are BOTH registered as custom hostnames so
+     * the edge certificate covers whichever host the visitor typed. The apex
+     * decides «verified»; `www` is tracked separately and is best-effort, so a
+     * slow or as-yet-unpublished `www` record never blocks the apex site.
      */
     public static function syncCustomHostname(TenantSetting $setting): bool
     {
@@ -301,32 +308,30 @@ class TeacherDomainController extends Controller
         $metadata = $setting->metadata ?? [];
 
         try {
-            $id = $metadata['cf_hostname_id'] ?? null;
-            $host = $id ? CloudflareSaasService::getHostname((string) $id) : null;
+            $apexReady = self::syncOneHostname($metadata, $domain, 'cf_hostname_id', 'cf_');
 
-            // Missing locally or removed in Cloudflare → (re)create it.
-            if (! $host) {
-                $host = CloudflareSaasService::createHostname($domain);
-                $metadata['cf_hostname_id'] = $host['id'] ?? null;
+            if (! str_starts_with($domain, 'www.')) {
+                try {
+                    self::syncOneHostname($metadata, 'www.'.$domain, 'cf_hostname_id_www', 'cf_www_');
+                } catch (\Throwable $e) {
+                    Log::warning('Cloudflare www custom hostname sync failed', [
+                        'domain' => $domain,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
 
-            $metadata['cf_status'] = $host['status'] ?? null;
-            $metadata['cf_ssl_status'] = $host['ssl']['status'] ?? null;
-            $metadata['cf_ownership'] = $host['ownership_verification'] ?? ($metadata['cf_ownership'] ?? null);
-            $metadata['cf_validation_records'] = $host['ssl']['validation_records'] ?? ($metadata['cf_validation_records'] ?? []);
             $metadata['cf_last_synced_at'] = now()->toIso8601String();
 
-            $ready = ($metadata['cf_status'] === 'active') && ($metadata['cf_ssl_status'] === 'active');
-
-            if ($ready) {
+            if ($apexReady) {
                 unset($metadata['domain_last_error']);
             } else {
-                $metadata['domain_last_error'] = self::pendingReason($metadata['cf_status'], $metadata['cf_ssl_status']);
+                $metadata['domain_last_error'] = self::pendingReason($metadata['cf_status'] ?? null, $metadata['cf_ssl_status'] ?? null);
             }
 
             $setting->update(['metadata' => $metadata]);
 
-            return $ready;
+            return $apexReady;
         } catch (\Throwable $e) {
             $metadata['cf_last_synced_at'] = now()->toIso8601String();
             $metadata['domain_last_error'] = $e->getMessage();
@@ -341,6 +346,37 @@ class TeacherDomainController extends Controller
         }
     }
 
+    /**
+     * Provision/refresh ONE custom hostname and fold its live status into
+     * $metadata under the given id key and field prefix. Returns true when the
+     * hostname and its certificate are both active.
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    private static function syncOneHostname(array &$metadata, string $name, string $idKey, string $prefix): bool
+    {
+        $id = $metadata[$idKey] ?? null;
+        $host = $id ? CloudflareSaasService::getHostname((string) $id) : null;
+
+        // Missing locally or removed in Cloudflare → reuse an existing one (so we
+        // never hit a duplicate-hostname error) or create it.
+        if (! $host) {
+            $host = CloudflareSaasService::findHostnameByName($name)
+                ?? CloudflareSaasService::createHostname($name);
+            $metadata[$idKey] = $host['id'] ?? $id;
+        }
+
+        $metadata[$prefix.'status'] = $host['status'] ?? null;
+        $metadata[$prefix.'ssl_status'] = $host['ssl']['status'] ?? null;
+
+        if ($prefix === 'cf_') {
+            $metadata['cf_ownership'] = $host['ownership_verification'] ?? ($metadata['cf_ownership'] ?? null);
+            $metadata['cf_validation_records'] = $host['ssl']['validation_records'] ?? ($metadata['cf_validation_records'] ?? []);
+        }
+
+        return ($metadata[$prefix.'status'] === 'active') && ($metadata[$prefix.'ssl_status'] === 'active');
+    }
+
     /** Best-effort removal of the Cloudflare custom hostname (and its cert). */
     public static function releaseCustomHostname(TenantSetting $setting): void
     {
@@ -348,19 +384,23 @@ class TeacherDomainController extends Controller
             return;
         }
 
-        $id = $setting->metadata['cf_hostname_id'] ?? null;
+        $metadata = $setting->metadata ?? [];
 
-        if (! $id) {
-            return;
-        }
+        foreach (['cf_hostname_id', 'cf_hostname_id_www'] as $key) {
+            $id = $metadata[$key] ?? null;
 
-        try {
-            CloudflareSaasService::deleteHostname((string) $id);
-        } catch (\Throwable $e) {
-            Log::warning('Cloudflare custom hostname delete failed', [
-                'domain' => $setting->custom_domain,
-                'error' => $e->getMessage(),
-            ]);
+            if (! $id) {
+                continue;
+            }
+
+            try {
+                CloudflareSaasService::deleteHostname((string) $id);
+            } catch (\Throwable $e) {
+                Log::warning('Cloudflare custom hostname delete failed', [
+                    'domain' => $setting->custom_domain,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
     }
 
@@ -380,6 +420,9 @@ class TeacherDomainController extends Controller
             'hostname_id' => $meta['cf_hostname_id'] ?? null,
             'status' => $meta['cf_status'] ?? null,
             'ssl_status' => $meta['cf_ssl_status'] ?? null,
+            'hostname_id_www' => $meta['cf_hostname_id_www'] ?? null,
+            'www_status' => $meta['cf_status_www'] ?? null,
+            'www_ssl_status' => $meta['cf_ssl_status_www'] ?? null,
             'ownership' => $meta['cf_ownership'] ?? null,
             'validation_records' => $meta['cf_validation_records'] ?? [],
             'last_synced_at' => $meta['cf_last_synced_at'] ?? null,
