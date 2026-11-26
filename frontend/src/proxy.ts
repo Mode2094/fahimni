@@ -60,6 +60,11 @@ export async function proxy(request: NextRequest) {
   const nonce = generateNonce();
   const csp = buildCsp(nonce);
   const requestHeaders = new Headers(request.headers);
+  // The tenant context headers are set ONLY by this proxy, from the verified
+  // Host. Strip anything a client (or an upstream proxy) might have sent, so a
+  // request to the platform host can never spoof another teacher's branding.
+  requestHeaders.delete(TENANT_SLUG_HEADER);
+  requestHeaders.delete(TENANT_HOST_HEADER);
   // Next.js parses the nonce out of the CSP **request** header and stamps it
   // onto the framework/page/inline scripts it renders. Without this line the
   // response advertises a nonce that no script carries, and `'strict-dynamic'`
