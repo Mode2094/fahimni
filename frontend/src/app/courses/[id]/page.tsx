@@ -33,6 +33,7 @@ import { moveLessonBy, moveLessonTo } from '@/lib/lesson-order';
 import { buildLearnUrl } from '@/lib/course-preview';
 import { useUnsavedChangesWarning } from '@/lib/use-unsaved-changes';
 import { getApiErrorMessage } from '@/services/api';
+import { plural, formatDuration } from '@/lib/ar-format';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -907,7 +908,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-sm truncate">{e.title}</p>
                           <p className="text-[11px] text-gray-400">
-                            {examQuestions(e.id).length} {t('سؤال', 'questions')} · {e.duration_minutes} {t('دقيقة', 'min')} · {t('نجاح', 'pass')} {e.pass_mark_percent}%
+                            {plural.questions(examQuestions(e.id).length, locale)} · {formatDuration(e.duration_minutes, locale)} · {t('نجاح', 'pass')} {e.pass_mark_percent}%
                           </p>
                         </div>
                         <Badge className={e.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{e.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>

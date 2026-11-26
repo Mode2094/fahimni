@@ -118,7 +118,7 @@ export default function PricingClient() {
         {/* ─── حماية الفيديوهات — مشمولة في جميع الخطط ─── */}
         <div className="mx-auto mb-6 flex max-w-3xl flex-col items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-5 py-4 text-center sm:flex-row sm:justify-center sm:gap-3">
           <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" />
-          <p className="text-sm font-bold text-emerald-900">{t('حماية متقدمة للفيديوهات التعليمية — مشمولة في جميع الخطط', 'Advanced protection for educational videos — included in every plan')}</p>
+          <p className="text-sm font-bold text-emerald-900">{t('حماية التصحيح: روابط تشغيل آمنة للفيديوهات مشمولة في جميع الخطط. العلامة المائية المُخصّصة (باسم الطالب ووقت المشاهدة) متاحة في خطتَي «المحترف» و«المتقدم».', 'Secure playback URLs are included in every plan. The personalized watermark (student name and viewing time) is available on the Professional and Advanced plans.')}</p>
         </div>
 
         {/* ─── أبرز ما تمنحه الخطط — بلا ازدحام ─── */}

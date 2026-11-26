@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { plural } from '@/lib/ar-format';
 import {
   Activity, Users, UserX, TrendingDown, CalendarClock, AlertTriangle,
   Search, Mail, ExternalLink, ChevronRight, ChevronLeft, Info, ShieldCheck,
@@ -405,7 +406,9 @@ export default function TeacherStudentFollowUpPage() {
                       barClassName={s.progress_percent < 30 ? 'bg-orange-500' : 'bg-teal-500'}
                     />
                     <p className="mt-1 text-[11px] text-gray-400">
-                      {t(`${s.courses_count} كورس · ${s.lessons_completed} درس مكتمل`, `${s.courses_count} course(s) · ${s.lessons_completed} lesson(s) done`)}
+                      {locale === 'ar'
+                        ? `${plural.courses(s.courses_count, locale)} · ${plural.lessons(s.lessons_completed, locale)} مكتمل`
+                        : `${plural.courses(s.courses_count, locale)} · ${plural.lessons(s.lessons_completed, locale)} done`}
                     </p>
                   </div>
 

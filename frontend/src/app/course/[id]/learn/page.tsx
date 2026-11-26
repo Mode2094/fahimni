@@ -14,6 +14,7 @@ import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, Arrow
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { parsePreviewQuery, parseLearnTaskQuery, buildExamUrl } from '@/lib/course-preview';
+import { plural, formatDuration } from '@/lib/ar-format';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -100,8 +101,8 @@ function ExerciseCard({ exercise, preview = false }: { exercise: any; preview?: 
           <p className="text-[11px] font-semibold text-violet-600 uppercase tracking-wide">{t('تمرين الدرس', 'Lesson exercise')}</p>
           <h3 className="font-bold text-lg">{exercise.title}</h3>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
-            <span>{exercise.questions_count} {t('سؤال', 'questions')}</span>
-            {exercise.duration_minutes > 0 && <span>{exercise.duration_minutes} {t('دقيقة', 'min')}</span>}
+            <span>{plural.questions(exercise.questions_count, locale)}</span>
+            {exercise.duration_minutes > 0 && <span>{formatDuration(exercise.duration_minutes, locale)}</span>}
             <span>{t('نجاح', 'pass')} {exercise.pass_mark_percent}%</span>
             {!preview && left >= 0 ? (
               <span className={exhausted ? 'text-rose-600 font-medium' : ''}>
@@ -410,7 +411,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100dvh-4rem)] max-lg:h-[calc(100dvh-8.5rem)] -m-4 sm:-m-6 lg:-m-8">
       <div className="order-2 lg:order-1 w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-e bg-card overflow-y-auto shrink-0 max-h-[45vh] lg:max-h-none">
-        <div className="p-4 border-b"><h1 className="font-semibold">{data.course?.title || ''}</h1><p className="text-sm text-gray-500">{data.sections?.reduce((a: number, s: any) => a + s.lessons.length, 0) || 0} {locale === 'ar' ? 'درس' : 'lessons'}</p></div>
+        <div className="p-4 border-b"><h1 className="font-semibold">{data.course?.title || ''}</h1><p className="text-sm text-gray-500">{plural.lessons(data.sections?.reduce((a: number, s: any) => a + s.lessons.length, 0) || 0, locale)}</p></div>
         <div className="p-3 border-b">
           <div className="relative">
             <Search className="h-4 w-4 text-gray-400 absolute start-3 top-1/2 -translate-y-1/2" />
@@ -454,7 +455,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
             {expanded.has(s.id) && (s.lessons || []).map((l: any) => (
               <button key={l.id} onClick={() => setActive(l)} className={`flex items-center gap-3 px-4 py-3 w-full text-start hover:bg-muted/50 ${active?.id === l.id ? 'bg-teal-50 border-s-2 border-s-teal-500' : 'border-s-2 border-s-transparent'}`}>
                 {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
-                <div className="flex-1"><p className="text-sm">{l.title}</p><p className="text-xs text-gray-500">{l.duration_minutes || 0} min{l.locked && l.unlock_at && <span className="text-amber-600 ms-1"> · {formatCountdown(l.unlock_at)}</span>}</p></div>
+                <div className="flex-1"><p className="text-sm">{l.title}</p><p className="text-xs text-gray-500">{l.duration_minutes ? formatDuration(l.duration_minutes, locale) : (locale === 'ar' ? 'درس' : 'lesson')}{l.locked && l.unlock_at && <span className="text-amber-600 ms-1"> · {formatCountdown(l.unlock_at)}</span>}</p></div>
               </button>
             ))}
           </div>
@@ -550,8 +551,8 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                           <div className="flex-1 min-w-[180px]">
                             <p className="font-semibold">{ex.title}</p>
                             <p className="text-xs text-gray-500 mt-0.5">
-                              {ex.questions_count ?? 0} {locale === 'ar' ? 'سؤال' : 'questions'}
-                              {ex.duration_minutes ? ` · ${ex.duration_minutes} ${locale === 'ar' ? 'دقيقة' : 'min'}` : ''}
+                              {plural.questions(ex.questions_count ?? 0, locale)}
+                              {ex.duration_minutes ? ` · ${formatDuration(ex.duration_minutes, locale)}` : ''}
                               {ex.pass_mark_percent ? ` · ${locale === 'ar' ? 'نجاح' : 'pass'} ${ex.pass_mark_percent}%` : ''}
                               {!preview && ex.attempts_count > 0 ? ` · ${locale === 'ar' ? 'محاولاتك' : 'attempts'}: ${ex.attempts_count}` : ''}
                             </p>
