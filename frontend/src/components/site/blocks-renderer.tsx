@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Quote, BookOpen, Sparkles, ChevronDown, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { CourseCard, ActivationPanel, SectionHeading } from '@/components/site/storefront';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 /**
  * Renders a teacher-built page (block builder). Shares the exact same
@@ -37,6 +38,7 @@ export function BlocksRenderer({
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   const pad = (b: any) => (b?.padding === 'lg' ? 'py-20' : b?.padding === 'sm' ? 'py-8' : 'py-14 sm:py-20');
@@ -73,7 +75,7 @@ export function BlocksRenderer({
                       {t('استكشف الكورسات', 'Browse courses')} <BookOpen className="h-5 w-5" />
                     </Button>
                   </a>
-                  <a href={loggedIn ? '#card' : `/t/${slug}/register`} className="inline-flex">
+                  <a href={loggedIn ? '#card' : `${base}/register`} className="inline-flex">
                     <Button size="lg" variant="outline" className="h-14 min-h-[48px] rounded-full border-2 border-white/30 bg-white/10 px-8 text-white backdrop-blur-sm hover:bg-white/20">
                       {d.button_text || t('سجل الآن', 'Register now')}
                     </Button>
@@ -269,7 +271,7 @@ export function BlocksRenderer({
                 <h2 className="mb-4 text-2xl font-bold sm:text-3xl lg:text-4xl" style={{ fontFamily: headingFont }}>{d.title || t('جاهز تبدأ؟', 'Ready to start?')}</h2>
                 {d.text && <p className="mb-8 opacity-70">{d.text}</p>}
                 <div className="flex flex-wrap justify-center gap-3">
-                  <a href={loggedIn ? '#card' : `/t/${slug}/register`} className="inline-flex">
+                  <a href={loggedIn ? '#card' : `${base}/register`} className="inline-flex">
                     <Button size="lg" className="h-14 min-h-[48px] rounded-full px-10 text-white shadow-xl" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
                       {d.button_text || t('سجل الآن', 'Register now')}
                     </Button>

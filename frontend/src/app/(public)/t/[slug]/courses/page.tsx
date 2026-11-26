@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { BookOpen, ArrowLeft, GraduationCap } from 'lucide-react';
 import Link from 'next/link';
 import { CourseCard, BundleCard, useEnrolledCourseIds } from '@/components/site/storefront';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -20,6 +21,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
   const { slug } = use(params);
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const [site, setSite] = useState<any>(null);
   const [courses, setCourses] = useState<any[]>([]);
@@ -45,7 +47,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
     <div className="min-h-screen bg-slate-50">
       <header className="sticky top-0 z-40 border-b border-slate-100 bg-white/95 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4">
-          <Link href={`/t/${slug}`} className="flex min-w-0 items-center gap-2.5">
+          <Link href={base || '/'} className="flex min-w-0 items-center gap-2.5">
             {site?.logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={site.logo_url} className="h-9 w-9 rounded-xl object-cover" alt="" />
@@ -65,7 +67,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:py-12">
-        <Link href={`/t/${slug}`} className="mb-6 inline-flex min-h-[44px] items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+        <Link href={base || '/'} className="mb-6 inline-flex min-h-[44px] items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
           <ArrowLeft className="h-4 w-4" /> {t('الرئيسية', 'Home')}
         </Link>
 

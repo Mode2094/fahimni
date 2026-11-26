@@ -54,8 +54,17 @@ test('every response uses the single hardened header set', () => {
 test('each teacher app keeps its own identity and start_url', () => {
   const route = src('src/app/manifest.webmanifest/route.ts');
 
-  assert.match(route, /start_url:\s*teacherPath/, 'tenant manifest start_url must be the tenant path');
-  assert.match(route, /id:\s*teacherPath/, 'tenant manifest id must be the tenant path (no OS-app collision)');
+  // On the platform the tenant lives at /t/{slug}; on the teacher's OWN host
+  // (custom domain / subdomain, resolved from Host) the site is served from the
+  // ROOT, so the install must start at '/', never the internal /t/{slug}.
+  assert.match(
+    route,
+    /const basePath = hostResolved \? '' : `\/t\/\$\{encodeURIComponent\(site\.slug\)\}`/,
+    'tenant manifest must fall back to the host root when resolved from Host',
+  );
+  assert.match(route, /const start_url = basePath \|\| '\/'/, 'tenant start_url must be basePath or /');
+  assert.match(route, /start_url,/, 'tenant manifest start_url must be the tenant base path');
+  assert.match(route, /id: start_url,/, 'tenant manifest id must be the tenant base path (no OS-app collision)');
   // The platform app launches the session-aware /app entry, which restores the
   // signed-in user's role dashboard instead of the public landing page.
   assert.match(route, /start_url:\s*'\/app'/, 'platform manifest must launch the session-aware /app entry');

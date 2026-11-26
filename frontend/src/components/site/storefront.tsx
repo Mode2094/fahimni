@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import InstallButton from '@/components/teacher/install-button';
 import { authFetch, API_BASE } from '@/lib/auth-client';
+import { useTenantBasePath } from '@/lib/tenant-host';
 import {
   BookOpen, Clock, Layers, CreditCard, CheckCircle2, Loader2, ArrowLeft,
   ChevronDown, Sparkles, Zap, LayoutDashboard, Menu, X, PlayCircle, Tag,
@@ -122,6 +123,7 @@ export function CourseCard({
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const image = course?.cover_url || course?.thumbnail_url || null;
   const hasPrice = Number(course?.price) > 0;
@@ -206,7 +208,7 @@ export function CourseCard({
             </Button>
           </Link>
         ) : (
-          <Link href={`/t/${slug}/courses/${course.id}`} className="block">
+          <Link href={`${base}/courses/${course.id}`} className="block">
             <Button
               className="min-h-[44px] w-full gap-1.5 text-white shadow-lg"
               style={{ background: `linear-gradient(135deg, ${primary}, ${accent})`, borderRadius: radius }}
@@ -241,6 +243,7 @@ export function BundleCard({
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const image = bundle?.thumbnail_url || null;
   const hasPrice = Number(bundle?.price) > 0;
@@ -319,7 +322,7 @@ export function BundleCard({
             </Button>
           </a>
         ) : (
-          <Link href={`/t/${slug}/courses`} className="block">
+          <Link href={`${base}/courses`} className="block">
             <Button
               variant="outline"
               className="min-h-[44px] w-full gap-1.5"
@@ -439,6 +442,7 @@ export function ActivationPanel({
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   return (
     <section id="card" className={`scroll-mt-20 ${SECTION_PAD}`} style={{ background: '#f8fafc' }}>
@@ -492,7 +496,7 @@ export function ActivationPanel({
                   {t('أنشئ حسابك أولاً ثم فعّل بطاقة التسجيل لمتابعة كورسك.', 'Create your account first, then activate your card to start your course.')}
                 </p>
                 <div className="space-y-2.5">
-                  <Link href={`/t/${slug}/register`} className="block">
+                  <Link href={`${base}/register`} className="block">
                     <Button
                       className="min-h-[48px] w-full text-white shadow-lg"
                       style={{ background: `linear-gradient(135deg, ${primary}, ${accent})`, borderRadius: radius }}
@@ -587,6 +591,7 @@ export function StorefrontHeader({
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -612,7 +617,7 @@ export function StorefrontHeader({
       }`}
     >
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4">
-        <Link href={`/t/${slug}`} className="flex min-w-0 items-center gap-2.5" aria-label={site?.name}>
+        <Link href={base || '/'} className="flex min-w-0 items-center gap-2.5" aria-label={site?.name}>
           {site?.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={site.logo_url} className="h-9 w-9 rounded-xl object-cover" alt="" />
@@ -655,7 +660,7 @@ export function StorefrontHeader({
               </Button>
             </Link>
           ) : (
-            <Link href={`/t/${slug}/register`} className="hidden sm:block">
+            <Link href={`${base}/register`} className="hidden sm:block">
               <Button size="sm" className="min-h-[40px] rounded-full text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})`, borderRadius: radius }}>
                 {t('سجل الآن', 'Register')}
               </Button>
@@ -703,7 +708,7 @@ export function StorefrontHeader({
                   <Link href={`/student/login?tenant_slug=${slug}`} onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl border px-4 text-sm font-medium" style={{ color: primary, borderColor: `${primary}55` }}>
                     {t('تسجيل دخول', 'Login')}
                   </Link>
-                  <Link href={`/t/${slug}/register`} onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
+                  <Link href={`${base}/register`} onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
                     {t('سجل الآن', 'Register')}
                   </Link>
                 </>

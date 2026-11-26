@@ -7,6 +7,8 @@ import { PanelShell } from './panel-shell';
 import { PublicShell } from './public-shell';
 import { AuthUnavailable } from '@/components/auth/auth-unavailable';
 import { isAdminRoute, isStudentRoute, isTeacherRoute, isPublicShellRoute } from './nav-config';
+import { isTenantSitePath } from '@/lib/tenant-routing';
+import { useTenantHost } from '@/lib/tenant-host';
 
 /**
  * Route-aware shell: picks the right navigation experience per route.
@@ -25,6 +27,7 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const { user, initialized, status } = useAuth();
+  const { slug: tenantHostSlug } = useTenantHost();
   const [mounted, setMounted] = useState(false);
 
   const t = (ar: string, en: string) => (user?.locale === 'ar' ? ar : en);
@@ -32,6 +35,14 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
   useEffect(() => { setMounted(true); }, []);
 
   const needsAuth = isStudentRoute(path);
+
+  // On a teacher's OWN host the proxy rewrites the public teacher-site paths to
+  // `/t/{slug}` server-side, so the browser path (`/courses`, `/register`, …)
+  // collides with an authenticated platform route of the same name. Render
+  // those pages with their own chrome instead of the platform auth gate (which
+  // blanked `/courses` for guests) or the platform public shell.
+  const tenantSitePage = !!tenantHostSlug && isTenantSitePath(path);
+
   useEffect(() => {
     // Never redirect while the session check is still running, and never
     // redirect on a network/5xx failure — that would turn an outage into a
@@ -42,6 +53,10 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
       router.replace(`/student/login${from}`);
     }
   }, [mounted, initialized, needsAuth, status, user, path, router]);
+
+  if (tenantSitePage) {
+    return <>{children}</>;
+  }
 
   // Admin & teacher namespaces have their own layouts (sidebar stays mounted).
   if (isAdminRoute(path) || path.startsWith('/teacher')) {

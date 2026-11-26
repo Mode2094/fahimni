@@ -16,6 +16,7 @@ import {
   StorefrontHeader, StorefrontFooter, SectionHeading, CourseCard, ActivationPanel,
   StatStrip, TrustRow, SECTION_PAD, useReducedMotion, useEnrolledCourseIds,
 } from '@/components/site/storefront';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -36,6 +37,7 @@ export default function TeacherLanding({
   const { slug } = paramsOrPromise && typeof paramsOrPromise.then === 'function' ? use(paramsOrPromise) : paramsOrPromise;
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const [site, setSite] = useState<any>(initialSite);
   const [courses, setCourses] = useState<any[]>(initialCourses);
@@ -457,7 +459,7 @@ export default function TeacherLanding({
           <h2 className="mb-4 text-2xl font-bold text-white sm:text-3xl lg:text-4xl" style={{ fontFamily: font.heading }}>{cfg.cta_title || t('جاهز تبدأ رحلتك التعليمية؟', 'Ready to start your learning journey?')}</h2>
           <p className="mx-auto mb-8 max-w-xl text-white/60">{cfg.cta_text || t('سجل الآن وابدأ التعلم', 'Register now and start learning')}</p>
           <div className="flex flex-wrap justify-center gap-3">
-            <a href={loggedIn ? '#card' : `/t/${slug}/register`} className="inline-flex">
+            <a href={loggedIn ? '#card' : `${base}/register`} className="inline-flex">
               <Button size="lg" className="h-14 min-h-[48px] rounded-full px-10 text-base text-white shadow-2xl transition-transform hover:scale-105" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})`, borderRadius: tpl.radius }}>
                 {loggedIn ? t('فعّل بطاقتك', 'Activate your card') : t('سجل الآن', 'Register now')}
               </Button>
@@ -515,7 +517,7 @@ export default function TeacherLanding({
     { href: '#card', label: t('تفعيل بطاقة', 'Activate card') },
     ...(cfg.show_about && (cfg.about_text || cfg.about_image) ? [{ href: '#about', label: t('من نحن', 'About') }] : []),
     ...(cfg.show_faq && faq.length > 0 ? [{ href: '#faq', label: t('الأسئلة', 'FAQ') }] : []),
-    { href: `/t/${slug}/courses`, label: t('كل الكورسات', 'All courses') },
+    { href: `${base}/courses`, label: t('كل الكورسات', 'All courses') },
   ];
 
   return (

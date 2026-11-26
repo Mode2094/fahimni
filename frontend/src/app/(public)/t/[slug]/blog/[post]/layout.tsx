@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { fetchTenantSite, fetchTenantPost } from '@/lib/tenant-site';
-import { tenantInfo, tenantMetadata, tenantArticleLd } from '@/lib/tenant-seo';
+import { tenantInfo, tenantMetadata, tenantArticleLd, tenantPublicBase } from '@/lib/tenant-seo';
 import { JsonLd } from '@/components/seo/json-ld';
 
 export async function generateMetadata({
@@ -9,7 +9,11 @@ export async function generateMetadata({
   params: Promise<{ slug: string; post: string }>;
 }): Promise<Metadata> {
   const { slug, post } = await params;
-  const [site, data] = await Promise.all([fetchTenantSite(slug), fetchTenantPost(slug, post)]);
+  const [site, data, base] = await Promise.all([
+    fetchTenantSite(slug),
+    fetchTenantPost(slug, post),
+    tenantPublicBase(slug),
+  ]);
   const { name } = tenantInfo(site);
 
   if (!data?.title) {
@@ -18,6 +22,7 @@ export async function generateMetadata({
       title: `المدونة — ${name}`,
       path: `/t/${slug}/blog/${post}`,
       index: false,
+      base,
     });
   }
 
@@ -25,6 +30,7 @@ export async function generateMetadata({
     title: data.title,
     description: data.excerpt || undefined,
     path: `/t/${slug}/blog/${data.slug || post}`,
+    base,
   });
 }
 
@@ -36,11 +42,15 @@ export default async function BlogPostLayout({
   params: Promise<{ slug: string; post: string }>;
 }) {
   const { slug, post } = await params;
-  const [site, data] = await Promise.all([fetchTenantSite(slug), fetchTenantPost(slug, post)]);
+  const [site, data, base] = await Promise.all([
+    fetchTenantSite(slug),
+    fetchTenantPost(slug, post),
+    tenantPublicBase(slug),
+  ]);
 
   return (
     <>
-      {data?.title ? <JsonLd data={tenantArticleLd(slug, site, data)} /> : null}
+      {data?.title ? <JsonLd data={tenantArticleLd(slug, site, data, base)} /> : null}
       {children}
     </>
   );

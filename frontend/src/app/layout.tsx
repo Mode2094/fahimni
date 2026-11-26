@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import { connection } from 'next/server';
+import { headers } from 'next/headers';
 import { Providers } from '@/components/providers';
+import { fetchTenantSite } from '@/lib/tenant-site';
+import { TENANT_SLUG_HEADER } from '@/lib/tenant-routing';
+import type { TenantBranding } from '@/lib/tenant-host';
 import { SITE_NAME, getSiteOrigin, DEFAULT_OG_IMAGE, absoluteUrl } from '@/lib/seo';
 import './globals.css';
 
@@ -86,6 +90,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // whole app into per-request rendering so the nonce is always present.
   await connection();
 
+  // On a teacher's own host the proxy stamps `x-tenant-slug` (the browser path
+  // is tenant-less after the rewrite). Resolve the teacher's branding here so
+  // every page — auth, panel, storefront — presents the teacher, not the
+  // platform. On the platform host there is no header and this stays null.
+  const requestHeaders = await headers();
+  const tenantSlug = requestHeaders.get(TENANT_SLUG_HEADER);
+  const tenantBranding = await resolveTenantBranding(tenantSlug);
+
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>
@@ -98,8 +110,27 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <link rel="preconnect" href="https://cdn.jsdelivr.net" crossOrigin="anonymous" />
       </head>
       <body className="min-h-screen bg-background font-sans antialiased" suppressHydrationWarning>
-        <Providers>{children}</Providers>
+        <Providers tenantBranding={tenantBranding}>{children}</Providers>
       </body>
     </html>
   );
+}
+
+/** Build the display branding for a teacher host, or `null` on the platform. */
+async function resolveTenantBranding(slug: string | null): Promise<TenantBranding | null> {
+  if (!slug) return null;
+
+  const site = await fetchTenantSite(slug);
+  if (!site) return null;
+
+  const str = (value: unknown, fallback: string) =>
+    typeof value === 'string' && value.trim() ? value : fallback;
+
+  return {
+    slug,
+    name: str(site.name, 'منصتي'),
+    logoUrl: typeof site.logo_url === 'string' && site.logo_url ? site.logo_url : null,
+    primary: str(site.primary_color, '#0d9488'),
+    accent: str(site.accent_color, '#14b8a6'),
+  };
 }

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -19,6 +20,7 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
   const { slug, post } = use(params);
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const [postData, setPostData] = useState<any>(null);
   const [site, setSite] = useState<any>(null);
@@ -74,7 +76,7 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
           icon={Newspaper}
           title={t('المقال غير موجود', 'Post not found')}
           action={
-            <Link href={`/t/${slug}/blog`}>
+            <Link href={`${base}/blog`}>
               <Button variant="outline" className="gap-1.5 rounded-full" style={{ color: primary, borderColor: `${primary}55` }}><ArrowLeft className="h-4 w-4" />{t('المدونة', 'Blog')}</Button>
             </Link>
           }
@@ -88,13 +90,13 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
       {/* ─── Header ─────────────────────────────── */}
       <header className="sticky top-0 z-50 backdrop-blur-xl border-b border-gray-100 bg-white/90">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <Link href={`/t/${slug}`} className="flex items-center gap-2.5">
+          <Link href={base || '/'} className="flex items-center gap-2.5">
             {site?.logo_url ? <img src={site.logo_url} className="h-9 w-9 rounded-xl object-cover" alt="" /> :
               <span className="flex h-9 w-9 items-center justify-center rounded-xl shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}><GraduationCap className="h-5 w-5 text-white" /></span>}
             <span className="font-bold text-lg">{site?.name || slug}</span>
           </Link>
           <div className="flex items-center gap-2">
-            <Link href={`/t/${slug}/blog`}><Button variant="outline" size="sm" className="gap-1.5 rounded-full" style={{ borderRadius: '1rem', color: primary, borderColor: `${primary}55` }}><ChevronLeft className="h-3.5 w-3.5" />{t('المدونة', 'Blog')}</Button></Link>
+            <Link href={`${base}/blog`}><Button variant="outline" size="sm" className="gap-1.5 rounded-full" style={{ borderRadius: '1rem', color: primary, borderColor: `${primary}55` }}><ChevronLeft className="h-3.5 w-3.5" />{t('المدونة', 'Blog')}</Button></Link>
             <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-gray-600" aria-label="menu">
               {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
@@ -103,9 +105,9 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
         {menuOpen && (
           <div className="md:hidden border-t border-gray-100 bg-white px-4 py-3 space-y-1 shadow-xl">
             {[
-              { href: `/t/${slug}`, label: t('الرئيسية', 'Home') },
-              { href: `/t/${slug}/blog`, label: t('المدونة', 'Blog') },
-              { href: `/t/${slug}/register`, label: t('سجل الآن', 'Register') },
+              { href: base || '/', label: t('الرئيسية', 'Home') },
+              { href: `${base}/blog`, label: t('المدونة', 'Blog') },
+              { href: `${base}/register`, label: t('سجل الآن', 'Register') },
             ].map((l) => (
               <Link key={l.href} href={l.href} onClick={() => setMenuOpen(false)} className="block px-3 py-2.5 rounded-xl text-sm text-gray-700 hover:bg-gray-50">{l.label}</Link>
             ))}
@@ -118,7 +120,7 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
         <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '28px 28px' }} />
         <div className="absolute -top-24 left-1/4 w-80 h-80 rounded-full blur-3xl opacity-15" style={{ background: primary }} />
         <div className="relative max-w-4xl mx-auto px-4 py-14 sm:py-20">
-          <Link href={`/t/${slug}/blog`} className="inline-flex items-center gap-1.5 text-white/50 hover:text-white transition-colors text-sm mb-6">
+          <Link href={`${base}/blog`} className="inline-flex items-center gap-1.5 text-white/50 hover:text-white transition-colors text-sm mb-6">
             <ArrowLeft className="h-4 w-4" />{t('العودة للمدونة', 'Back to blog')}
           </Link>
           <div className="flex flex-wrap items-center gap-2 mb-5">
@@ -180,7 +182,7 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><Sparkles className="h-5 w-5" style={{ color: primary }} />{t('مقالات ذات صلة', 'Related articles')}</h2>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {related.map((p) => (
-                <Link key={p.id} href={`/t/${slug}/blog/${p.slug}`} className="group">
+                <Link key={p.id} href={`${base}/blog/${p.slug}`} className="group">
                   <div className="overflow-hidden rounded-2xl bg-white border border-gray-100 shadow-sm card-hover h-full flex flex-col">
                     <div className="h-32 relative flex items-center justify-center overflow-hidden" style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}>
                       {p.cover_image ? <img src={p.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" /> : <Newspaper className="h-8 w-8 opacity-40" style={{ color: primary }} />}
@@ -205,7 +207,7 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
               <BookOpen className="mx-auto h-10 w-10 mb-4" style={{ color: accent }} />
               <h2 className="text-2xl font-bold text-white mb-3">{t('أعجبك هذا المقال؟', 'Enjoyed this article?')}</h2>
               <p className="text-white/60 text-sm mb-6 max-w-sm mx-auto">{t('اكتشف الكورسات الكاملة وابدأ رحلتك التعليمية', 'Explore the full courses and start your learning journey')}</p>
-              <Link href={`/t/${slug}#courses`}>
+              <Link href={`${base}#courses`}>
                 <Button size="lg" className="h-13 px-10 rounded-full text-white text-base shadow-xl hover:scale-105 transition-transform" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
                   {t('تصفح الكورسات', 'Browse courses')}
                 </Button>
@@ -224,9 +226,9 @@ export default function BlogPostPage({ params }: { params: Promise<{ slug: strin
             <span className="font-bold text-white text-sm">{site?.name || slug}</span>
           </div>
           <div className="flex items-center gap-5 text-white/40 text-xs">
-            <Link href={`/t/${slug}`} className="hover:text-white transition-colors">{t('الرئيسية', 'Home')}</Link>
-            <Link href={`/t/${slug}/blog`} className="hover:text-white transition-colors">{t('المدونة', 'Blog')}</Link>
-            <Link href={`/t/${slug}/register`} className="hover:text-white transition-colors">{t('سجل الآن', 'Register')}</Link>
+            <Link href={base || '/'} className="hover:text-white transition-colors">{t('الرئيسية', 'Home')}</Link>
+            <Link href={`${base}/blog`} className="hover:text-white transition-colors">{t('المدونة', 'Blog')}</Link>
+            <Link href={`${base}/register`} className="hover:text-white transition-colors">{t('سجل الآن', 'Register')}</Link>
             <Link href="/terms" className="hover:text-white transition-colors">{t('الشروط', 'Terms')}</Link>
             <Link href="/privacy" className="hover:text-white transition-colors">{t('الخصوصية', 'Privacy')}</Link>
             <Link href="/refund-policy" className="hover:text-white transition-colors">{t('استرداد الأموال', 'Refunds')}</Link>

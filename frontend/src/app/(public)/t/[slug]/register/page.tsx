@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { authFetch, setSessionHint, setStoredTenantId } from '@/lib/auth-client';
 import { track } from '@/lib/analytics';
 import { setPendingRedirect, consumePendingRedirect } from '@/lib/post-auth-redirect';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -22,6 +23,7 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
   const { locale } = useLocale();
   const router = useRouter();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', confirm: '' });
   const [load, setLoad] = useState(false);
   const [done, setDone] = useState(false);
@@ -40,10 +42,10 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
   useEffect(() => {
     const course = new URLSearchParams(window.location.search).get('course') || '';
     setCourseParam(course);
-    if (course) setPendingRedirect(`/t/${slug}/courses/${course}`);
-  }, [slug]);
+    if (course) setPendingRedirect(`${base}/courses/${course}`);
+  }, [slug, base]);
 
-  const courseHref = courseParam ? `/t/${slug}/courses/${courseParam}` : `/my-learning`;
+  const courseHref = courseParam ? `${base}/courses/${courseParam}` : `/my-learning`;
 
   const primary = brand?.primary_color || '#0d9488';
   const accent = brand?.accent_color || '#14b8a6';
@@ -112,7 +114,7 @@ export default function RegisterPage({ params }: { params: Promise<{ slug: strin
         </CardContent></Card>
         <p className="text-center text-sm text-slate-500">
           {locale === 'ar' ? 'لديك حساب؟' : 'Have an account?'}{' '}
-          <a href={`/student/login?tenant_slug=${slug}${courseParam ? `&from=${encodeURIComponent(`/t/${slug}/courses/${courseParam}`)}` : ''}`} className="font-medium underline" style={{ color: primary }}>
+          <a href={`/student/login?tenant_slug=${slug}${courseParam ? `&from=${encodeURIComponent(`${base}/courses/${courseParam}`)}` : ''}`} className="font-medium underline" style={{ color: primary }}>
             {locale === 'ar' ? 'سجل دخول' : 'Log in'}
           </a>
         </p>

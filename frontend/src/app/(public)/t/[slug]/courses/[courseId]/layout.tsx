@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { fetchTenantSite, fetchTenantCourse } from '@/lib/tenant-site';
-import { tenantInfo, tenantMetadata } from '@/lib/tenant-seo';
+import { tenantInfo, tenantMetadata, tenantPublicBase } from '@/lib/tenant-seo';
 
 /**
  * SEO for a single public course page. Indexed only when the course really
@@ -13,9 +13,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string; courseId: string }>;
 }): Promise<Metadata> {
   const { slug, courseId } = await params;
-  const [site, course] = await Promise.all([
+  const [site, course, base] = await Promise.all([
     fetchTenantSite(slug),
     fetchTenantCourse(slug, courseId),
+    tenantPublicBase(slug),
   ]);
   const { name } = tenantInfo(site);
 
@@ -24,6 +25,7 @@ export async function generateMetadata({
       title: `الدورة غير متوفرة — ${name}`,
       path: `/t/${slug}/courses/${courseId}`,
       index: false,
+      base,
     });
   }
 
@@ -34,6 +36,7 @@ export async function generateMetadata({
     title: `${course.title} — ${name}`,
     description,
     path: `/t/${slug}/courses/${courseId}`,
+    base,
   });
 }
 

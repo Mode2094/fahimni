@@ -15,15 +15,38 @@ import { SessionStatusBanner } from '@/components/auth/session-status-banner';
 import { Analytics, MetaVerification } from '@/components/analytics/analytics';
 import PwaManager from '@/components/pwa/pwa-manager';
 import { ConfirmDialogHost } from '@/components/ui/confirm-dialog';
+import { TenantHostProvider, type TenantBranding } from '@/lib/tenant-host';
 
 const HOUR = 60 * 60 * 1000;
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  tenantBranding = null,
+}: {
+  children: React.ReactNode;
+  tenantBranding?: TenantBranding | null;
+}) {
   const user = useAuth((s) => s.user);
   const { locale, setLocale } = useLocale();
   const { settings, load: loadSettings, loaded } = useSettings();
   const { load: loadPlan } = usePlan();
   const router = useRouter();
+
+  // On a teacher's own host, overlay the teacher's branding onto the platform
+  // settings so auth/panel chrome shows the teacher. Re-applied whenever the
+  // platform settings (re)load, since `load()` merges into the same object.
+  useEffect(() => {
+    useSettings.getState().setTenantBranding(
+      tenantBranding
+        ? {
+            name: tenantBranding.name,
+            logoUrl: tenantBranding.logoUrl,
+            primary: tenantBranding.primary,
+            accent: tenantBranding.accent,
+          }
+        : null,
+    );
+  }, [tenantBranding]);
 
   useEffect(() => {
     // Purge legacy bearer-token artefacts from older builds (one-time).
@@ -117,7 +140,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <Analytics />
       <MetaVerification />
       <SessionStatusBanner />
-      <RouteShell>{children}</RouteShell>
+      <TenantHostProvider slug={tenantBranding?.slug ?? null} branding={tenantBranding}>
+        <RouteShell>{children}</RouteShell>
+      </TenantHostProvider>
       <PwaManager />
       <ConfirmDialogHost />
       <Toaster richColors position={locale === 'ar' ? 'bottom-left' : 'bottom-right'} />

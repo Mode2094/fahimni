@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { CSP_HEADER, NONCE_HEADER, SANDBOX_PATH, buildCsp, generateNonce, withNoTransform } from './lib/csp';
-import { tenantSitePath } from './lib/tenant-routing';
+import { tenantSitePath, TENANT_HOST_HEADER, TENANT_SLUG_HEADER } from './lib/tenant-routing';
 
 // Server-side fetch: must be an absolute URL inside the Docker network
 // (nginx) or localhost in dev — never the browser-relative '/api/v1'.
@@ -60,6 +60,11 @@ export async function proxy(request: NextRequest) {
   const nonce = generateNonce();
   const csp = buildCsp(nonce);
   const requestHeaders = new Headers(request.headers);
+  // The tenant context headers are set ONLY by this proxy, from the verified
+  // Host. Strip anything a client (or an upstream proxy) might have sent, so a
+  // request to the platform host can never spoof another teacher's branding.
+  requestHeaders.delete(TENANT_SLUG_HEADER);
+  requestHeaders.delete(TENANT_HOST_HEADER);
   // Next.js parses the nonce out of the CSP **request** header and stamps it
   // onto the framework/page/inline scripts it renders. Without this line the
   // response advertises a nonce that no script carries, and `'strict-dynamic'`
@@ -90,11 +95,6 @@ export async function proxy(request: NextRequest) {
     return passThrough();
   }
 
-  // If already on a /t/ route, skip
-  if (pathname.startsWith('/t/')) {
-    return passThrough();
-  }
-
   // The Host header is attacker-controlled and is interpolated into the
   // API URL path — only allow plain DNS hostnames.
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/.test(host)) {
@@ -103,30 +103,46 @@ export async function proxy(request: NextRequest) {
     return passThrough();
   }
 
+  // Resolve the tenant for this host: a verified custom domain or a live
+  // `{slug}.{platform}` subdomain. The lookup 200s only for those, so an
+  // arbitrary/unverified Host never receives tenant context.
+  let slug: string | null = null;
   try {
     const res = await fetch(`${API}/public/domain/${encodeURIComponent(host)}`, { headers: { Accept: 'application/json' } });
     if (res.ok) {
       const data = await res.json();
-      const slug = data?.site?.slug;
-      // Only the PUBLIC teacher-site pages are rewritten under /t/{slug}. The
-      // signed-in app routes (my-learning, course learn, exams, results, card,
-      // checkout, …) must keep their own path — otherwise every page becomes the
-      // teacher's home. Deep links therefore resolve to the real app route and a
-      // hard refresh never 404s or bounces to the landing page.
-      const rewritten = typeof slug === 'string' ? tenantSitePath(pathname, slug) : null;
-
-      if (rewritten) {
-        const url = request.nextUrl.clone();
-        url.pathname = rewritten;
-
-        return withCsp(NextResponse.rewrite(url, { request: { headers: requestHeaders } }));
-      }
+      if (typeof data?.site?.slug === 'string' && data.site.slug) slug = data.site.slug;
     } else if (res.status >= 500) {
       reportProxyFailure(pathname, `domain-lookup-${res.status}`);
     }
-  } catch (err) {
-    // fall through
+  } catch {
     reportProxyFailure(pathname, 'domain-lookup-unreachable');
+  }
+
+  if (!slug) return passThrough();
+
+  // Stamp the tenant context onto EVERY page on this host — not only the
+  // rewritten public pages. The browser URL keeps the clean, tenant-less path
+  // (`/courses`, `/student/login`) while the server rewrite serves `/t/{slug}`,
+  // so the route shell and branding read the tenant from these headers instead
+  // of guessing from the path.
+  requestHeaders.set(TENANT_SLUG_HEADER, slug);
+  requestHeaders.set(TENANT_HOST_HEADER, '1');
+
+  // Only the PUBLIC teacher-site pages are rewritten under /t/{slug}. The
+  // signed-in app routes (my-learning, course learn, exams, results, card,
+  // checkout, …) keep their own path — otherwise every page becomes the
+  // teacher's home. Deep links therefore resolve to the real app route and a
+  // hard refresh never 404s or bounces to the landing page.
+  if (!pathname.startsWith('/t/')) {
+    const rewritten = tenantSitePath(pathname, slug);
+
+    if (rewritten) {
+      const url = request.nextUrl.clone();
+      url.pathname = rewritten;
+
+      return withCsp(NextResponse.rewrite(url, { request: { headers: requestHeaders } }));
+    }
   }
 
   return passThrough();

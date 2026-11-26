@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, CalendarClock, HandCoins, Clock, CheckCircle2, ChevronRight, User, GraduationCap, MessageSquareQuote, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -25,6 +26,7 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
   const { check } = useAuth();
   const router = useRouter();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const [loggedIn, setLoggedIn] = useState(false);
   const [teachers, setTeachers] = useState<any[]>([]);
@@ -104,11 +106,11 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
       <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
         <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button onClick={() => router.push(`/t/${slug}`)} className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100" aria-label={t('رجوع', 'Back')}><ChevronRight className="h-4 w-4" /></button>
+            <button onClick={() => router.push(base || '/')} className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100" aria-label={t('رجوع', 'Back')}><ChevronRight className="h-4 w-4" /></button>
             <h1 className="text-lg sm:text-xl font-bold">{t('حجز موعد', 'Book an appointment')}</h1>
           </div>
           {!loggedIn && (
-            <a href={`/register?redirect=/t/${slug}/book`}><Button size="sm" className="rounded-full gap-1.5"><Lock className="h-3.5 w-3.5" />{t('تسجيل الدخول للحجز', 'Log in to book')}</Button></a>
+            <a href={`/register?redirect=${base}/book`}><Button size="sm" className="rounded-full gap-1.5"><Lock className="h-3.5 w-3.5" />{t('تسجيل الدخول للحجز', 'Log in to book')}</Button></a>
           )}
         </div>
       </header>
@@ -130,7 +132,7 @@ export default function BookPage({ params }: { params: Promise<{ slug: string }>
               {bookingResult.payment?.status === 'pending' && bookingResult.payment?.redirect_url && (
                 <Button className="rounded-full mt-2" onClick={() => { window.location.href = bookingResult.payment.redirect_url; }}>{t('إتمام الدفع', 'Complete payment')}</Button>
               )}
-              <Button variant="outline" className="rounded-full" onClick={() => router.push(`/t/${slug}`)}>{t('العودة للموقع', 'Back to site')}</Button>
+              <Button variant="outline" className="rounded-full" onClick={() => router.push(base || '/')}>{t('العودة للموقع', 'Back to site')}</Button>
             </CardContent>
           </Card>
         ) : (
