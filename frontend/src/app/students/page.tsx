@@ -121,6 +121,22 @@ function StudentsPageInner() {
     setBusyId('');
   };
 
+  const resetAllDevices = async () => {
+    if (!(await confirmDialog({
+      danger: true,
+      description: t('إعادة تعيين أجهزة جميع الطلاب؟ سيتم فصل كل الأجهزة الحالية لكل طالب، ويمكن لكل طالب الدخول من جهاز جديد. الإجراء لا يمسّ بيانات الدروس أو النتائج.', 'Reset devices for all students? Every current device is unbound and each student can log in from a new one. Lesson data and results are untouched.'),
+    }))) return;
+    setBusyId('__all__');
+    try {
+      const res = await fetch(`${API}/teacher/students/reset-all-devices`, { method: 'POST', headers: headers() });
+      if (!res.ok) throw new Error();
+      const d = await res.json().catch(() => ({}));
+      toast.success(t(`تم إعادة تعيين أجهزة ${d.students ?? students.length} طالباً — يمكنهم الدخول من أجهزة جديدة الآن`, `Devices reset for ${d.students ?? students.length} students — they can log in from new devices now`));
+      setProfile(null); load();
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
+    setBusyId('');
+  };
+
   const openLimit = (s: any) => { setLimitTarget(s); setLimitVal(String(s.max_devices)); };
 
   const filtered = students.filter((s) => !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.email?.toLowerCase().includes(search.toLowerCase()));
@@ -185,9 +201,22 @@ function StudentsPageInner() {
         ))}
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="h-4 w-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('ابحث بالاسم أو الإيميل...', 'Search by name or email...')} className="h-11 ps-10 rounded-full border-teal-100 bg-white shadow-sm focus-visible:ring-teal-500" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 max-w-md min-w-[220px]">
+          <Search className="h-4 w-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('ابحث بالاسم أو الإيميل...', 'Search by name or email...')} className="h-11 ps-10 rounded-full border-teal-100 bg-white shadow-sm focus-visible:ring-teal-500" />
+        </div>
+        {students.some((s) => s.devices_count > 0) && (
+          <Button
+            variant="outline"
+            className="h-11 gap-2 rounded-full text-red-600 border-red-100 hover:bg-red-50"
+            disabled={busyId === '__all__'}
+            onClick={resetAllDevices}
+          >
+            {busyId === '__all__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+            {t('إعادة تعيين أجهزة الجميع', 'Reset all devices')}
+          </Button>
+        )}
       </div>
 
       {loading ? <TableSkeleton rows={6} cols={4} /> :

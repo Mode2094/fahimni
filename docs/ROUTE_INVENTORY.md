@@ -462,6 +462,7 @@ via headers, but the panel is platform-only).
 | POST `/api/v1/exams/{exam}/preview/grade` | teacher | platform | tenant group | yes | |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/submit` | student | platform | tenant group | yes | |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/autosave` | student | platform | tenant group | yes | |
+| POST `/api/v1/exams/{exam}/attempts/{attempt}/complete` | student | platform | tenant group (practice only) | yes | added §2/§3 ungraded practice |
 | POST `/api/v1/exams/{exam}/attempts/{attempt}/grade` | teacher | platform | + `role:teacher,owner,admin,permission:exams.manage` | yes | |
 | GET `/api/v1/exam-attempts/{attempt}` | shared | platform | tenant group | yes | |
 | GET `/api/v1/cards` | teacher | platform | tenant group | yes | |
@@ -633,7 +634,10 @@ via headers, but the panel is platform-only).
 | GET `/api/v1/teacher/follow-up` | teacher | platform | + `role:...,permission:students.manage` | yes | |
 | GET `/api/v1/teacher/device-policy` | teacher | platform | + role/permission | yes | |
 | PUT `/api/v1/teacher/device-policy` | teacher | platform | + role/permission | yes | |
+| GET `/api/v1/teacher/leaderboard-policy` | teacher | platform | + role/permission | yes | |
+| PUT `/api/v1/teacher/leaderboard-policy` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students` | teacher | platform | + role/permission | yes | |
+| POST `/api/v1/teacher/students/reset-all-devices` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students/{student}` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students/{student}/activity` | teacher | platform | + role/permission | yes | |
 | POST `/api/v1/teacher/students/{student}/device-limit` | teacher | platform | + role/permission | yes | |

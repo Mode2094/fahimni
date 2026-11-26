@@ -827,6 +827,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('leaderboard-policy', [TeacherLeaderboardController::class, 'policy']);
                 Route::put('leaderboard-policy', [TeacherLeaderboardController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);
+                Route::post('students/reset-all-devices', [TeacherDeviceController::class, 'resetAllDevices']);
                 Route::get('students/{student}', [TeacherDeviceController::class, 'showStudent']);
                 Route::get('students/{student}/activity', [TeacherDeviceController::class, 'studentActivity']);
                 Route::post('students/{student}/device-limit', [TeacherDeviceController::class, 'setStudentLimit']);

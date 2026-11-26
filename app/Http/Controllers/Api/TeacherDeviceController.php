@@ -281,6 +281,41 @@ class TeacherDeviceController extends Controller
         ]);
     }
 
+    /**
+     * إعادة تعيين أجهزة كل طلاب المنصة دفعة واحدة.
+     *
+     * A term change / device audit often needs everyone re-approved at once.
+     * One query removes every registered device of this tenant's students, then
+     * one mass update ends their existing sessions so each signs in again on a
+     * fresh device. Scoped strictly to this tenant's own students.
+     */
+    public function resetAllDevices(Request $request): JsonResponse
+    {
+        $this->ensureTeacher($request);
+
+        $tenantId = $this->tenantId($request);
+
+        $studentIds = Enrollment::where('tenant_id', $tenantId)
+            ->pluck('user_id')
+            ->unique()
+            ->values();
+
+        $deleted = UserDevice::where('tenant_id', $tenantId)
+            ->whereIn('user_id', $studentIds)
+            ->delete();
+
+        if ($studentIds->isNotEmpty()) {
+            // End every existing web session for these students.
+            User::whereIn('id', $studentIds)->increment('auth_version');
+        }
+
+        return response()->json([
+            'message' => 'Devices reset for all students. They can now log in from a new device.',
+            'deleted' => $deleted,
+            'students' => $studentIds->count(),
+        ]);
+    }
+
     public function studentActivity(Request $request, string $studentId): JsonResponse
     {
         $this->ensureTeacher($request);

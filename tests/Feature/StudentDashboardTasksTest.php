@@ -9,11 +9,51 @@ use App\Models\CourseGroup;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\Tenant;
-use App\Models\User;
+use Illuminate\Support\Carbon;
 use Symfony\Component\Uid\UuidV7;
 
 class StudentDashboardTasksTest extends TenantTestCase
 {
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
+    public function test_the_task_window_follows_the_tenants_local_day_not_utc(): void
+    {
+        // 22:00 UTC == 01:00 the NEXT day in Asia/Riyadh (UTC+3). A task due
+        // ~8 days out is in "this week" for the tenant's local day, but outside
+        // a naive now()+7d (UTC) window.
+        Carbon::setTestNow('2026-01-01 22:00:00');
+
+        $tenant = $this->makeTenant(); // timezone Asia/Riyadh
+        $student = $this->makeUser();
+        $this->attachToTenant($student, $tenant, 'student');
+        $this->attachSubscription($tenant);
+
+        $course = Course::factory()->create(['tenant_id' => $tenant->id]);
+        Enrollment::create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $tenant->id,
+            'course_id' => $course->id,
+            'user_id' => $student->id,
+            'status' => 'active',
+            'enrolled_at' => now(),
+            'progress_percent' => 0,
+        ]);
+
+        // 2026-01-09 12:00 UTC is beyond now()+7d (2026-01-08 22:00 UTC) but
+        // before the tenant-local end-of-window (2026-01-09 20:59 UTC).
+        $assignment = $this->makeAssignment($tenant, $course, 'Late-week task', Carbon::parse('2026-01-09 12:00:00'));
+
+        $response = $this->getJson('/api/v1/dashboard', $this->authHeaders($student, $tenant));
+
+        $response->assertOk()
+            ->assertJsonCount(1, 'learning_tasks.due_assignments')
+            ->assertJsonFragment(['id' => $assignment->id]);
+    }
+
     public function test_student_dashboard_lists_only_due_work_from_effective_enrollments(): void
     {
         $tenant = $this->makeTenant();
