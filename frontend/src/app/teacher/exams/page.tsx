@@ -246,7 +246,7 @@ export default function TeacherExamsPage() {
               <p className="font-bold">{t('لا توجد امتحانات بعد', 'No exams yet')}</p>
               <p className="text-sm text-muted-foreground mt-1">{t('أنشئ امتحاناً من صفحة الكورس، ثم تابع محاولات طلابك هنا.', 'Create an exam from a course page, then follow your students’ attempts here.')}</p>
             </div>
-            <a href="/courses">
+            <a href="/teacher/courses">
               <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
                 <Plus className="h-4 w-4" /> {t('أنشئ امتحاناً', 'Create an exam')}
               </Button>

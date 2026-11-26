@@ -90,7 +90,7 @@ export const TEACHER_NAV: NavGroup[] = [
   {
     items: [
       { href: '/teacher/dashboard', icon: LayoutDashboard, ar: 'لوحة التحكم', en: 'Dashboard' },
-      { href: '/courses', icon: BookOpen, ar: 'الكورسات', en: 'Courses', match: ['/courses'] },
+      { href: '/teacher/courses', icon: BookOpen, ar: 'الكورسات', en: 'Courses', match: ['/teacher/courses', '/courses'] },
       { href: '/students', icon: Users, ar: 'الطلاب', en: 'Students' },
       { href: '/teacher/follow-up', icon: Activity, ar: 'متابعة الطلاب', en: 'Student Follow-up' },
       { href: '/teacher/terms', icon: CalendarDays, ar: 'الفصول الدراسية', en: 'Academic Terms', match: ['/teacher/terms'] },

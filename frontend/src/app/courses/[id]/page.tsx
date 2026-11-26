@@ -700,7 +700,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       {/* ─── رأس الكورس ─────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <a href="/courses" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}{t('رجوع للكورسات', 'Back to courses')}</a>
+          <a href="/teacher/courses" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}{t('رجوع للكورسات', 'Back to courses')}</a>
           <h1 className="text-2xl sm:text-3xl font-bold mt-2">{course?.title || t('إدارة الكورس', 'Course Builder')}</h1>
           {course?.description && <p className="text-gray-500 text-sm mt-1 max-w-xl">{course.description}</p>}
         </div>

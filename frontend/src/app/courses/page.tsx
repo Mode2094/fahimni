@@ -163,7 +163,7 @@ export default function CoursesPage() {
                   </Badge>
                 </div>
                 <CardContent className="p-5 flex-1 flex flex-col">
-                  <a href={`/courses/${c.id}`}><h3 className="font-bold hover:text-teal-700 transition-colors line-clamp-1">{c.title}</h3></a>
+                  <a href={`/teacher/courses/${c.id}`}><h3 className="font-bold hover:text-teal-700 transition-colors line-clamp-1">{c.title}</h3></a>
                   <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2 min-h-[2rem]">{c.short_description || c.description || t('بدون وصف', 'No description')}</p>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-3 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 font-semibold text-teal-700"><Layers className="h-3 w-3" />{c.sections_count ?? 0} {t('أقسام', 'sections')}</span>
@@ -174,7 +174,7 @@ export default function CoursesPage() {
                     {Number(c.price) > 0 && <span className="font-black text-teal-700 ms-auto">{formatPrice(c.price)}</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-4 pt-4 border-t">
-                    <a href={`/courses/${c.id}`} className="flex-1">
+                    <a href={`/teacher/courses/${c.id}`} className="flex-1">
                       <Button size="sm" className="w-full rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>{t('إدارة', 'Manage')}</Button>
                     </a>
                     <Button size="icon" variant="outline" className="h-8 w-8 rounded-full" onClick={() => togglePublish(c)} title={c.is_published ? t('إخفاء', 'Unpublish') : t('نشر', 'Publish')} aria-label={c.is_published ? t('إخفاء', 'Unpublish') : t('نشر', 'Publish')}>

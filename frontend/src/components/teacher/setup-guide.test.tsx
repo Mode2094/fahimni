@@ -18,9 +18,9 @@ const authFetchMock = authFetch as unknown as ReturnType<typeof vi.fn>;
 const GUIDE = {
   steps: [
     { key: 'profile', done: true, href: '/teacher/complete-profile', optional: false },
-    { key: 'course', done: false, href: '/courses', optional: false },
-    { key: 'lesson', done: false, href: '/courses', optional: false },
-    { key: 'content', done: false, href: '/courses', optional: false },
+    { key: 'course', done: false, href: '/teacher/courses', optional: false },
+    { key: 'lesson', done: false, href: '/teacher/courses', optional: false },
+    { key: 'content', done: false, href: '/teacher/courses', optional: false },
     { key: 'exam', done: false, href: '/teacher/exams', optional: true },
     { key: 'enrollment', done: false, href: '/teacher/cards', optional: false },
   ],
@@ -55,7 +55,7 @@ describe('SetupGuide', () => {
     // The exam is flagged optional.
     expect(screen.getByText('اختياري')).toBeInTheDocument();
     // Each step links to a real page.
-    expect(screen.getByTestId('setup-step-course').getAttribute('href')).toBe('/courses');
+    expect(screen.getByTestId('setup-step-course').getAttribute('href')).toBe('/teacher/courses');
   });
 
   it('hides the guide (persisted server-side) and offers a restore affordance', async () => {

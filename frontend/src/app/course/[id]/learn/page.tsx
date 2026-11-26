@@ -465,11 +465,11 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 bg-violet-600 px-4 py-2.5 text-sm text-white" role="status">
             <Eye className="h-4 w-4 shrink-0" />
             <span className="flex-1 min-w-[200px]">{locale === 'ar' ? 'وضع المعاينة كطالب — تشاهد الكورس والدروس والاختبارات كما يراها الطالب. لا تُحتسب مشاهدة أو تقدّم أو نتيجة، ولا يتغيّر أي شيء في بيانات الطلاب.' : 'Preview as student — you see the course, lessons and exams exactly as a student does. No watch, progress or result is recorded, and no student data changes.'}</span>
-            <a href={`/courses/${id}`} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25 shrink-0"><Pencil className="h-3.5 w-3.5" />{locale === 'ar' ? 'العودة للتحرير' : 'Back to editing'}</a>
+            <a href={`/teacher/courses/${id}`} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25 shrink-0"><Pencil className="h-3.5 w-3.5" />{locale === 'ar' ? 'العودة للتحرير' : 'Back to editing'}</a>
           </div>
         )}
         <div className="flex flex-wrap items-center gap-3 p-4 border-b">
-          <a href={preview ? `/courses/${id}` : '/my-learning'} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 shrink-0">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />} {preview ? (locale === 'ar' ? 'العودة للتحرير' : 'Back to editing') : (locale === 'ar' ? 'رجوع' : 'Back')}</a>
+          <a href={preview ? `/teacher/courses/${id}` : '/my-learning'} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 shrink-0">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />} {preview ? (locale === 'ar' ? 'العودة للتحرير' : 'Back to editing') : (locale === 'ar' ? 'رجوع' : 'Back')}</a>
           <div className="flex gap-1 p-1 bg-muted/50 rounded-full overflow-x-auto max-w-full">
             <button onClick={() => setViewTab('lessons')} className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${viewTab === 'lessons' ? 'bg-teal-600 text-white shadow' : 'text-gray-500 hover:text-gray-800'}`}>{locale === 'ar' ? 'الدروس' : 'Lessons'}</button>
             <button onClick={() => setViewTab('exams')} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${viewTab === 'exams' ? 'bg-teal-600 text-white shadow' : 'text-gray-500 hover:text-gray-800'}`}>
