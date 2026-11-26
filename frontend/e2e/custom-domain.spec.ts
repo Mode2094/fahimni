@@ -99,6 +99,18 @@ for (const domain of DOMAINS) {
         }
       });
 
+      test('public pages never overflow horizontally (mobile)', async ({ page }) => {
+        for (const path of ['/', '/courses', '/blog', '/register/student']) {
+          const res = await page.goto(`${origin}${path}`, { waitUntil: 'domcontentloaded' });
+          expect(res?.status()).toBeLessThan(500);
+          await page.waitForTimeout(700);
+          const overflow = await page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+          expect(overflow, `${path} overflows by ${overflow}px`).toBeLessThanOrEqual(2);
+        }
+      });
+
       test('canonical + manifest stay on the teacher domain (no /t/{slug})', async ({ page }) => {
         // The teacher's pages publish a ROOT-RELATIVE canonical that Next
         // resolves against the root `metadataBase`. That base used to be the
