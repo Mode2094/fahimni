@@ -28,16 +28,36 @@ visitor ──TLS──▶ Cloudflare edge (cert for the teacher domain)
                        │  (custom hostname on the fahimni.me zone)
                        ▼
              fallback origin: proxy-fallback.fahimni.me  (proxied A → 187.127.87.101)
-                       │  Cloudflare IPs only
+                       │  Cloudflare IPs only; SNI = the custom hostname
                        ▼
-             origin Caddy :443  tls internal  (SSL mode "Full")
+             origin Caddy :443  tls { on_demand }  (Let's Encrypt cert per verified domain)
+                       │  SSL mode "Full (strict)" — origin cert IS validated
                        ▼
              fahimni-prod nginx → Laravel → tenant lookup by Host
 ```
 
+### Why the origin still terminates a real certificate (Full (strict))
+
+Cloudflare's [connection details](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/reference/connection-details/)
+state that for a request sent to the **fallback host**, the SNI Cloudflare sends
+to the origin equals the client's `Host` header — i.e. the **custom hostname**.
+Under **Full (strict)** Cloudflare therefore validates the certificate the origin
+presents *against that custom hostname*: it must be unexpired, publicly trusted
+(or Cloudflare Origin CA), and carry a matching CN/SAN.
+
+The origin's `:443` catch-all already does exactly this: Caddy's **on-demand TLS**
+obtains a Let's Encrypt certificate for the custom hostname, but only after the
+`ask` gate (`/api/v1/public/tls/ask`) confirms the domain is a **verified** tenant
+domain. So Full (strict) is preserved — the zone is **never** downgraded to
+"Full", and the origin certificate is genuinely validated on every request.
+
 Teacher DNS: a single **CNAME / ALIAS** to the platform's CNAME target
 (`customers.fahimni.me`). The apex is supported wherever the registrar offers
 CNAME-flattening — **Hostinger turns a CNAME at `@` into an ALIAS automatically**.
+Apex proxying (A record at the apex) is a **separate, paid** Cloudflare
+entitlement and is deliberately *not* used; the apex works via CNAME-flattening
+and, if ownership validation needs it, the returned `ownership_verification`
+TXT token.
 
 ## One-time setup
 
@@ -78,11 +98,11 @@ CNAME-flattening — **Hostinger turns a CNAME at `@` into an ALIAS automaticall
 
    This creates the proxied `proxy-fallback` A record, sets it as the fallback
    origin, and creates the proxied `customers` CNAME target.
-5. **Set the zone SSL/TLS mode to “Full”** (dashboard → SSL/TLS → Overview).
-   The origin presents a Caddy internal (self-signed) certificate on the
-   Cloudflare→origin hop; “Full (strict)” would require a publicly-trusted
-   certificate for every custom hostname, which is unnecessary behind the
-   Cloudflare-only firewall.
+5. **Keep the zone SSL/TLS mode at “Full (strict)”** (dashboard → SSL/TLS →
+   Overview). The origin obtains a real Let's Encrypt certificate per verified
+   custom hostname via on-demand TLS, so Cloudflare can validate it. Do **not**
+   downgrade the zone to “Full”. The `:443` catch-all and its `ask` gate already
+   ship with the standalone edge — no Caddy change is required for this.
 6. **Reconcile existing domains**:
 
    ```
@@ -125,6 +145,7 @@ un-verifies a domain Cloudflare can no longer serve (moved away / deleted).
 * Disable by setting `CLOUDFLARE_SAAS_ENABLED=false` (or the admin toggle). The
   platform falls back to the legacy direct-DNS verification path; existing
   Cloudflare hostnames can be listed and removed with `fahimni:cloudflare-saas`.
-* The Caddyfile change (`tls internal` on the `:443` catch-all) can be reverted
-  to `tls { on_demand }`; the `ask` gate (`/api/v1/public/tls/ask`) is retained
-  for exactly this reason.
+* No Caddy change is part of this feature: the `:443` catch-all keeps
+  `tls { on_demand }` and the `ask` gate (`/api/v1/public/tls/ask`). SSL mode
+  stays **Full (strict)** throughout — there is nothing to downgrade or revert
+  at the TLS layer.

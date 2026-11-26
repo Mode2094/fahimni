@@ -5,7 +5,7 @@
 #   cd /opt/fahimni/production/releases/<sha>
 #   sudo -u fahimni ./deploy/scripts/deploy.sh --env production
 #
-# The script never edits Caddy, DNS or LooksLoop. It builds images tagged with
+# The script never edits Caddy or DNS. It builds images tagged with
 # the git commit, starts the stack, waits for health, runs local smoke checks,
 # and only then switches the "current" symlink.
 set -Eeuo pipefail
@@ -68,9 +68,9 @@ load_env_file "$env_file"
 [[ -n "${PROXY_ALIAS:-}" && "${PROXY_ALIAS}" != CHANGE_ME* ]] \
   || die "PROXY_ALIAS is not set (unique nginx alias on the shared proxy network)"
 
-# External networks are never created by compose. The shared reverse-proxy
-# network must exist before `compose up`, but is created (not deleted) here so a
-# re-deploy or a rollback never removes the bridge to the LooksLoop Caddy.
+# External networks are never created by compose. The proxy network must exist
+# before `compose up`, but is created (not deleted) here so a re-deploy or a
+# rollback never removes the bridge to the Caddy edge.
 proxy_net="${FAHIMNI_PROXY_NETWORK:-fahimni-proxy}"
 if ! docker network inspect "$proxy_net" >/dev/null 2>&1; then
   log "creating shared reverse-proxy network: $proxy_net"

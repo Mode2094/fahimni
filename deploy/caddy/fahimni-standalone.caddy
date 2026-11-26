@@ -15,21 +15,15 @@
 #   FAHIMNI_UPSTREAM     Fahimni nginx alias on the proxy network (fahimni-prod:80)
 #   ACME_EMAIL           ACME account email for Let's Encrypt     (required)
 #
-# ── CUSTOM TEACHER DOMAINS (Cloudflare for SaaS) ─────────────────────────────
-# A teacher's OWN domain (e.g. teacher.com) is registered as a Cloudflare
-# CUSTOM HOSTNAME on the platform zone (see App\Services\CloudflareSaasService).
-# Cloudflare terminates public TLS at the edge and forwards the request to the
-# zone's fallback origin — always from Cloudflare's network, so the strict
-# origin firewall (443 = Cloudflare ranges only) keeps the origin hidden.
-#
-# Because Cloudflare owns the public certificate, the origin only needs to
-# present SOME certificate on the Cloudflare→origin hop. The zone's SSL mode is
-# "Full" and this catch-all uses Caddy's internal CA, so no public certificate
-# is requested per custom domain (no ACME rate limits, no HTTP-01 through the
-# proxy). The platform's own hosts below still use normal managed certificates.
-#
-# The `on_demand_tls` `ask` gate is retained as defence-in-depth in case the
-# catch-all is ever switched back to `tls on_demand`.
+# ── CUSTOM TEACHER DOMAINS (on-demand TLS) ───────────────────────────────────
+# The apex/www/api hosts above use normal managed certificates. A teacher's OWN
+# domain (e.g. teacher.com) is NOT known when this file is written, so it is
+# handled by the `:443` catch-all below with ON-DEMAND TLS. Before issuing a
+# certificate, Caddy calls the platform's `ask` gate
+# (`/api/v1/public/tls/ask?domain=…`), which answers 200 ONLY for a domain a
+# teacher has already connected AND verified. Everything else is refused, so no
+# certificate is ever minted for a hostname that is not a real teacher site.
+# This means connecting a new domain needs NO server edit and NO Caddy reload.
 #
 # Do NOT add a second global options block. The `:80`/`:443` catch-alls below are
 # intentional and required for custom domains; the concrete apex/www/api blocks
@@ -58,6 +52,10 @@
 		# Freemius `payment=` allowance and a nonce'd CSP). Overriding them at
 		# the edge would weaken or break the app's own policy.
 		-Server
+		# Do not advertise the framework/version. The upstream stack (Next.js,
+		# PHP, nginx) already suppresses it, but strip it at the edge so a stale
+		# image can never leak it.
+		-X-Powered-By
 	}
 }
 
@@ -93,18 +91,18 @@ www.{$FAHIMNI_DOMAIN:fahimni.me} {
 	}
 }
 
-# ── Catch-all: custom teacher domains (Cloudflare for SaaS) ──────────────────
-# A hostname that matches no block above lands here — a custom hostname that
-# Cloudflare forwarded from its edge. TLS between Cloudflare and the origin uses
-# Caddy's internal CA (the zone's SSL mode is "Full"); the public certificate is
-# issued and renewed by Cloudflare. The request is served by the same app/nginx
-# upstream, whose tenant-resolution layer maps the Host to the right teacher
-# (frontend proxy.ts → /public/domain).
+# ── Catch-all: custom teacher domains (on-demand TLS) ────────────────────────
+# A hostname that matches no block above lands here. TLS is issued on demand
+# only after the `ask` gate above confirms a verified teacher domain; the
+# request is then served by the same app/nginx upstream, whose tenant-resolution
+# layer maps the Host to the right teacher (frontend proxy.ts → /public/domain).
 :443 {
 	import fahimni_headers
 	encode zstd gzip
 
-	tls internal
+	tls {
+		on_demand
+	}
 
 	reverse_proxy {$FAHIMNI_UPSTREAM:fahimni-prod:80} {
 		header_up X-Real-IP {remote_host}
