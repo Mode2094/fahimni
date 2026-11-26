@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\AuditLog;
 use Illuminate\Http\Request;
+use Symfony\Component\Uid\Uuid;
 use Symfony\Component\Uid\UuidV7;
 
 class AuditLogger
@@ -19,10 +20,27 @@ class AuditLogger
         try {
             $user = $request->user() ?? auth('sanctum')->user();
 
+            // Resolve the tenant id WITHOUT ever producing an empty/invalid
+            // string. The admin panels send `X-Tenant-Id: ''` on purpose (a
+            // Super Admin acts platform-wide), and `'' ?? $x` returns `''` —
+            // which Postgres rejects with "invalid input syntax for type uuid".
+            // Because audit logging often runs inside the caller's DB
+            // transaction, that rejection aborts the transaction and turns a
+            // successful action into a 500 on the next query. `?:` skips the
+            // empty header, and a final UUID check guarantees a valid value or
+            // NULL.
+            $resolvedTenantId = $tenantId
+                ?: ($request->header('X-Tenant-Id')
+                    ?: ($request->attributes->get('current_tenant') ?? $request->input('current_tenant'))?->id);
+
+            if (! is_string($resolvedTenantId) || ! Uuid::isValid($resolvedTenantId)) {
+                $resolvedTenantId = null;
+            }
+
             AuditLog::create([
                 'id' => UuidV7::generate(),
                 'user_id' => $actorId ?? $user?->id,
-                'tenant_id' => $tenantId ?? $request->header('X-Tenant-Id') ?? $request->current_tenant->id ?? null,
+                'tenant_id' => $resolvedTenantId,
                 'action' => $action,
                 'entity_type' => $entityType,
                 'entity_id' => $entityId,

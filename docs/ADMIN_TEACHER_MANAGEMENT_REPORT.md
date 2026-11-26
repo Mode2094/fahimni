@@ -103,6 +103,32 @@
 
 ---
 
+## (3.c) إصلاح خطأ الإنتاج 500 في «تمديد الاشتراك/التجربة»
+
+**السبب الجذري (مُثبت من سجلات الإنتاج):** لوحات الأدمن ترسل الترويسة `X-Tenant-Id: ''` عن قصد (السوبر أدمن يعمل على مستوى المنصة). كان `AuditLogger` يستعمل `??` فيبقي النص الفارغ كما هو، وPostgreSQL يرفضه:
+
+```
+ERROR: invalid input syntax for type uuid: ""
+STATEMENT: insert into "audit_logs" ...
+ERROR: current transaction is aborted, commands ignored until end of transaction block   -- 25P02
+```
+
+المُسجِّل يبتلع الاستثناء، لكن فشل الجملة يُجهض المعاملة المُحيطة، فيرمي `$sub->fresh()` خطأ `25P02` → استجابة 500 («Server Error») رغم نجاح التمديد فعليًا. الأثر نفسه طال مسارات التمديد الجديدة في PR #66.
+
+**الإصلاح:** في `app/Support/AuditLogger.php` صار حلّ المعرّف يستعمل `?:` ليتخطّى القيمة الفارغة ويتدرّج إلى `current_tenant`، ثم يتحقق من صحة الـUUID (`Uuid::isValid`) وإلا يكتب `NULL`. لا مزيد من جمل `INSERT` فاسدة داخل المعاملات.
+
+**سلامة الواجهة:** في `teachers-panel.tsx` صار هدف التمديد يتراجع إلى `access.subscription_id` عند تعذّر تحميل قائمة الاشتراكات، فلا تظهر رسالة «لا يوجد اشتراك لتمديده» الخاطئة.
+
+| # | الاختبار |
+|---|---|
+| 1 | `AuditLoggerTest` (5 حالات: فارغ/غائب/غير صالح → NULL، ومعرّف صالح يبقى كما هو) |
+| 2 | `AdminSubscriptionExtendTest::test_extension_survives_the_empty_tenant_header_the_panel_sends` |
+| 3 | `AdminTrialExtendTest::test_trial_extension_survives_the_empty_tenant_header_the_panel_sends` |
+
+> الحزمة الكاملة بعد الإصلاح: **955 اختبار / 4051 تأكيد** (PHP)، و`tsc` نظيف، و**368 اختبار / 70 ملف** (frontend).
+
+---
+
 ## (4) ما لم يُفعل عن قصد
 
 - **لا نشر إلى الإنتاج** ولا دمج تلقائي.

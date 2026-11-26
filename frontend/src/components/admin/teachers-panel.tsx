@@ -292,8 +292,22 @@ export default function AdminTeachersPanel() {
   const newRequestId = () => (globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
   // The row the admin acts on: the newest one that exists (access is resolved
-  // across ALL rows server-side, so any row is a valid target).
-  const extendTargetSub = () => detailSubscriptions().find((s: any) => s?.id) || null;
+  // across ALL rows server-side, so any row is a valid target). If the loaded
+  // list is empty for any reason but the server still reports a subscription
+  // id, fall back to it so the extend dialog can never dead-end with a
+  // misleading "no subscription to extend".
+  const accessFallbackSub = (): any | null => {
+    const sid = detail?.access?.subscription_id;
+    if (!sid) return null;
+    return {
+      id: sid,
+      trial_ends_at: detail?.access?.trial_ends_at ?? null,
+      ends_at: detail?.access?.access_ends_at ?? null,
+      admin_ends_at: detail?.access?.admin_ends_at ?? null,
+    };
+  };
+
+  const extendTargetSub = () => detailSubscriptions().find((s: any) => s?.id) || accessFallbackSub();
 
   // The row that owns the FREE TRIAL (`trial_ends_at`). The trial endpoint
   // must receive that specific row — not a provider-owned mirror — or it
