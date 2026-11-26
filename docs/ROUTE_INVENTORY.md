@@ -182,8 +182,10 @@ forces phone completion and plan selection.
 | `/teacher/student-app` | teacher | platform | yes (session/BFF) | yes | |
 | `/teacher/support` | teacher | platform | yes (session/BFF) | yes | |
 | `/teacher/terms` | teacher | platform | yes (session/BFF) | yes | Academic terms. |
-| `/courses` | teacher | platform | yes (session/BFF) | yes | Course builder list. |
-| `/courses/[id]` | teacher | platform | yes (session/BFF) | yes | Course builder detail. |
+| `/teacher/courses` | teacher | platform **and** teacher host | yes (session/BFF) | yes | **Canonical course builder list.** Outside the public tenant-site roots, so reachable on a teacher's own domain. |
+| `/teacher/courses/[id]` | teacher | platform **and** teacher host | yes (session/BFF) | yes | **Canonical course builder detail.** |
+| `/courses` | teacher | platform | yes (session/BFF) | yes | Platform alias of `/teacher/courses`; on a teacher host this path is the tenant PUBLIC catalogue (`/t/{slug}/courses`). |
+| `/courses/[id]` | teacher | platform | yes (session/BFF) | yes | Platform alias of `/teacher/courses/[id]`; on a teacher host this path is the tenant PUBLIC course detail. |
 | `/students` | teacher | platform | yes (session/BFF) | yes | Student management. |
 | `/analytics` | teacher | platform | yes (session/BFF) | yes | Feature `export_reports`. |
 
@@ -848,7 +850,7 @@ host-gating these to the platform host as defense-in-depth:
 - `/api/v1/settings`, `/api/v1/teacher/domain*`, `/api/v1/teacher/site-design*`
 - `/api/v1/courses*`, `/api/v1/lessons*`, `/api/v1/sections*`, `/api/v1/exams*`, `/api/v1/questions*`
 - `/api/v1/subscriptions*` (staff billing actions), `/api/v1/videos/upload*`
-- Frontend `/teacher/*`, `/courses*`, `/students`, `/analytics`, `/blog`
+- Frontend `/teacher/*` (including the canonical `/teacher/courses*` builder), `/students`, `/analytics`, `/blog`. From the frontend, `/courses*` on a teacher host is the tenant's PUBLIC catalogue, not the builder.
 
 ### 4c. Allowed on a teacher host (must NOT 403/404)
 
