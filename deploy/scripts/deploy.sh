@@ -20,6 +20,7 @@ Usage: deploy.sh --env production|staging [options]
 
   --env NAME          target stack (required)
   --env-file PATH     secret env file (default: <release>/.env)
+  --image-tag TAG     tag the built images as TAG (default: the git commit)
   --skip-build        reuse images already built for this IMAGE_TAG
   --allow-dirty       deploy a dirty worktree (not recommended)
   --wait SECONDS      health wait budget (default: 180)
@@ -29,6 +30,7 @@ EOF
 
 env_name="production"
 env_file=""
+image_tag=""
 skip_build=0
 allow_dirty=0
 wait_seconds=180
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)         env_name="${2:-}"; shift 2 ;;
     --env-file)    env_file="${2:-}"; shift 2 ;;
+    --image-tag)   image_tag="${2:-}"; shift 2 ;;
     --skip-build)  skip_build=1; shift ;;
     --allow-dirty) allow_dirty=1; shift ;;
     --wait)        wait_seconds="${2:-}"; shift 2 ;;
@@ -95,12 +98,15 @@ if [[ "$allow_dirty" -ne 1 ]]; then
     || die "worktree is dirty; commit/stash first or pass --allow-dirty"
 fi
 
+# The image tag must track the code actually built. fresh-install.sh pins
+# IMAGE_TAG to the install sha in the env file, but nothing advanced it on a
+# plain re-deploy, so the pin went stale: brand-new images were retagged with
+# an old commit and tag-based rollback silently pointed at them. Trust the git
+# commit by default; --image-tag is the explicit override.
 sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
-if [[ -z "${IMAGE_TAG:-}" || "${IMAGE_TAG}" == CHANGE_ME* ]]; then
-  tag="$sha"
-else
-  tag="$IMAGE_TAG"
-  [[ "$tag" == "$sha" ]] || warn "IMAGE_TAG ($tag) differs from HEAD ($sha); image tag wins"
+tag="${image_tag:-$sha}"
+if [[ -z "$image_tag" && -n "${IMAGE_TAG:-}" && "${IMAGE_TAG}" != CHANGE_ME* && "${IMAGE_TAG}" != "$tag" ]]; then
+  warn "ignoring stale env IMAGE_TAG ($IMAGE_TAG); tagging by git commit ($tag)"
 fi
 [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || die "unsafe IMAGE_TAG: $tag"
 export IMAGE_TAG="$tag"
@@ -139,6 +145,29 @@ fail_with_restore() {
   local message="$1"
   restore_previous
   die "$message"
+}
+
+# Keep the env file's IMAGE_TAG truthful after a successful deploy. fresh-install
+# and the brand/golive rollouts all read it back, so a stale pin left here
+# misleads them (and any operator) about which build is running.
+persist_image_tag() {
+  local file="$1" value="$2" mode tmp
+  [[ -w "$file" ]] || { warn "cannot persist IMAGE_TAG to $file (not writable)"; return 0; }
+  mode="$(stat -Lc '%a' "$file" 2>/dev/null || stat -Lf '%Lp' "$file")"
+  tmp="$(mktemp "${file}.XXXXXX")" || { warn "could not create a temp file for $file"; return 0; }
+  if awk -v v="$value" '
+        /^IMAGE_TAG=/ { print "IMAGE_TAG=" v; seen=1; next }
+        { print }
+        END { if (!seen) print "IMAGE_TAG=" v }
+      ' "$file" > "$tmp"; then
+    chmod "$mode" "$tmp" 2>/dev/null || true
+    # GNU coreutils only; harmless no-op elsewhere.
+    chown --reference="$file" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$file"
+  else
+    warn "could not rewrite $file; leaving IMAGE_TAG as-is"
+    rm -f "$tmp"
+  fi
 }
 
 # nginx caches the addresses of app:9000 and frontend:3000 when it loads its
@@ -198,6 +227,7 @@ fi
 
 printf '%s\n' "$tag" > "$root/.deployed-tag.new"
 mv "$root/.deployed-tag.new" "$root/.deployed-tag"
+persist_image_tag "$env_file" "$tag"
 ln -sfn "$REPO_DIR" "$root/current"
 
 log "deployed $tag"

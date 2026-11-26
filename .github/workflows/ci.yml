@@ -171,6 +171,12 @@ jobs:
         # drift from the reviewed file (SHA256 gate against a git ref).
         run: deploy/tests/verify-deploy-script-test.sh
 
+      - name: Deploy tags images with the code it built
+        # A stale env IMAGE_TAG used to win, so new images were retagged with an
+        # old commit and tag-based rollback silently lost its target. Guards the
+        # tag derivation, the --image-tag override and the env persist.
+        run: deploy/tests/deploy-image-tag-test.sh
+
       - name: A restore drill refuses a stale backup
         # The isolated restore must prove a RECENT backup exists before it can
         # justify FAHIMNI_DB_BACKUP_VERIFIED=1; the freshness gate fails closed.
