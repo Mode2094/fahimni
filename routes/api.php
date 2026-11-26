@@ -80,6 +80,7 @@ use App\Http\Controllers\Api\TeacherBookingController;
 use App\Http\Controllers\Api\TeacherDeviceController;
 use App\Http\Controllers\Api\TeacherDomainController;
 use App\Http\Controllers\Api\TeacherFilePolicyController;
+use App\Http\Controllers\Api\TeacherLeaderboardController;
 use App\Http\Controllers\Api\TeacherPlanController;
 use App\Http\Controllers\Api\TeacherServiceController;
 use App\Http\Controllers\Api\TeacherSiteController;
@@ -821,6 +822,8 @@ Route::prefix('v1')->group(function () {
                 Route::get('follow-up', [TeacherStudentFollowUpController::class, 'index']);
                 Route::get('device-policy', [TeacherDeviceController::class, 'policy']);
                 Route::put('device-policy', [TeacherDeviceController::class, 'updatePolicy']);
+                Route::get('leaderboard-policy', [TeacherLeaderboardController::class, 'policy']);
+                Route::put('leaderboard-policy', [TeacherLeaderboardController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);
                 Route::get('students/{student}', [TeacherDeviceController::class, 'showStudent']);
                 Route::get('students/{student}/activity', [TeacherDeviceController::class, 'studentActivity']);
