@@ -308,11 +308,11 @@ class TeacherDomainController extends Controller
         $metadata = $setting->metadata ?? [];
 
         try {
-            $apexReady = self::syncOneHostname($metadata, $domain, 'cf_hostname_id', 'cf_');
+            $apexReady = self::syncOneHostname($metadata, $domain, 'cf_hostname_id', 'cf_status', 'cf_ssl_status');
 
             if (! str_starts_with($domain, 'www.')) {
                 try {
-                    self::syncOneHostname($metadata, 'www.'.$domain, 'cf_hostname_id_www', 'cf_www_');
+                    self::syncOneHostname($metadata, 'www.'.$domain, 'cf_hostname_id_www', 'cf_status_www', 'cf_ssl_status_www');
                 } catch (\Throwable $e) {
                     Log::warning('Cloudflare www custom hostname sync failed', [
                         'domain' => $domain,
@@ -348,12 +348,12 @@ class TeacherDomainController extends Controller
 
     /**
      * Provision/refresh ONE custom hostname and fold its live status into
-     * $metadata under the given id key and field prefix. Returns true when the
+     * $metadata under the given id/status/ssl keys. Returns true when the
      * hostname and its certificate are both active.
      *
      * @param  array<string, mixed>  $metadata
      */
-    private static function syncOneHostname(array &$metadata, string $name, string $idKey, string $prefix): bool
+    private static function syncOneHostname(array &$metadata, string $name, string $idKey, string $statusKey, string $sslKey): bool
     {
         $id = $metadata[$idKey] ?? null;
         $host = $id ? CloudflareSaasService::getHostname((string) $id) : null;
@@ -366,15 +366,16 @@ class TeacherDomainController extends Controller
             $metadata[$idKey] = $host['id'] ?? $id;
         }
 
-        $metadata[$prefix.'status'] = $host['status'] ?? null;
-        $metadata[$prefix.'ssl_status'] = $host['ssl']['status'] ?? null;
+        $metadata[$statusKey] = $host['status'] ?? null;
+        $metadata[$sslKey] = $host['ssl']['status'] ?? null;
 
-        if ($prefix === 'cf_') {
+        // The ownership + DCV records belong to the apex hostname only.
+        if ($idKey === 'cf_hostname_id') {
             $metadata['cf_ownership'] = $host['ownership_verification'] ?? ($metadata['cf_ownership'] ?? null);
             $metadata['cf_validation_records'] = $host['ssl']['validation_records'] ?? ($metadata['cf_validation_records'] ?? []);
         }
 
-        return ($metadata[$prefix.'status'] === 'active') && ($metadata[$prefix.'ssl_status'] === 'active');
+        return ($metadata[$statusKey] === 'active') && ($metadata[$sslKey] === 'active');
     }
 
     /** Best-effort removal of the Cloudflare custom hostname (and its cert). */

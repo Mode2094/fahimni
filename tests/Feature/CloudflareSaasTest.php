@@ -127,6 +127,11 @@ class CloudflareSaasTest extends TenantTestCase
         $setting = TenantSetting::withoutTenant()->where('tenant_id', $tenant->id)->first();
         $this->assertSame('ch_123', $setting->metadata['cf_hostname_id'] ?? null);
         $this->assertSame('ch_www', $setting->metadata['cf_hostname_id_www'] ?? null);
+        // The www status is stored under the keys the UIs actually read (the
+        // freshly created hostname is pending; only a later sync flips it).
+        $this->assertSame('pending', $setting->metadata['cf_status_www'] ?? null);
+        $this->assertSame('pending_validation', $setting->metadata['cf_ssl_status_www'] ?? null);
+        $this->assertArrayNotHasKey('cf_www_status', $setting->metadata ?? []);
 
         // The `www.` sibling is registered as its own custom hostname.
         Http::assertSent(fn (Request $r) => $r->method() === 'POST'
