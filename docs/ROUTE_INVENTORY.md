@@ -641,6 +641,7 @@ via headers, but the panel is platform-only).
 | POST `/api/v1/teacher/students/reset-all-devices` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students/{student}` | teacher | platform | + role/permission | yes | |
 | GET `/api/v1/teacher/students/{student}/activity` | teacher | platform | + role/permission | yes | |
+| GET `/api/v1/teacher/students/{student}/video-progress` | teacher | platform | + role/permission | yes | added §11 — per-student video watch report |
 | POST `/api/v1/teacher/students/{student}/device-limit` | teacher | platform | + role/permission | yes | |
 | DELETE `/api/v1/teacher/students/{student}/device-limit` | teacher | platform | + role/permission | yes | |
 | POST `/api/v1/teacher/students/{student}/reset-devices` | teacher | platform | + role/permission | yes | |

@@ -16,7 +16,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import {
   Users, Loader2, MonitorSmartphone, RotateCcw, Settings2, Search, Mail, Calendar,
   BookOpen, Award, TrendingUp, XCircle, CheckCircle2, UserX, Clock, Smartphone, Star,
-  Coins, Trophy, Activity as ActivityIcon, History, Ticket,
+  Coins, Trophy, Activity as ActivityIcon, History, Ticket, Play,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/services/api';
@@ -34,6 +34,7 @@ function StudentsPageInner() {
   const [search, setSearch] = useState('');
   const [profile, setProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [videoReport, setVideoReport] = useState<any>(null);
   const [limitTarget, setLimitTarget] = useState<any>(null);
   const [limitVal, setLimitVal] = useState('1');
   const [busyId, setBusyId] = useState('');
@@ -60,10 +61,14 @@ function StudentsPageInner() {
 
   const openProfile = async (s: any) => {
     setProfileLoading(true);
+    setVideoReport(null);
     try {
       const res = await fetch(`${API}/teacher/students/${s.id}`, { headers: headers() });
       if (!res.ok) throw new Error();
       setProfile((await res.json()).student);
+      // Video watch report loads alongside; a failure only hides that section.
+      fetch(`${API}/teacher/students/${s.id}/video-progress`, { headers: headers() })
+        .then(r => r.ok ? r.json() : null).then(d => setVideoReport(d)).catch(() => {});
     } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحميل ملف الطالب', 'Could not load the student profile'))); }
     setProfileLoading(false);
   };
@@ -366,6 +371,34 @@ function StudentsPageInner() {
                   ))}
                 </div>
               </div>
+
+              {videoReport && videoReport.summary?.videos_total > 0 && (
+                <div>
+                  <h3 className="font-semibold text-sm mb-2 flex items-center gap-1.5">
+                    <Play className="h-4 w-4 text-teal-600" />{t('تقرير مشاهدة الفيديو', 'Video watch report')}
+                    <span className="ms-auto text-[11px] font-normal text-gray-400">{videoReport.summary.videos_completed}/{videoReport.summary.videos_total} {t('مكتمل', 'done')}</span>
+                  </h3>
+                  <div className="space-y-3">
+                    {(videoReport.courses || []).filter((c: any) => (c.lessons || []).length > 0).map((c: any) => (
+                      <div key={c.enrollment_id} className="rounded-xl border p-3">
+                        <p className="text-xs font-semibold text-gray-600 mb-2">{c.course_title}</p>
+                        <div className="space-y-1.5">
+                          {(c.lessons || []).map((l: any) => (
+                            <div key={l.lesson_id} className="flex items-center gap-3">
+                              <span className={`flex h-6 w-6 items-center justify-center rounded-full shrink-0 ${l.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : l.status === 'in_progress' ? 'bg-amber-100 text-amber-600' : 'bg-gray-100 text-gray-400'}`}>
+                                {l.status === 'completed' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Play className="h-3 w-3" />}
+                              </span>
+                              <span className="flex-1 text-xs text-gray-700 truncate">{l.lesson_title}</span>
+                              <span className="text-[11px] text-gray-400 w-12 text-end">{l.coverage_percent}%</span>
+                              <div className="w-20 h-1.5 rounded-full bg-gray-100"><div className="h-1.5 rounded-full bg-teal-500" style={{ width: `${l.coverage_percent}%` }} /></div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <h3 className="font-semibold text-sm mb-2 flex items-center gap-1.5"><Award className="h-4 w-4 text-violet-500" />{t('نتائج الاختبارات', 'Exam results')}</h3>

@@ -831,6 +831,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('students/reset-all-devices', [TeacherDeviceController::class, 'resetAllDevices']);
                 Route::get('students/{student}', [TeacherDeviceController::class, 'showStudent']);
                 Route::get('students/{student}/activity', [TeacherDeviceController::class, 'studentActivity']);
+                Route::get('students/{student}/video-progress', [TeacherDeviceController::class, 'videoProgress']);
                 Route::post('students/{student}/device-limit', [TeacherDeviceController::class, 'setStudentLimit']);
                 Route::delete('students/{student}/device-limit', [TeacherDeviceController::class, 'removeStudentLimit']);
                 Route::post('students/{student}/reset-devices', [TeacherDeviceController::class, 'resetDevices']);

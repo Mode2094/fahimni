@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Enrollment;
 use App\Models\ExamAttempt;
+use App\Models\Lesson;
+use App\Models\LessonProgress;
 use App\Models\StudentAchievement;
 use App\Models\StudentDeviceLimit;
 use App\Models\StudentPoint;
@@ -326,6 +328,94 @@ class TeacherDeviceController extends Controller
 
         return response()->json([
             'activity' => app(StudentGamificationService::class)->activityFeed($student, $tenantId, 100),
+        ]);
+    }
+
+    /**
+     * تقرير مشاهدة الفيديو لكل طالب: كل درس فيديو منشور في كورساته مع ما شاهده
+     * فعلاً — يفسّر للطالب المعلم سبب بقاء التقدّم عند صفر ومتى يلزم تدخّل.
+     *
+     * Per-video watch report for one student: every published video lesson in the
+     * courses they are enrolled in, its duration, how much they genuinely
+     * watched, completion state and coverage. Read-only; scoped to this tenant's
+     * own students.
+     */
+    public function videoProgress(Request $request, string $studentId): JsonResponse
+    {
+        $this->ensureTeacher($request);
+
+        $tenantId = $this->tenantId($request);
+        $student = User::whereIn('id', Enrollment::where('tenant_id', $tenantId)->pluck('user_id'))
+            ->findOrFail($studentId);
+
+        $enrollments = Enrollment::with('course:id,title')
+            ->where('tenant_id', $tenantId)
+            ->where('user_id', $student->id)
+            ->get();
+
+        $courseIds = $enrollments->pluck('course_id')->all();
+
+        $videoLessons = Lesson::withoutTenant()
+            ->where('lesson_type', 'video')
+            ->where('is_published', true)
+            ->whereHas('section', fn ($q) => $q->whereIn('course_id', $courseIds))
+            ->with('section:id,course_id')
+            ->orderBy('sort_order')
+            ->get();
+
+        $progress = LessonProgress::withoutTenant()
+            ->whereIn('enrollment_id', $enrollments->pluck('id')->all())
+            ->whereIn('lesson_id', $videoLessons->pluck('id')->all())
+            ->get()
+            ->keyBy('lesson_id');
+
+        $totalWatch = 0;
+        $completedCount = 0;
+
+        $courses = $enrollments->map(function (Enrollment $enrollment) use ($videoLessons, $progress, &$totalWatch, &$completedCount) {
+            $lessons = $videoLessons
+                ->filter(fn (Lesson $l) => $l->section?->course_id === $enrollment->course_id)
+                ->map(function (Lesson $lesson) use ($progress, &$totalWatch, &$completedCount) {
+                    $row = $progress->get($lesson->id);
+                    $watch = (int) ($row->watch_time_seconds ?? 0);
+                    $durationSeconds = (int) $lesson->duration_minutes * 60;
+
+                    $totalWatch += $watch;
+                    if ($row?->status === 'completed') {
+                        $completedCount++;
+                    }
+
+                    return [
+                        'lesson_id' => $lesson->id,
+                        'lesson_title' => $lesson->title,
+                        'duration_minutes' => (int) $lesson->duration_minutes,
+                        'watch_time_seconds' => $watch,
+                        'coverage_percent' => $durationSeconds > 0
+                            ? min(100, (int) round($watch / $durationSeconds * 100))
+                            : ($row?->status === 'completed' ? 100 : 0),
+                        'status' => $row?->status ?? 'not_started',
+                        'completed_at' => $row?->completed_at?->toIso8601String(),
+                    ];
+                })
+                ->values();
+
+            return [
+                'enrollment_id' => $enrollment->id,
+                'course_id' => $enrollment->course_id,
+                'course_title' => $enrollment->course?->title,
+                'progress_percent' => (float) $enrollment->progress_percent,
+                'lessons' => $lessons,
+            ];
+        })->values();
+
+        return response()->json([
+            'student' => ['id' => $student->id, 'name' => $student->name],
+            'summary' => [
+                'videos_total' => $videoLessons->count(),
+                'videos_completed' => $completedCount,
+                'watch_seconds_total' => $totalWatch,
+            ],
+            'courses' => $courses,
         ]);
     }
 
