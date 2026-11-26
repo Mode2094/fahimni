@@ -4,7 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import Hls from 'hls.js';
 import { ShieldAlert, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { getDeviceId } from '@/lib/device';
-import { canResume, shouldPersist, formatClock } from '@/lib/watch-position';
+import { canResume, shouldPersist, formatClock, addWatchedBucket } from '@/lib/watch-position';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -18,12 +18,19 @@ export type ProtectedVideoHandle = {
   getCurrentTime: () => number | null;
   /** مدة الفيديو بالثواني، أو null إن لم تُعرف بعد. */
   getDuration: () => number | null;
+  /** عدد الثواني التي شوهدت فعلاً (بلا سحب) منذ فتح الدرس. */
+  getWatchedSeconds: () => number;
   /** يقفز إلى الثواني المطلوبة ويبدأ التشغيل؛ يعيد هل نجح القفز. */
   seekTo: (seconds: number) => boolean;
 };
 
 export type ProtectedVideoPlayerProps = {
   videoId: string;
+  /**
+   * تقرير بالمشاهدة الحقيقية (ثوانٍ مغطّاة بتشغيل فعلي + المدة الكلية).
+   * تُستخدم لتحرير «إكمال الدرس» عند بلوغ عتبة الخادم — لا يحتسب السحب.
+   */
+  onProgress?: (watchedSeconds: number, durationSeconds: number) => void;
 };
 
 /** Extract the 11-char video id from any YouTube URL (watch, youtu.be, shorts, embed). */
@@ -172,7 +179,7 @@ function WatermarkOverlay({
 }
 
 const ProtectedVideoPlayer = forwardRef<ProtectedVideoHandle, ProtectedVideoPlayerProps>(
-function ProtectedVideoPlayer({ videoId }, ref) {
+function ProtectedVideoPlayer({ videoId, onProgress }, ref) {
   const [playback, setPlayback] = useState<Playback | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [blurred, setBlurred] = useState(false);
@@ -190,6 +197,11 @@ function ProtectedVideoPlayer({ videoId }, ref) {
   const [startOver, setStartOver] = useState(false);
   const startOverRef = useRef(false);
   const lastSavedRef = useRef<number>(0);
+  // المشاهدة الحقيقية: مجموعة الثواني المغطّاة + آخر موضع للاحتساب.
+  const coveredRef = useRef<Set<number>>(new Set());
+  const lastCoveredTimeRef = useRef<number>(0);
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
 
   /* ملء الشاشة الحقيقي بالفيديو */
   useEffect(() => {
@@ -376,6 +388,21 @@ function ProtectedVideoPlayer({ videoId }, ref) {
     const onHide = () => { if (document.hidden) savePosition(true); };
     const onPageHide = () => savePosition(true);
 
+    // تتبّع المشاهدة الحقيقية: كل خطوة تشغيل صغيرة تُحتسب؛ السحب (قفزة كبيرة)
+    // لا يُحتسب — فلا يُكمل الطالب درساً بالسحب إلى النهاية.
+    const onTimeUpdate = () => {
+      const v = videoRef.current;
+      if (!v || !isFinite(v.currentTime)) return;
+      const now = v.currentTime;
+      if (v.paused || v.ended) {
+        lastCoveredTimeRef.current = now;
+        return;
+      }
+      addWatchedBucket(coveredRef.current, lastCoveredTimeRef.current, now);
+      lastCoveredTimeRef.current = now;
+      onProgressRef.current?.(coveredRef.current.size, isFinite(v.duration) ? v.duration : 0);
+    };
+
     document.addEventListener('visibilitychange', onHide);
     window.addEventListener('pagehide', onPageHide);
 
@@ -387,12 +414,14 @@ function ProtectedVideoPlayer({ videoId }, ref) {
     const v = videoRef.current;
     v?.addEventListener('pause', onPause);
     v?.addEventListener('ended', onEnded);
+    v?.addEventListener('timeupdate', onTimeUpdate);
 
     return () => {
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('pagehide', onPageHide);
       v?.removeEventListener('pause', onPause);
       v?.removeEventListener('ended', onEnded);
+      v?.removeEventListener('timeupdate', onTimeUpdate);
       if (posTimer.current) clearInterval(posTimer.current);
       savePosition(true);
     };
@@ -401,6 +430,12 @@ function ProtectedVideoPlayer({ videoId }, ref) {
   useEffect(() => {
     startOverRef.current = startOver;
   }, [startOver]);
+
+  // درس/فيديو جديد = عدّاد مشاهدة جديد.
+  useEffect(() => {
+    coveredRef.current = new Set();
+    lastCoveredTimeRef.current = 0;
+  }, [videoId]);
 
   useEffect(() => {
     loadPlayback(false);
@@ -427,6 +462,7 @@ function ProtectedVideoPlayer({ videoId }, ref) {
       if (!v || !isFinite(v.duration) || v.duration <= 0) return null;
       return v.duration;
     },
+    getWatchedSeconds: () => coveredRef.current.size,
     seekTo: (seconds: number) => {
       const v = videoRef.current;
       if (!v || !Number.isFinite(seconds) || seconds < 0) return false;

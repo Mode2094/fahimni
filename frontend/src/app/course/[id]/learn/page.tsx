@@ -174,6 +174,11 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const playerRef = useRef<ProtectedVideoHandle | null>(null);
   const [contentFs, setContentFs] = useState(false);
   const [pageBlurred, setPageBlurred] = useState(false);
+  // تقدّم الدروس: الدروس المكتملة + الثواني المشاهدة فعلاً للدرس الحالي + حالة
+  // الإرسال. تُبنى من حمولة الخادم ثم تُحدَّث محلياً عند الإكمال.
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const [markingId, setMarkingId] = useState<string | null>(null);
+  const [watchedSeconds, setWatchedSeconds] = useState(0);
 
   /* إخفاء المحتوى التعليمي عند مغادرة الصفحة (نص وفيديو) */
   useEffect(() => {
@@ -212,6 +217,41 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
     const tid = localStorage.getItem('tenant_id');
     if (tid) headers['X-Tenant-Id'] = tid;
     return headers;
+  };
+
+  // درس جديد = عدّاد مشاهدة جديد.
+  useEffect(() => { setWatchedSeconds(0); }, [active?.id]);
+
+  // إكمال الدرس: الخادم هو الحَكَم (يتحقق من التفعيل والفتح وحدّ المشاهدة).
+  // نرسل الثواني المشاهدة فعلاً — لا وقتاً متوهَّماً. idempotent على الخادم.
+  const markLessonComplete = async (lesson: any, watched: number) => {
+    const enrollmentId = data?.enrollment_id;
+    if (preview || !enrollmentId || !lesson || completedIds.has(lesson.id) || markingId) return;
+    setMarkingId(lesson.id);
+    try {
+      const res = await fetch(`${API}/enrollments/${enrollmentId}/progress/${lesson.id}`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed', watch_time_seconds: Math.max(0, Math.floor(watched)) }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        toast.error(d?.message || (locale === 'ar' ? 'تعذر إكمال الدرس' : 'Could not complete the lesson'));
+        return;
+      }
+      setCompletedIds(prev => { const n = new Set(prev); n.add(lesson.id); return n; });
+      toast.success(locale === 'ar' ? 'أُكمل الدرس' : 'Lesson completed');
+    } catch {
+      toast.error(locale === 'ar' ? 'تعذر إكمال الدرس' : 'Could not complete the lesson');
+    }
+    setMarkingId(null);
+  };
+
+  // من المشغّل: عند بلوغ عتبة الخادم من مشاهدة حقيقية، نُكمل الدرس تلقائياً.
+  const onWatched = (watched: number) => {
+    setWatchedSeconds(watched);
+    const required = Number(active?.required_watch_seconds || 0);
+    if (required > 0 && watched >= required) markLessonComplete(active, watched);
   };
 
   const loadAssignments = () => {
@@ -253,6 +293,10 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
     fetch(`${API}/public/courses/${id}/sections`, { headers: authHeaders() })
       .then(r => r.json()).then(d => {
         setData(d);
+        const done = new Set<string>(
+          (d.sections || []).flatMap((s: any) => (s.lessons || []).filter((l: any) => l.completed).map((l: any) => l.id)),
+        );
+        setCompletedIds(done);
         // In preview mode the prerequisites gate is informational only — it
         // must never block the teacher from seeing the student view.
         setAcknowledged((previewMode && d?.preview) || !d.course?.prerequisites || localStorage.getItem(`lms_prereq_ack_${id}`) === '1');
@@ -454,7 +498,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
             </button>
             {expanded.has(s.id) && (s.lessons || []).map((l: any) => (
               <button key={l.id} onClick={() => setActive(l)} className={`flex items-center gap-3 px-4 py-3 w-full text-start hover:bg-muted/50 ${active?.id === l.id ? 'bg-teal-50 border-s-2 border-s-teal-500' : 'border-s-2 border-s-transparent'}`}>
-                {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
+                {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : completedIds.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
                 <div className="flex-1"><p className="text-sm">{l.title}</p><p className="text-xs text-gray-500">{l.duration_minutes ? formatDuration(l.duration_minutes, locale) : (locale === 'ar' ? 'درس' : 'lesson')}{l.locked && l.unlock_at && <span className="text-amber-600 ms-1"> · {formatCountdown(l.unlock_at)}</span>}</p></div>
               </button>
             ))}
@@ -704,7 +748,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <LiveLessonView live={liveContent.live} />
                   )}
                   {videoContent?.video ? (
-                    <ProtectedVideoPlayer ref={playerRef} videoId={videoContent.video.id ?? videoContent.id} />
+                    <ProtectedVideoPlayer ref={playerRef} videoId={videoContent.video.id ?? videoContent.id} onProgress={onWatched} />
                   ) : (
                     <div className="flex items-center gap-3 p-4 rounded-xl bg-white border"><FileText className="h-6 w-6 text-green-500" /><span className="font-medium">{locale === 'ar' ? 'درس نصي' : 'Text lesson'}</span></div>
                   )}
@@ -720,6 +764,36 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                         file={fileContent.file}
                         headers={authHeaders()}
                       />
+                    </div>
+                  )}
+                  {!preview && !pageBlurred && active && !completedIds.has(active.id) && (() => {
+                    const required = Number(active.required_watch_seconds || 0);
+                    const needWatch = required > 0 && watchedSeconds < required;
+                    const pct = required > 0 ? Math.min(100, Math.round((watchedSeconds / required) * 100)) : 100;
+                    return (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4">
+                        <span className="flex items-center gap-2 text-sm text-gray-500">
+                          <CheckCircle2 className={`h-5 w-5 ${needWatch ? 'text-gray-300' : 'text-emerald-500'}`} />
+                          {needWatch
+                            ? (locale === 'ar' ? `أكمل مشاهدة الدرس لإتمامه — ${pct}% من المطلوب.` : `Watch the lesson to finish it — ${pct}% of the required watch reached.`)
+                            : (locale === 'ar' ? 'هل أنهيت هذا الدرس؟ علّمه كمكتمل.' : 'Finished this lesson? Mark it complete.')}
+                        </span>
+                        <Button
+                          className="gap-2 rounded-full text-white shrink-0"
+                          style={{ background: needWatch ? '#94a3b8' : '#0d9488' }}
+                          disabled={needWatch || markingId === active.id}
+                          onClick={() => markLessonComplete(active, watchedSeconds)}
+                        >
+                          {markingId === active.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          {locale === 'ar' ? 'إكمال الدرس' : 'Mark complete'}
+                        </Button>
+                      </div>
+                    );
+                  })()}
+                  {!preview && !pageBlurred && active && completedIds.has(active.id) && (
+                    <div className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">
+                      <CheckCircle2 className="h-5 w-5" />
+                      {locale === 'ar' ? 'أكملت هذا الدرس — أحسنت!' : 'You completed this lesson — well done!'}
                     </div>
                   )}
                   {exercise && exercise.position === 'after_content' && (

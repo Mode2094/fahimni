@@ -45,3 +45,47 @@ export function formatClock(seconds: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
 }
+
+/**
+ * تسجيل ثواني المشاهدة الحقيقية في مجموعة «مغطّاة».
+ *
+ * نضيف فقط ما شوهد بتشغيل فعلي: قفزة أكبر من `maxStepSeconds` (سحب/تقديم)
+ * لا تُحتسب إطلاقاً — لذا لا يمكن للطالب أن يُكمل درساً بالسحب إلى النهاية.
+ * إعادة مشاهدة المقطع نفسه لا تزيد العدّ (الثانية تُحسب مرة واحدة).
+ * تعيد هل تغيّرت المجموعة.
+ */
+export function addWatchedBucket(
+  covered: Set<number>,
+  fromSeconds: number,
+  toSeconds: number,
+  maxStepSeconds = 3,
+): boolean {
+  if (!Number.isFinite(fromSeconds) || !Number.isFinite(toSeconds)) return false;
+  const from = Math.floor(Math.min(fromSeconds, toSeconds));
+  const to = Math.floor(Math.max(fromSeconds, toSeconds));
+  if (to - from > maxStepSeconds) return false; // سحب لا مشاهدة
+  let changed = false;
+  for (let s = from; s <= to; s++) {
+    if (!covered.has(s)) {
+      covered.add(s);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/** نسبة المشاهدة الحقيقية من مدة الفيديو (0..1). */
+export function coverageFraction(covered: Set<number>, durationSeconds: number): number {
+  const d = Math.floor(Number(durationSeconds));
+  if (!Number.isFinite(d) || d <= 0) return 0;
+  return Math.min(1, covered.size / d);
+}
+
+/**
+ * هل بلغت المشاهدة الحقيقية العتبة المطلوبة (بالثواني)؟ عتبة ≤ 0 تعني «بلا شرط».
+ */
+export function reachedWatchRequirement(covered: Set<number>, requiredSeconds: number): boolean {
+  const required = Math.floor(Number(requiredSeconds));
+  if (!Number.isFinite(required) || required <= 0) return true;
+  return covered.size >= required;
+}

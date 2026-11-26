@@ -22,10 +22,13 @@ use App\Models\LessonProgress;
 class CourseAccessService
 {
     /**
-     * Fraction of a video lesson's duration the student must have watched
-     * (min 60s, max 20min) before the lesson may be marked complete.
+     * Minimum genuine watch coverage (fraction of the lesson's duration) before
+     * a video lesson counts as complete. This is the platform default policy:
+     * ~90% of the video actually watched — no seeking to the end. Capped below
+     * by a floor of 60s and a ceiling of 20min so a very short or very long
+     * lesson stays reasonable.
      */
-    private const MIN_WATCH_FRACTION = 0.6;
+    private const MIN_WATCH_FRACTION = 0.9;
 
     public function enrollmentIsValid(?Enrollment $enrollment): bool
     {
@@ -148,16 +151,31 @@ class CourseAccessService
 
     /**
      * Minimum watch time (seconds) before a video lesson counts as complete.
+     * Non-video lessons (text, file, live) have no watch-time requirement — the
+     * gate only ever applied to video, and requiring it elsewhere would make a
+     * text lesson impossible to finish.
+     *
+     * The requirement is a fraction of the lesson's own duration (the platform
+     * default is ~90% genuine coverage), floored at 60s so a very short clip
+     * still asks for a real watch, and capped at the video's own length so it
+     * can never exceed 100%.
      */
     public function requiredWatchSeconds(Lesson $lesson): int
     {
+        if ($lesson->lesson_type !== 'video') {
+            return 0;
+        }
+
         $duration = (int) $lesson->duration_minutes;
 
         if ($duration <= 0) {
             return 0;
         }
 
-        return min(max((int) round($duration * 60 * self::MIN_WATCH_FRACTION), 60), 1200);
+        $durationSeconds = $duration * 60;
+        $required = (int) round($durationSeconds * self::MIN_WATCH_FRACTION);
+
+        return min(max($required, 60), $durationSeconds);
     }
 
     /**
