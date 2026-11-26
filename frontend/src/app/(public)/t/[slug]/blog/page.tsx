@@ -241,7 +241,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
               <span className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}><GraduationCap className="h-4 w-4 text-white" /></span>}
             <span className="font-bold text-white text-sm">{site?.name || slug}</span>
           </div>
-          <div className="flex items-center gap-5 text-white/40 text-xs">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-white/40 text-xs">
             <Link href={base || '/'} className="hover:text-white transition-colors">{t('الرئيسية', 'Home')}</Link>
             <Link href={`${base}#courses`} className="hover:text-white transition-colors">{t('الكورسات', 'Courses')}</Link>
             <Link href={`${base}/register`} className="hover:text-white transition-colors">{t('سجل الآن', 'Register')}</Link>
