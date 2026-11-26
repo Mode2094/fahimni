@@ -165,7 +165,21 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
   }
 
   if (response.status === 401 && sameOrigin && !isSessionEndpoint(input)) {
-    window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { at: Date.now() } }));
+    // An expired Super-Admin support session is not a logout: the server has
+    // already restored the original admin session, so the app must return to
+    // the admin panel instead of dropping the admin's local state.
+    let code: string | null = null;
+
+    try {
+      code = (await response.clone().json())?.code ?? null;
+    } catch {
+      // Non-JSON 401 — treat it as an ordinary unauthorized response.
+    }
+
+    window.dispatchEvent(new CustomEvent(
+      code === 'SUPPORT_EXPIRED' ? 'auth:support-expired' : 'auth:unauthorized',
+      { detail: { at: Date.now() } },
+    ));
   }
 
   return response;

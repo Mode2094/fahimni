@@ -39,8 +39,8 @@ class ViewAsController extends Controller
             return response()->json(['message' => 'Only a platform admin can use view-as.'], 403);
         }
 
-        if ($this->state($request)) {
-            return response()->json(['message' => 'A view-as session is already active — exit it first.'], 409);
+        if ($this->state($request) || \App\Support\AdminSupportSession::get($request)) {
+            return response()->json(['message' => 'An impersonation session is already active — exit it first.'], 409);
         }
 
         $target = User::find($userId);

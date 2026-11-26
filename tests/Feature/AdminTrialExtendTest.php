@@ -425,4 +425,43 @@ class AdminTrialExtendTest extends TenantTestCase
 
         $this->getJson('/api/v1/courses', $this->authHeaders($teacher, $tenant))->assertStatus(402);
     }
+
+    // ── 13. The empty admin tenant header must not abort the trial extend ──
+
+    public function test_trial_extension_survives_the_empty_tenant_header_the_panel_sends(): void
+    {
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $admin = $this->superAdmin();
+        $sub = $this->trial($tenant, $plan, ['trial_ends_at' => now()->addDays(5)]);
+        $previous = $sub->trial_ends_at->toIso8601String();
+
+        // Exactly what the admin panel sends for a platform-wide Super Admin
+        // action: an empty X-Tenant-Id. On Postgres an empty uuid aborts the
+        // surrounding transaction, and the follow-up `fresh()` used to 500 with
+        // "Server Error" even though the row was already updated.
+        $headers = $this->authHeaders($admin, $tenant);
+        $headers['X-Tenant-Id'] = '';
+
+        $this->postJson("/api/v1/admin/subscriptions/{$sub->id}/extend-trial", [
+            'days' => 7,
+            'reason' => 'Goodwill — teacher onboarding week',
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('already_applied', false);
+
+        $this->assertApproxDaysFromNow($sub->fresh()->trial_ends_at, 12);
+
+        // The audit row exists and never carries an empty/invalid tenant id.
+        $log = \App\Models\AuditLog::where('action', 'admin.subscription_trial_extended')
+            ->where('entity_id', $sub->id)
+            ->first();
+        $this->assertNotNull($log);
+        $this->assertSame($previous, $log->details['previous_trial_ends_at'] ?? null);
+        $this->assertSame($tenant->id, $log->details['tenant_id']);
+        $this->assertTrue(
+            $log->tenant_id === null || \Symfony\Component\Uid\Uuid::isValid($log->tenant_id),
+            'tenant_id must be NULL or a valid UUID, never an empty string.'
+        );
+    }
 }

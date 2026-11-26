@@ -16,6 +16,23 @@ export type ViewAsState = {
 };
 
 /**
+ * A Super-Admin "support session": the admin has entered ONE teacher's
+ * workspace to actually help them (content/settings/domain). The server keeps
+ * the read-only `view_as` marker separate; this is the write-enabled one.
+ */
+export type AdminSupportState = {
+  active: boolean;
+  mode: 'support';
+  actor_id?: string | null;
+  actor_name?: string | null;
+  user_id: string;
+  user_name?: string | null;
+  tenant_id?: string | null;
+  started_at?: string | null;
+  expires_at?: string | null;
+};
+
+/**
  * `unknown`     — boot: the HttpOnly session has not been checked yet.
  * `authenticated` — a live session (or a cached profile during a transient
  *                   outage) exists.
@@ -29,6 +46,8 @@ type AuthState = {
   user: User | null;
   /** Active admin "view-as (read-only)" state, resolved from the session. */
   viewAs: ViewAsState | null;
+  /** Active Super-Admin support session (write-enabled impersonation). */
+  adminSupport: AdminSupportState | null;
   loading: boolean;
   initialized: boolean;
   status: AuthStatus;
@@ -41,6 +60,7 @@ type AuthState = {
   logout: () => Promise<void>;
   load: () => Promise<void>;
   stopViewAs: () => Promise<void>;
+  stopAdminSupport: () => Promise<void>;
   refreshSession: () => Promise<boolean>;
   handleUnauthorized: (at?: number) => void;
   check: () => boolean;
@@ -148,6 +168,7 @@ function validateSession(): Promise<boolean> {
         const data = await res.json().catch(() => null);
         const user = (data?.user ?? null) as User | null;
         const viewAs = (data?.view_as ?? null) as ViewAsState | null;
+        const adminSupport = (data?.admin_support ?? null) as AdminSupportState | null;
 
         if (user) {
           cacheUser(user);
@@ -155,6 +176,7 @@ function validateSession(): Promise<boolean> {
           useAuth.setState({
             user,
             viewAs,
+            adminSupport,
             status: 'authenticated',
             loading: false,
             initialized: true,
@@ -166,10 +188,24 @@ function validateSession(): Promise<boolean> {
       }
 
       if (res.status === 401) {
+        const data = await res.json().catch(() => null);
+
+        // A support session that expired: the server already restored the
+        // admin. Do not clear the admin's local state — hand control to the
+        // support-expired handler, which returns to the admin panel.
+        if (data?.code === 'SUPPORT_EXPIRED') {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('auth:support-expired', { detail: { at: Date.now() } }));
+          }
+
+          return false;
+        }
+
         cacheUser(null);
         useAuth.setState({
           user: null,
           viewAs: null,
+          adminSupport: null,
           status: 'unauthenticated',
           loading: false,
           initialized: true,
@@ -205,6 +241,7 @@ function validateSession(): Promise<boolean> {
 export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   viewAs: null,
+  adminSupport: null,
   loading: false,
   initialized: false,
   status: 'unknown',
@@ -242,6 +279,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({
         user,
         viewAs: null,
+        adminSupport: null,
         loading: false,
         initialized: true,
         status: 'authenticated',
@@ -286,6 +324,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({
         user,
         viewAs: null,
+        adminSupport: null,
         loading: false,
         initialized: true,
         status: 'authenticated',
@@ -385,6 +424,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     set({
       user: null,
       viewAs: null,
+      adminSupport: null,
       loading: false,
       initialized: true,
       status: 'unauthenticated',
@@ -403,6 +443,16 @@ export const useAuth = create<AuthState>((set, get) => ({
     } catch { /* fall through to reload — the session decides */ }
 
     // A full reload re-resolves the restored admin session everywhere.
+    if (typeof window !== 'undefined') window.location.href = '/admin/dashboard';
+  },
+
+  stopAdminSupport: async () => {
+    // Ending a support session restores the admin server-side; a full reload is
+    // what makes the original admin session unambiguous on every page again.
+    try {
+      await authFetch(`${API_BASE}/admin/support`, { method: 'DELETE' });
+    } catch { /* the session decides on reload */ }
+
     if (typeof window !== 'undefined') window.location.href = '/admin/dashboard';
   },
 
@@ -429,6 +479,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     set({
       user: null,
       viewAs: null,
+      adminSupport: null,
       loading: false,
       initialized: true,
       status: 'unauthenticated',
@@ -445,5 +496,13 @@ if (typeof window !== 'undefined') {
   window.addEventListener('auth:unauthorized', (event) => {
     const at = Number((event as CustomEvent<{ at?: number }>).detail?.at) || Date.now();
     useAuth.getState().handleUnauthorized(at);
+  });
+
+  // A support session that expired mid-action is NOT a logout: the server has
+  // already restored the original admin session, so we reload straight back
+  // into the admin panel instead of dropping the admin's local state.
+  window.addEventListener('auth:support-expired', () => {
+    useAuth.setState({ adminSupport: null });
+    window.location.replace('/admin/dashboard');
   });
 }

@@ -15,11 +15,14 @@ import { Alert } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import AdminSubscriptionMetrics from '@/components/admin/subscription-metrics';
+import ManualSubscriptionModal from '@/components/admin/manual-subscription-modal';
+import TeacherDomainModal from '@/components/admin/teacher-domain-modal';
 import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
   Wallet, TrendingUp, ClipboardList, FileText, Percent, Layers, Timer, Award, Star, Play,
   ExternalLink, Copy, Phone, MessageCircle, CalendarPlus, History, AlertCircle,
+  ShieldCheck, Globe, LogIn,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -52,6 +55,9 @@ export default function AdminTeachersPanel() {
   const [extendRequestId, setExtendRequestId] = useState('');
   const [extending, setExtending] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [domainOpen, setDomainOpen] = useState(false);
+  const [supportBusy, setSupportBusy] = useState(false);
 
   const headers = () => ({ 'X-Tenant-Id': '', Accept: 'application/json' });
 
@@ -141,8 +147,17 @@ export default function AdminTeachersPanel() {
     try {
       setDetailTab('overview');
       const d = await fetch(`${API}/admin/teachers/${teach.id}`, { headers: headers() }).then(r => r.json());
+
+      // Manual activation/renewal history (independent of the payment archive).
+      let manualHistory: any[] = [];
+      try {
+        const h = await fetch(`${API}/admin/teachers/${teach.id}/subscription/history`, { headers: headers() }).then(r => r.json());
+        manualHistory = h.operations || [];
+      } catch { /* history is best-effort */ }
+
       setDetail({
         ...d,
+        manual_history: manualHistory,
         teacher: {
           ...d.teacher,
           subscription_summary: teach.subscription_summary ?? d.teacher?.subscription_summary,
@@ -251,11 +266,48 @@ export default function AdminTeachersPanel() {
     return status ? (map[status] || status) : t('لا يوجد', 'None');
   };
 
+  const manualOperationLabel = (type?: string) => {
+    const map: Record<string, [string, string]> = {
+      activate: ['تفعيل مدفوع', 'Paid activation'],
+      renew: ['تجديد', 'Renewal'],
+      upgrade: ['ترقية', 'Upgrade'],
+      downgrade: ['تخفيض', 'Downgrade'],
+      plan_change: ['تغيير الخطة', 'Plan change'],
+      extend: ['تمديد', 'Extension'],
+      free_grant: ['منح مجاني', 'Free grant'],
+    };
+    const entry = type ? map[type] : undefined;
+    return entry ? t(entry[0], entry[1]) : (type || '—');
+  };
+
+  const manualPaymentMethodLabel = (method?: string | null) => {
+    const map: Record<string, [string, string]> = {
+      cliq: ['كليك', 'CliQ'], bank_transfer: ['حوالة بنكية', 'Bank transfer'],
+      cash: ['نقدًا', 'Cash'], other: ['أخرى', 'Other'],
+    };
+    const entry = method ? map[method] : undefined;
+    return entry ? t(entry[0], entry[1]) : (method || '—');
+  };
+
   const newRequestId = () => (globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
   // The row the admin acts on: the newest one that exists (access is resolved
-  // across ALL rows server-side, so any row is a valid target).
-  const extendTargetSub = () => detailSubscriptions().find((s: any) => s?.id) || null;
+  // across ALL rows server-side, so any row is a valid target). If the loaded
+  // list is empty for any reason but the server still reports a subscription
+  // id, fall back to it so the extend dialog can never dead-end with a
+  // misleading "no subscription to extend".
+  const accessFallbackSub = (): any | null => {
+    const sid = detail?.access?.subscription_id;
+    if (!sid) return null;
+    return {
+      id: sid,
+      trial_ends_at: detail?.access?.trial_ends_at ?? null,
+      ends_at: detail?.access?.access_ends_at ?? null,
+      admin_ends_at: detail?.access?.admin_ends_at ?? null,
+    };
+  };
+
+  const extendTargetSub = () => detailSubscriptions().find((s: any) => s?.id) || accessFallbackSub();
 
   // The row that owns the FREE TRIAL (`trial_ends_at`). The trial endpoint
   // must receive that specific row — not a provider-owned mirror — or it
@@ -289,6 +341,40 @@ export default function AdminTeachersPanel() {
     setExtendDays(mode === 'trial' ? '7' : '30');
     setExtendRequestId(newRequestId());
     setExtendOpen(true);
+  };
+
+  /**
+   * Enter the teacher's real dashboard in a NEW TAB as a Super Admin support
+   * session: mint a one-time token, then open the entry route which redeems it
+   * and lands on the teacher panel with the support banner on top.
+   */
+  const enterSupport = async () => {
+    const teacher = detail?.teacher;
+    if (!teacher) return;
+
+    setSupportBusy(true);
+    try {
+      const res = await fetch(`${API}/admin/support/${teacher.id}/begin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers() },
+        body: JSON.stringify({ reason: 'admin_support_panel' }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(d.message || t('تعذّر بدء جلسة الدعم', 'Could not start the support session'));
+        return;
+      }
+      const tab = window.open(d.enter_path, '_blank', 'noopener');
+      if (!tab) {
+        toast.error(t('يرجى السماح بالنوافذ المنبثقة لفتح لوحة المعلم.', 'Please allow pop-ups to open the teacher panel.'));
+        return;
+      }
+      toast.success(t('تم فتح لوحة المعلم في تبويب جديد.', 'The teacher panel was opened in a new tab.'));
+    } catch {
+      toast.error(t('تعذّر بدء جلسة الدعم', 'Could not start the support session'));
+    } finally {
+      setSupportBusy(false);
+    }
   };
 
   const extend = async () => {
@@ -659,6 +745,38 @@ export default function AdminTeachersPanel() {
                         </div>
                       </div>
                     )}
+                    {detail.tenant && (
+                      <div className="p-4 rounded-xl border bg-sky-50/40">
+                        <div className="flex items-center gap-2 mb-3">
+                          <ShieldCheck className="h-4 w-4 text-sky-600" />
+                          <div className="text-sm font-semibold">{t('إدارة منصة المعلم والدعم', 'Manage the teacher platform & support')}</div>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                          <button type="button" onClick={enterSupport} disabled={supportBusy} data-testid="enter-support"
+                            className="group flex items-center gap-2 p-3 rounded-xl bg-white border text-sm hover:border-sky-400 transition-colors text-start disabled:opacity-60">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-700">
+                              {supportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-semibold">{t('الدخول إلى لوحة المعلم', 'Enter the teacher dashboard')}</span>
+                              <span className="block text-[11px] text-gray-400">{t('فتح لوحة المعلم في تبويب جديد بوضع الدعم الإداري', 'Open the teacher dashboard in a new tab in support mode')}</span>
+                            </span>
+                          </button>
+                          <button type="button" onClick={() => setDomainOpen(true)} data-testid="open-domain"
+                            className="group flex items-center gap-2 p-3 rounded-xl bg-white border text-sm hover:border-teal-400 transition-colors text-start">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-700"><Globe className="h-4 w-4" /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-semibold">{t('الدومين المخصص', 'Custom domain')}</span>
+                              <span className="block text-[11px] text-gray-400">{t('ربط دومين المعلم والتحقق منه وإدارة SSL', 'Connect, verify and manage the teacher’s domain & SSL')}</span>
+                            </span>
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-2 flex items-center gap-1.5">
+                          <AlertCircle className="h-3 w-3 shrink-0" />
+                          {t('يُسجَّل كل تعديل بهوية السوبر أدمن. العمليات المالية والأمنية الحساسة تبقى محظورة داخل وضع الدعم وتُنفَّذ من لوحة الإدارة.', 'Every change is logged under the Super Admin. Money/security-sensitive actions stay blocked in support mode and are performed from the admin panel.')}
+                        </p>
+                      </div>
+                    )}
                     <div className="p-4 rounded-xl border bg-gradient-to-br from-teal-50/60 to-white space-y-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Crown className="h-4 w-4 text-amber-500" />
@@ -666,7 +784,13 @@ export default function AdminTeachersPanel() {
                         <div className="ms-auto flex items-center gap-2">
                           {detailSubscriptions()[0] ? subBadge(detailSubscriptions()[0]) : subBadge(null)}
                           {detail.tenant && (
-                            <Button size="sm" className="gap-1.5 rounded-full" data-testid="extend-access"
+                            <Button size="sm" className="gap-1.5 rounded-full bg-amber-500 hover:bg-amber-600 text-white" data-testid="manual-subscription"
+                              onClick={() => setManualOpen(true)}>
+                              <Wallet className="h-3.5 w-3.5" /> {t('تفعيل / إدارة الاشتراك يدويًا', 'Activate / manage manually')}
+                            </Button>
+                          )}
+                          {detail.tenant && (
+                            <Button size="sm" variant="outline" className="gap-1.5 rounded-full" data-testid="extend-access"
                               data-mode={detail.access?.can_extend_trial ? 'trial' : 'access'}
                               onClick={() => openExtend(detail.access?.can_extend_trial ? 'trial' : 'access')}>
                               <CalendarPlus className="h-3.5 w-3.5" /> {detail.access?.can_extend_trial ? t('تمديد التجربة', 'Extend trial') : t('تمديد الوصول', 'Extend access')}
@@ -776,6 +900,41 @@ export default function AdminTeachersPanel() {
                         </div>
                       ) : (
                         <p className="text-sm text-gray-400">{t('لا يوجد اشتراك لهذا المعلم', 'No subscription for this teacher')}</p>
+                      )}
+
+                      {/* Manual activation / renewal history (audit trail). */}
+                      {(detail.manual_history?.length ?? 0) > 0 && (
+                        <div data-testid="manual-history">
+                          <div className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1.5">
+                            <History className="h-3.5 w-3.5" /> {t('سجل العمليات اليدوية', 'Manual operations history')}
+                          </div>
+                          <div className="space-y-2">
+                            {detail.manual_history.map((op: any) => (
+                              <div key={op.id} className="p-3 rounded-xl bg-white border text-sm">
+                                <div className="flex items-center flex-wrap gap-2">
+                                  <Badge className="bg-amber-100 text-amber-800 border-0">{manualOperationLabel(op.operation_type)}</Badge>
+                                  <b>{op.new_plan?.name || op.new_plan_id || '—'}</b>
+                                  {op.is_free_grant
+                                    ? <span className="text-[11px] text-gray-400">{t('بدون تحصيل', 'No charge')}</span>
+                                    : <span className="text-[11px] text-emerald-700" dir="ltr">{op.amount} {op.currency} · {manualPaymentMethodLabel(op.payment_method)}</span>}
+                                  <span className="ms-auto text-[11px] text-gray-400">{fmtDateTime(op.created_at)}</span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-[11px]">
+                                  <div><div className="text-gray-400">{t('الخطة السابقة', 'Previous plan')}</div><b className="font-medium">{op.previous_plan?.name || '—'}</b></div>
+                                  <div><div className="text-gray-400">{t('البداية', 'Start')}</div><b className="font-medium">{fmtDate(op.starts_at)}</b></div>
+                                  <div><div className="text-gray-400">{t('الانتهاء', 'End')}</div><b className="font-medium">{fmtDate(op.ends_at)}</b></div>
+                                  <div><div className="text-gray-400">{t('بواسطة', 'By')}</div><b className="font-medium">{op.performed_by_name || '—'}</b></div>
+                                </div>
+                                {(op.payment_reference || op.reason) && (
+                                  <div className="text-[11px] text-gray-500 mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+                                    {op.payment_reference && <span>{t('المرجع', 'Reference')}: <b className="font-mono" dir="ltr">{op.payment_reference}</b></span>}
+                                    {op.reason && <span>{t('ملاحظات', 'Notes')}: {op.reason}</span>}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -892,6 +1051,34 @@ export default function AdminTeachersPanel() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Manual subscription activation / management (Super Admin). */}
+      {detail?.teacher && (
+        <ManualSubscriptionModal
+          open={manualOpen}
+          onOpenChange={setManualOpen}
+          teacher={{ id: detail.teacher.id, name: detail.teacher.name, email: detail.teacher.email }}
+          current={{
+            plan_name: detailSubscriptions()[0]?.plan_name || detailSubscriptions()[0]?.plan?.name || null,
+            status: detailSubscriptions()[0]?.status || null,
+            source: detail.access?.access_source || null,
+            ends_at: detail.access?.access_ends_at || null,
+            trial_ends_at: detail.access?.trial_ends_at || null,
+          }}
+          plans={plans}
+          onDone={() => openDetail({ id: detail.teacher.id })}
+        />
+      )}
+
+      {/* Super-Admin custom-domain management (per teacher). */}
+      {detail?.teacher && (
+        <TeacherDomainModal
+          open={domainOpen}
+          onOpenChange={setDomainOpen}
+          teacher={{ id: detail.teacher.id, name: detail.teacher.name }}
+          onDone={() => openDetail({ id: detail.teacher.id })}
+        />
+      )}
     </div>
   );
 }
