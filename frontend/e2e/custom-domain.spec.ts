@@ -84,21 +84,38 @@ for (const domain of DOMAINS) {
         if (name) await expect(page.locator('body')).toContainText(name);
       });
 
-      test('public links never leak the internal /t/{slug} prefix', async ({ page }) => {
-        await page.goto(`${origin}/courses`);
-        const hrefs = await page
-          .locator('a[href]')
-          .evaluateAll((els) => els.map((el) => el.getAttribute('href') || ''));
-        for (const href of hrefs) {
-          expect(href, `link leaked /t/{slug}: ${href}`).not.toMatch(/^\/t\//);
+      test('public links never leak the internal slug or /t/{slug}', async ({ page }) => {
+        for (const path of ['/', '/courses', '/register/student', '/student/login']) {
+          await page.goto(`${origin}${path}`);
+          const hrefs = await page
+            .locator('a[href]')
+            .evaluateAll((els) => els.map((el) => el.getAttribute('href') || ''));
+          for (const href of hrefs) {
+            // The tenant is resolved from the Host here; `?tenant_slug=` is only
+            // the platform's carrier and it (plus any /t/ prefix) must be absent.
+            expect(href, `${path} leaked the internal slug: ${href}`).not.toMatch(/tenant_slug=/);
+            expect(href, `${path} leaked /t/{slug}: ${href}`).not.toMatch(/^\/t\//);
+          }
         }
       });
 
       test('canonical + manifest stay on the teacher domain (no /t/{slug})', async ({ page }) => {
-        await page.goto(`${origin}/`);
-        const canonical = await page.locator('link[rel="canonical"]').getAttribute('href');
-        if (canonical) expect(canonical).not.toContain('/t/');
+        // The teacher's pages publish a ROOT-RELATIVE canonical that Next
+        // resolves against the root `metadataBase`. That base used to be the
+        // platform, so every teacher page advertised `fahimni.me` — here it must
+        // resolve to the teacher's own domain.
+        for (const path of ['/', '/courses']) {
+          await page.goto(`${origin}${path}`);
+          const canonical = await page.locator('link[rel="canonical"]').getAttribute('href');
+          expect(canonical, `missing canonical on ${path}`).toBeTruthy();
+          expect(canonical!, `canonical leaked /t/{slug} on ${path}`).not.toContain('/t/');
+          expect(
+            canonical!.startsWith(`${origin}/`) || canonical === `${origin}`,
+            `canonical ${canonical} is not on ${domain}`,
+          ).toBe(true);
+        }
 
+        await page.goto(`${origin}/`);
         const manifest = await page.evaluate(async () => {
           const link = document.querySelector('link[rel="manifest"]');
           if (!link) return null;

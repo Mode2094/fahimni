@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import InstallButton from '@/components/teacher/install-button';
 import { authFetch, API_BASE } from '@/lib/auth-client';
-import { useTenantBasePath } from '@/lib/tenant-host';
+import { useTenantBasePath, useTenantLoginHref } from '@/lib/tenant-host';
 import {
   BookOpen, Clock, Layers, CreditCard, CheckCircle2, Loader2, ArrowLeft,
   ChevronDown, Sparkles, Zap, LayoutDashboard, Menu, X, PlayCircle, Tag,
@@ -443,6 +443,7 @@ export function ActivationPanel({
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const base = useTenantBasePath(slug);
+  const loginHref = useTenantLoginHref(slug);
 
   return (
     <section id="card" className={`scroll-mt-20 ${SECTION_PAD}`} style={{ background: '#f8fafc' }}>
@@ -504,7 +505,7 @@ export function ActivationPanel({
                       {t('إنشاء حساب', 'Create an account')}
                     </Button>
                   </Link>
-                  <Link href={`/student/login?tenant_slug=${slug}`} className="block">
+                  <Link href={loginHref} className="block">
                     <Button
                       variant="outline"
                       className="min-h-[48px] w-full border-2"
@@ -592,6 +593,7 @@ export function StorefrontHeader({
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const base = useTenantBasePath(slug);
+  const loginHref = useTenantLoginHref(slug);
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -647,7 +649,7 @@ export function StorefrontHeader({
             />
           )}
           {!loggedIn && (
-            <Link href={`/student/login?tenant_slug=${slug}`} className="hidden sm:block">
+            <Link href={loginHref} className="hidden sm:block">
               <Button size="sm" variant="outline" className="min-h-[40px] rounded-full font-bold shadow-sm" style={{ borderRadius: radius, color: primary, borderColor: `${primary}55`, background: `${primary}08` }}>
                 {t('تسجيل دخول', 'Login')}
               </Button>
@@ -705,7 +707,7 @@ export function StorefrontHeader({
                 </Link>
               ) : (
                 <>
-                  <Link href={`/student/login?tenant_slug=${slug}`} onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl border px-4 text-sm font-medium" style={{ color: primary, borderColor: `${primary}55` }}>
+                  <Link href={loginHref} onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl border px-4 text-sm font-medium" style={{ color: primary, borderColor: `${primary}55` }}>
                     {t('تسجيل دخول', 'Login')}
                   </Link>
                   <Link href={`${base}/register`} onClick={() => setOpen(false)} className="flex min-h-[48px] flex-1 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>

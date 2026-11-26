@@ -16,7 +16,7 @@ import {
   StorefrontHeader, StorefrontFooter, SectionHeading, CourseCard, ActivationPanel,
   StatStrip, TrustRow, SECTION_PAD, useReducedMotion, useEnrolledCourseIds,
 } from '@/components/site/storefront';
-import { useTenantBasePath } from '@/lib/tenant-host';
+import { useTenantBasePath, useTenantLoginHref } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -38,6 +38,7 @@ export default function TeacherLanding({
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const base = useTenantBasePath(slug);
+  const loginHref = useTenantLoginHref(slug);
 
   const [site, setSite] = useState<any>(initialSite);
   const [courses, setCourses] = useState<any[]>(initialCourses);
@@ -260,7 +261,7 @@ export default function TeacherLanding({
         {!loggedIn && (
           <p className="mt-4 text-sm text-white/60">
             {t('لديك حساب؟', 'Have an account?')}{' '}
-            <Link href={`/student/login?tenant_slug=${slug}`} className="font-bold underline underline-offset-4 transition-opacity hover:opacity-80" style={{ color: accent }}>{t('تسجيل دخول', 'Login')}</Link>
+            <Link href={loginHref} className="font-bold underline underline-offset-4 transition-opacity hover:opacity-80" style={{ color: accent }}>{t('تسجيل دخول', 'Login')}</Link>
           </p>
         )}
         <TrustRow accent={accent} primary={primary} />

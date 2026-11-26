@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { BookOpen, ArrowLeft, GraduationCap } from 'lucide-react';
 import Link from 'next/link';
 import { CourseCard, BundleCard, useEnrolledCourseIds } from '@/components/site/storefront';
-import { useTenantBasePath, useTenantHost } from '@/lib/tenant-host';
+import { useTenantBasePath, useTenantHost, tenantLoginHref } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -62,7 +62,7 @@ export default function TeacherCoursesPage({ params }: { params: Promise<{ slug:
             )}
             <span className="truncate text-base font-bold sm:text-lg">{site?.name || branding?.name || ''}</span>
           </Link>
-          <Link href={loggedIn ? '/my-learning' : hostSlug ? '/student/login' : `/student/login?tenant_slug=${slug}`}>
+          <Link href={loggedIn ? '/my-learning' : tenantLoginHref(hostSlug, slug)}>
             <Button size="sm" className="min-h-[40px] rounded-full text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
               {loggedIn ? t('كورساتي', 'My courses') : t('تسجيل دخول', 'Login')}
             </Button>

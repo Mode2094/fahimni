@@ -63,3 +63,21 @@ export function useTenantBasePath(slug: string): string {
 
   return tenantBasePath(hostSlug, slug);
 }
+
+/**
+ * Href for the student login.
+ *
+ * On the teacher's OWN host the tenant is resolved from the host, so the
+ * internal slug must never appear in the address bar — `?tenant_slug=` is only
+ * how the PLATFORM carries the tenant through the one shared login route.
+ */
+export function tenantLoginHref(hostSlug: string | null, slug: string): string {
+  return hostSlug ? '/student/login' : `/student/login?tenant_slug=${encodeURIComponent(slug)}`;
+}
+
+/** React hook form of {@link tenantLoginHref} for the current host. */
+export function useTenantLoginHref(slug: string): string {
+  const { slug: hostSlug } = useTenantHost();
+
+  return tenantLoginHref(hostSlug, slug);
+}

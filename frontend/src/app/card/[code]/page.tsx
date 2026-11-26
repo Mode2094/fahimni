@@ -8,6 +8,7 @@ import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store';
 import { Loader2, QrCode, GraduationCap, CheckCircle2, XCircle, ArrowLeft, Sparkles, Zap, UserPlus, LogIn } from 'lucide-react';
 import { setStoredTenantId } from '@/lib/auth-client';
+import { useTenantHost } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -121,8 +122,15 @@ export default function CardRedeemPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, loadSession]);
 
-  const loginUrl = card?.tenant ? `/student/login?tenant_slug=${card.tenant.slug}&from=/card/${code}` : `/student/login?from=/card/${code}`;
-  const registerUrl = card?.tenant ? `/register/student?tenant_slug=${card.tenant.slug}&from=/card/${code}` : `/register/student?from=/card/${code}`;
+  // On the teacher's own host the tenant is resolved from the host, so the
+  // internal slug is dropped from the links when the card belongs to it (it is
+  // kept when a card for a DIFFERENT tenant is opened here, so login still
+  // targets the card's workspace).
+  const { slug: hostTenantSlug } = useTenantHost();
+  const sameTenant = !!hostTenantSlug && card?.tenant?.slug === hostTenantSlug;
+  const tenantQuery = card?.tenant && !sameTenant ? `tenant_slug=${card.tenant.slug}&` : '';
+  const loginUrl = `/student/login?${tenantQuery}from=/card/${code}`;
+  const registerUrl = `/register/student?${tenantQuery}from=/card/${code}`;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-teal-950 flex items-center justify-center p-4">
