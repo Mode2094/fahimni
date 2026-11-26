@@ -11,7 +11,7 @@ import {
   MonitorSmartphone, Loader2, Link2, Palette, Settings2, Eye, Globe, LayoutTemplate,
   FileLock2, Settings, Share2, QrCode, Copy, Check, MessageCircle, Send, Twitter,
   Sparkles, Users, BookOpen, Target, CheckCircle2, Circle, ChevronRight, PartyPopper,
-  ShieldCheck, Crown,
+  ShieldCheck, Crown, Trophy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -24,6 +24,7 @@ import DomainManager from '@/components/site/domain-manager';
 import PageBuilder from '@/components/site/page-builder';
 import { dashboardApi } from '@/services/endpoints';
 import { getApiErrorMessage } from '@/services/api';
+import { WatermarkOverlay } from '@/components/video/watermark-overlay';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -37,6 +38,8 @@ export default function TeacherSettingsPage() {
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [filePolicy, setFilePolicy] = useState<{ file_downloads_enabled: boolean } | null>(null);
   const [savingFilePolicy, setSavingFilePolicy] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<{ mode: string } | null>(null);
+  const [savingLeaderboard, setSavingLeaderboard] = useState(false);
   const [videoSecurity, setVideoSecurity] = useState<any>(null);
   const [savingVideo, setSavingVideo] = useState(false);
   const [mySlug, setMySlug] = useState('');
@@ -47,10 +50,11 @@ export default function TeacherSettingsPage() {
 
   // Last-saved snapshots — compared against live state to show the
   // unsaved-changes guard. Kept in a ref so saving never triggers a re-render.
-  const savedRef = useRef<{ policy: any; filePolicy: any; videoSecurity: any }>({
+  const savedRef = useRef<{ policy: any; filePolicy: any; videoSecurity: any; leaderboard: any }>({
     policy: null,
     filePolicy: null,
     videoSecurity: null,
+    leaderboard: null,
   });
 
   const headers = () => {
@@ -65,6 +69,8 @@ export default function TeacherSettingsPage() {
       .then(r => r.json()).then(dd => { const p = dd.policy || null; setPolicy(p); savedRef.current.policy = p; }).catch(() => {});
     fetch(`${API}/teacher/file-policy`, { headers: headers() })
       .then(r => r.json()).then(dd => { const p = dd.policy || null; setFilePolicy(p); savedRef.current.filePolicy = p; }).catch(() => {});
+    fetch(`${API}/teacher/leaderboard-policy`, { headers: headers() })
+      .then(r => r.json()).then(dd => { const p = dd.policy || null; setLeaderboard(p); savedRef.current.leaderboard = p; }).catch(() => {});
     fetch(`${API}/teacher/video-security`, { headers: headers() })
       .then(r => r.json()).then(dd => { const v = dd || null; setVideoSecurity(v); savedRef.current.videoSecurity = v; }).catch(() => {});
     fetch(`${API}/teacher/site-design`, { headers: headers() })
@@ -82,6 +88,7 @@ export default function TeacherSettingsPage() {
   const dirty =
     JSON.stringify(policy) !== JSON.stringify(savedRef.current.policy) ||
     JSON.stringify(filePolicy) !== JSON.stringify(savedRef.current.filePolicy) ||
+    JSON.stringify(leaderboard) !== JSON.stringify(savedRef.current.leaderboard) ||
     JSON.stringify(videoSecurity) !== JSON.stringify(savedRef.current.videoSecurity);
   useUnsavedChangesWarning(dirty);
 
@@ -124,8 +131,19 @@ export default function TeacherSettingsPage() {
     setSavingPolicy(false);
   };
 
-  const saveFilePolicy = async () => {
-    if (!filePolicy) return;
+  const saveLeaderboard = async () => {
+    if (!leaderboard) return;
+    setSavingLeaderboard(true);
+    try {
+      const res = await fetch(`${API}/teacher/leaderboard-policy`, { method: 'PUT', headers: headers(), body: JSON.stringify(leaderboard) });
+      if (!res.ok) throw new Error();
+      savedRef.current.leaderboard = leaderboard;
+      toast.success(t('تم حفظ إعداد ترتيب الطلاب', 'Leaderboard privacy saved'));
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ إعداد الترتيب', 'Could not save the leaderboard setting'))); }
+    setSavingLeaderboard(false);
+  };
+
+  const saveFilePolicy = async () => {    if (!filePolicy) return;
     setSavingFilePolicy(true);
     try {
       const res = await fetch(`${API}/teacher/file-policy`, { method: 'PUT', headers: headers(), body: JSON.stringify(filePolicy) });
@@ -338,6 +356,40 @@ export default function TeacherSettingsPage() {
             </Card>
           )}
 
+          {tab === 'devices' && leaderboard && (
+            <Card className="border-0 shadow-sm overflow-hidden">
+              <CardContent className="p-6 sm:p-7 space-y-5">
+                <div className="flex items-start gap-3.5">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-100">
+                    <Trophy className="h-6 w-6 text-amber-600" />
+                  </span>
+                  <div>
+                    <h2 className="font-bold text-lg">{t('خصوصية ترتيب الطلاب', 'Student leaderboard privacy')}</h2>
+                    <p className="text-sm text-muted-foreground mt-1">{t('تحكم بما يراه الطلاب في صفحة الترتيب. أنت كمعلّم ترى الأسماء دائماً.', 'Control what students see on the leaderboard. As the teacher you always see names.')}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {([
+                    ['anonymous', t('ترتيب بأسماء مخفية (موصى به)', 'Anonymous ranking (recommended)'), t('يرى الطالب مركزه ونقاطه، وتظهر بقية الطلاب دون أسماء أو صور.', 'Students see their own position; other students appear without names or avatars.')],
+                    ['named', t('إظهار الأسماء', 'Show names'), t('يظهر اسم كل طالب في الترتيب.', 'Every student name is shown.')],
+                    ['disabled', t('إيقاف الترتيب', 'Disable the leaderboard'), t('لا يظهر أي ترتيب للطلاب (يبقى مركز الطالب متاحاً له).', 'No ranking is shown to students (their own rank stays available).')],
+                  ] as const).map(([value, label, desc]) => (
+                    <label key={value} className={cn('flex items-start gap-3 p-4 rounded-2xl border cursor-pointer transition-colors', leaderboard.mode === value ? 'border-teal-300 bg-teal-50/50' : 'border-slate-200 hover:bg-slate-50')}>
+                      <input type="radio" name="leaderboard-mode" className="mt-1 accent-teal-600" checked={leaderboard.mode === value} onChange={() => setLeaderboard({ mode: value })} />
+                      <span>
+                        <span className="block font-bold text-sm">{label}</span>
+                        <span className="block text-xs text-muted-foreground mt-0.5">{desc}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <Button onClick={saveLeaderboard} disabled={savingLeaderboard} className="gap-1.5 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                  {savingLeaderboard ? <Loader2 className="h-4 w-4 animate-spin" /> : <Settings2 className="h-4 w-4" />}{t('حفظ', 'Save')}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {tab === 'files' && (
             <Card className="border-0 shadow-sm overflow-hidden">
               <CardContent className="p-6 sm:p-7 space-y-6">
@@ -464,6 +516,27 @@ export default function TeacherSettingsPage() {
                           ))}
                         </div>
                       </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <p className="font-bold text-sm flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-teal-600" />{t('معاينة مباشرة', 'Live preview')}</p>
+                        <span className="text-[11px] text-muted-foreground">{t('هكذا تظهر للطالب أثناء التشغيل', 'This is how it appears to the student during playback')}</span>
+                      </div>
+                      <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-900">
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">{t('مثال لفيديو الدرس', 'Sample lesson video')}</div>
+                        {videoSecurity.settings?.enabled && (
+                          <WatermarkOverlay
+                            text={t('مثال: أحمد الطالب', 'Sample: Ahmad Student')}
+                            opacity={({ low: 0.2, medium: 0.35, high: 0.5 } as Record<string, number>)[String(videoSecurity.settings?.opacity)] ?? 0.35}
+                            size={({ small: '0.75rem', medium: '1rem', large: '1.3rem' } as Record<string, string>)[String(videoSecurity.settings?.size)] ?? '1rem'}
+                            speed={String(videoSecurity.settings?.speed || 'slow')}
+                          />
+                        )}
+                      </div>
+                      {!videoSecurity.settings?.enabled && (
+                        <p className="text-xs text-muted-foreground mt-2">{t('العلامة المائية متوقفة حالياً — فعّلها ثم احفظ لتظهر للطلاب.', 'Watermark is currently off — enable it and save to show it to students.')}</p>
+                      )}
                     </div>
 
                     <Button onClick={async () => {

@@ -41,7 +41,7 @@ describe('DuplicateDialog', () => {
 
     // نتيجة واضحة للعملية (لا رسالة غامضة).
     expect(await screen.findByText(/New copy|نسخة جديدة/)).toBeInTheDocument();
-    expect(screen.getByText(/أُعيد استخدام: 1 فيديو/)).toBeInTheDocument();
+    expect(screen.getByText(/أُعيد استخدام: فيديو واحد/)).toBeInTheDocument();
     expect(toast.success).toHaveBeenCalled();
   });
 

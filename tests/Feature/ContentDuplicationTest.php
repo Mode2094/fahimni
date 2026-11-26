@@ -16,6 +16,7 @@ use App\Models\Lesson;
 use App\Models\LessonContent;
 use App\Models\LessonProgress;
 use App\Models\MediaAsset;
+use App\Models\PlanFeature;
 use App\Models\Question;
 use App\Models\QuestionOption;
 use App\Models\Section;
@@ -23,7 +24,6 @@ use App\Models\Tenant;
 use App\Models\TextContent;
 use App\Models\User;
 use App\Models\VideoContent;
-use App\Models\PlanFeature;
 use App\Plans\UsageService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -271,6 +271,29 @@ class ContentDuplicationTest extends TenantTestCase
             ->where('title', 'Text lesson')->firstOrFail();
 
         $this->assertSame($newExam->id, $newLesson->metadata['exercise_exam_id'], 'exercise points at the cloned exam, not the source');
+    }
+
+    /** @test */
+    public function test_course_duplicate_does_not_inherit_the_source_assignment_due_date(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        ['course' => $course, 'assignment' => $assignment] = $this->makeCourseTree($tenant);
+        $assignment->update(['due_at' => now()->addDays(3)]);
+        $owner = $this->owner($tenant);
+
+        $response = $this->postJson("/api/v1/courses/{$course->id}/duplicate", [], $this->authHeaders($owner, $tenant));
+        $response->assertCreated();
+
+        $newAssignment = Assignment::withoutTenant()
+            ->where('course_id', $response->json('course.id'))
+            ->firstOrFail();
+
+        // A copy is a fresh draft for a new term: it must not inherit a deadline
+        // that may already be in the past or tied to the original term.
+        $this->assertNull($newAssignment->due_at);
+        // The source is untouched.
+        $this->assertNotNull($assignment->fresh()->due_at);
     }
 
     /** @test */

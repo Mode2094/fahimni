@@ -220,6 +220,13 @@ describe('decideIqChildMessage — the host trust boundary', () => {
     expect(decideIqChildMessage({ channel: IQ_CHANNEL, type: 'resize', token: 'tok', payload: { height: 400 } }, gate({ initialized: true }))).toEqual({ kind: 'resize', height: 400 });
     expect(decideIqChildMessage({ channel: IQ_CHANNEL, type: 'error', token: 'tok', payload: { message: 'boom' } }, gate({ initialized: true }))).toEqual({ kind: 'error', message: 'boom' });
   });
+
+  it('accepts a done signal only from the mounted, initialised frame', () => {
+    const done = { channel: IQ_CHANNEL, type: 'done', token: 'tok' };
+    expect(decideIqChildMessage(done, gate({ initialized: false })).kind).toBe('ignore');
+    expect(decideIqChildMessage({ ...done, token: 'forged' }, gate({ initialized: true })).kind).toBe('ignore');
+    expect(decideIqChildMessage(done, gate({ initialized: true }))).toEqual({ kind: 'done' });
+  });
 });
 
 describe('splitFullDocument — safe extraction of a pasted document', () => {

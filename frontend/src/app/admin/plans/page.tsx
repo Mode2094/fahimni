@@ -31,6 +31,9 @@ const EDITABLE_KEYS = [
   'videos_limit', 'cards_limit', 'appointments_limit',
   'support_level',
   'student_mobile_app',
+  // العلامة المائية المُخصّصة: تختلف بين الخطط (المحترف والمتقدم فقط)، لذا
+  // يتحكم بها الأدمن لكل خطة صراحةً بدل أن تكون ميزة ثابتة مخفية.
+  'video_watermark',
 ];
 
 // ─── القيم الثابتة للميزات المخفية (مفعّلة للجميع) ───────────────

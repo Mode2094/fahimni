@@ -130,6 +130,7 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
         body: JSON.stringify({
           title: exam.title,
           description: exam.description,
+          assessment_mode: exam.assessment_mode === 'practice' ? 'practice' : 'graded',
           duration_minutes: Number(exam.duration_minutes) || 0,
           pass_mark_percent: Number(exam.pass_mark_percent) || 0,
           max_attempts: Number(exam.max_attempts) || 0,
@@ -551,10 +552,26 @@ export function ExamEditor({ exam: initialExam, sections, questions, onClose, on
                 <Label>{t('العنوان', 'Title')} *</Label>
                 <Input value={exam.title} onChange={(e) => setExam({ ...exam, title: e.target.value })} className="h-11" />
               </div>
+              {/* Practice vs graded: one switch decides whether this is a scored
+                  examination or an ungraded skill exercise. It is snapshotted
+                  onto every attempt when it starts, so changing it never
+                  reclassifies a live attempt. */}
+              <div className="space-y-2 rounded-xl border p-3">
+                <Switch
+                  checked={exam.assessment_mode === 'practice'}
+                  onCheckedChange={(v) => setExam({ ...exam, assessment_mode: v ? 'practice' : 'graded' })}
+                  label={t('وضع التمرين (بدون درجات أو وقت)', 'Practice mode (no score or timer)')}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {exam.assessment_mode === 'practice'
+                    ? t('تمرين مهارة غير مُقيَّم: لا وقت، ولا درجات، ولا مكافحة غش. يُسجَّل الإتمام فقط، ولا يُحتسب في المعدلات أو ترتيب الطلاب.', 'An ungraded skill practice: no timer, no score, no anti-cheat. Only completion is recorded, and it never affects averages or the leaderboard.')
+                    : t('اختبار رسمي مُقيَّم: وقت، ودرجة نجاح، ومحاولات، ومكافحة غش. يظهر في المعدلات وترتيب الطلاب.', 'A formal graded exam: timer, pass mark, attempts, and anti-cheat. It counts toward averages and the leaderboard.')}
+                </p>
+              </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="space-y-2"><Label>{t('المدة (دقائق)', 'Duration (min)')}</Label><Input type="number" value={exam.duration_minutes} onChange={(e) => setExam({ ...exam, duration_minutes: e.target.value })} className="h-11" /></div>
-                <div className="space-y-2"><Label>{t('درجة النجاح %', 'Pass mark %')}</Label><Input type="number" value={exam.pass_mark_percent} onChange={(e) => setExam({ ...exam, pass_mark_percent: e.target.value })} className="h-11" /></div>
-                <div className="space-y-2"><Label>{t('عدد المحاولات', 'Max attempts')}</Label><Input type="number" value={exam.max_attempts} onChange={(e) => setExam({ ...exam, max_attempts: e.target.value })} className="h-11" />
+                <div className="space-y-2"><Label>{t('المدة (دقائق)', 'Duration (min)')}</Label><Input type="number" disabled={exam.assessment_mode === 'practice'} value={exam.duration_minutes} onChange={(e) => setExam({ ...exam, duration_minutes: e.target.value })} className="h-11" /></div>
+                <div className="space-y-2"><Label>{t('درجة النجاح %', 'Pass mark %')}</Label><Input type="number" disabled={exam.assessment_mode === 'practice'} value={exam.pass_mark_percent} onChange={(e) => setExam({ ...exam, pass_mark_percent: e.target.value })} className="h-11" /></div>
+                <div className="space-y-2"><Label>{t('عدد المحاولات', 'Max attempts')}</Label><Input type="number" disabled={exam.assessment_mode === 'practice'} value={exam.max_attempts} onChange={(e) => setExam({ ...exam, max_attempts: e.target.value })} className="h-11" />
                   <p className="text-[11px] text-muted-foreground">{t('0 = بلا حد. تُحتسب المحاولة عند التسليم فقط؛ إعادة التحميل أو انقطاع الاتصال تستأنف نفس المحاولة.', '0 = unlimited. An attempt is counted only on submit; a reload or a dropped connection resumes the same attempt.')}</p>
                 </div>
               </div>

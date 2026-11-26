@@ -80,6 +80,7 @@ use App\Http\Controllers\Api\TeacherBookingController;
 use App\Http\Controllers\Api\TeacherDeviceController;
 use App\Http\Controllers\Api\TeacherDomainController;
 use App\Http\Controllers\Api\TeacherFilePolicyController;
+use App\Http\Controllers\Api\TeacherLeaderboardController;
 use App\Http\Controllers\Api\TeacherPlanController;
 use App\Http\Controllers\Api\TeacherServiceController;
 use App\Http\Controllers\Api\TeacherSiteController;
@@ -392,9 +393,14 @@ Route::prefix('v1')->group(function () {
             Route::post('exams/{exam}/preview', [ExamAttemptController::class, 'preview']);
             Route::post('exams/{exam}/preview/grade', [ExamAttemptController::class, 'previewGrade']);
             Route::post('exams/{exam}/attempts/{attempt}/submit', [ExamAttemptController::class, 'submit']);
+            // Ungraded practice completion — idempotent, no score/pass-fail.
+            Route::post('exams/{exam}/attempts/{attempt}/complete', [ExamAttemptController::class, 'complete']);
             // Autosave: persist in-progress answers so a reload/reconnect can
             // resume the same attempt without losing answers or a slot.
             Route::post('exams/{exam}/attempts/{attempt}/autosave', [ExamAttemptController::class, 'autosave']);
+            // Anti-cheat violation report — the server holds the monotonic
+            // count and decides the threshold (graded exams only).
+            Route::post('exams/{exam}/attempts/{attempt}/violation', [ExamAttemptController::class, 'violation']);
             Route::post('exams/{exam}/attempts/{attempt}/grade', [ExamAttemptController::class, 'grade'])->middleware('role:teacher,owner,admin,permission:exams.manage');
             Route::get('exam-attempts/{attempt}', [ExamAttemptController::class, 'show']);
 
@@ -410,6 +416,7 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/redeem', [ActivationCardController::class, 'redeem'])->middleware('throttle:redeem');
             Route::get('cards/{card}', [ActivationCardController::class, 'show']);
             Route::post('cards/{card}/cancel', [ActivationCardController::class, 'cancel'])->middleware('role:teacher,owner,admin,permission:cards.manage');
+            Route::post('cards/{card}/revoke', [ActivationCardController::class, 'revoke'])->middleware('role:teacher,owner,admin,permission:cards.manage');
             Route::get('cards/batch/{batchId}', [ActivationCardController::class, 'batchInfo'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
 
             // Payment initiation (subscription checkout — Freemius only)
@@ -821,9 +828,14 @@ Route::prefix('v1')->group(function () {
                 Route::get('follow-up', [TeacherStudentFollowUpController::class, 'index']);
                 Route::get('device-policy', [TeacherDeviceController::class, 'policy']);
                 Route::put('device-policy', [TeacherDeviceController::class, 'updatePolicy']);
+                Route::get('leaderboard-policy', [TeacherLeaderboardController::class, 'policy']);
+                Route::put('leaderboard-policy', [TeacherLeaderboardController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);
+                Route::post('students/reset-all-devices', [TeacherDeviceController::class, 'resetAllDevices']);
+                Route::post('students/reset-all-limits', [TeacherDeviceController::class, 'resetAllLimits']);
                 Route::get('students/{student}', [TeacherDeviceController::class, 'showStudent']);
                 Route::get('students/{student}/activity', [TeacherDeviceController::class, 'studentActivity']);
+                Route::get('students/{student}/video-progress', [TeacherDeviceController::class, 'videoProgress']);
                 Route::post('students/{student}/device-limit', [TeacherDeviceController::class, 'setStudentLimit']);
                 Route::delete('students/{student}/device-limit', [TeacherDeviceController::class, 'removeStudentLimit']);
                 Route::post('students/{student}/reset-devices', [TeacherDeviceController::class, 'resetDevices']);

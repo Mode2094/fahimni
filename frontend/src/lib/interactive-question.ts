@@ -36,7 +36,7 @@ export const IQ_LIMITS = {
   messageBytes: 400_000,
 } as const;
 
-export type IqChildType = 'ready' | 'answer' | 'resize' | 'error';
+export type IqChildType = 'ready' | 'answer' | 'resize' | 'error' | 'done';
 
 export interface IqChildMessage {
   channel: typeof IQ_CHANNEL;
@@ -61,7 +61,7 @@ export interface IqInitPayload {
   locked: boolean;
 }
 
-const CHILD_TYPES: readonly IqChildType[] = ['ready', 'answer', 'resize', 'error'];
+const CHILD_TYPES: readonly IqChildType[] = ['ready', 'answer', 'resize', 'error', 'done'];
 
 export function createMountToken(): string {
   const c = globalThis.crypto;
@@ -137,6 +137,7 @@ export type IqGateResult =
   | { kind: 'ready' }
   | { kind: 'answer'; value: unknown }
   | { kind: 'resize'; height: unknown }
+  | { kind: 'done' }
   | { kind: 'error'; message: string };
 
 export interface IqHostGate {
@@ -187,6 +188,10 @@ export function decideIqChildMessage(data: unknown, gate: IqHostGate): IqGateRes
       return { kind: 'answer', value: msg.payload?.value };
     case 'resize':
       return { kind: 'resize', height: msg.payload?.height };
+    case 'done':
+      // The exercise reports it is finished. Only ever a hint — the server
+      // decides completion; the sandbox can never score or end an exam.
+      return { kind: 'done' };
     case 'error':
       return { kind: 'error', message: String(msg.payload?.message ?? 'error') };
     default:

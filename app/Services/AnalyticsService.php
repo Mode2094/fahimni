@@ -63,6 +63,7 @@ class AnalyticsService
 
             $totalAttempts = ExamAttempt::query()
                 ->whereHas('exam', fn ($q) => $q->whereIn('course_id', $courseIds))
+                ->excludePractice()
                 ->count();
 
             return [
@@ -97,6 +98,7 @@ class AnalyticsService
                 ->count(),
             'exam_attempts' => ExamAttempt::byTenant($tenantId)
                 ->where('user_id', $userId)
+                ->excludePractice()
                 ->count(),
             'avg_score' => ExamAttempt::byTenant($tenantId)
                 ->where('user_id', $userId)

@@ -188,11 +188,11 @@ export default function ProfilePage() {
               {leaderboard.length === 0 ? <EmptyState className="border-0 bg-transparent py-6" title={t('لا يوجد ترتيب بعد', 'No ranking yet')} /> : (
                 <div className="space-y-2">
                   {leaderboard.slice(0, 5).map((l: any) => (
-                    <div key={l.user_id} className={`flex items-center gap-3 p-2.5 rounded-xl ${l.user_id === data.id ? 'bg-teal-50 border border-teal-200' : 'border'}`}>
+                    <div key={l.rank} className={`flex items-center gap-3 p-2.5 rounded-xl ${l.is_me ? 'bg-teal-50 border border-teal-200' : 'border'}`}>
                       <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold shrink-0 ${l.rank === 1 ? 'bg-amber-100 text-amber-700' : l.rank === 2 ? 'bg-gray-200 text-gray-600' : l.rank === 3 ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'}`}>{l.rank}</span>
                       <div className="flex-1 flex items-center gap-2 min-w-0">
-                        {l.user_id === data.id && <Star className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
-                        <span className="text-sm font-medium truncate">{l.name}{l.user_id === data.id && <span className="text-teal-700"> ({t('أنا', 'me')})</span>}</span>
+                        {l.is_me && <Star className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                        <span className="text-sm font-medium truncate">{l.name}{l.is_me && <span className="text-teal-700"> ({t('أنا', 'me')})</span>}</span>
                       </div>
                       <span className="text-sm font-bold text-amber-600 shrink-0">{l.points}</span>
                     </div>

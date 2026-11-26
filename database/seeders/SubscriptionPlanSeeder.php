@@ -46,6 +46,9 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
                 ['secure_playback_enabled', 'true', 'boolean'],
+                // العلامة المائية المُخصّصة — متاحة على «المحترف» و«المتقدم» فقط.
+                // الإغلاق هنا مقصود: الأساسية لا تشملها (الحماية الأساسية تبقى مشمولة).
+                ['video_watermark', 'false', 'boolean'],
                 // "Fixed on for everyone" gates the admin plan editor hides
                 // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
                 ['assignments_enabled', 'true', 'boolean'],
@@ -86,6 +89,8 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
                 ['secure_playback_enabled', 'true', 'boolean'],
+                // العلامة المائية المُخصّصة — متاحة على «المحترف» و«المتقدم» فقط.
+                ['video_watermark', 'true', 'boolean'],
                 // "Fixed on for everyone" gates the admin plan editor hides
                 // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
                 ['assignments_enabled', 'true', 'boolean'],
@@ -128,6 +133,8 @@ class SubscriptionPlanSeeder extends Seeder
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
                 ['secure_playback_enabled', 'true', 'boolean'],
+                // العلامة المائية المُخصّصة — متاحة على «المحترف» و«المتقدم» فقط.
+                ['video_watermark', 'true', 'boolean'],
                 // "Fixed on for everyone" gates the admin plan editor hides
                 // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
                 ['assignments_enabled', 'true', 'boolean'],

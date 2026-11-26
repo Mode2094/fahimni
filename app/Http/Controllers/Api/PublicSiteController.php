@@ -9,6 +9,7 @@ use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\Lesson;
+use App\Models\LessonProgress;
 use App\Models\Post;
 use App\Models\SubscriptionPlan;
 use App\Models\SupportTicket;
@@ -16,10 +17,12 @@ use App\Models\Tenant;
 use App\Models\TenantSetting;
 use App\Models\TicketMessage;
 use App\Models\User;
+use App\Services\CourseAccessService;
 use App\Services\VideoProtectionService;
 use App\Support\FeatureCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
 class PublicSiteController extends Controller
@@ -281,7 +284,7 @@ class PublicSiteController extends Controller
         // members. Staff/owner always see everything. Membership never creates
         // an enrolment, so seats are unaffected.
         $memberGroupIds = ($user && ! $isOwner)
-            ? \Illuminate\Support\Facades\DB::table('course_group_members as m')
+            ? DB::table('course_group_members as m')
                 ->join('course_groups as g', 'g.id', '=', 'm.course_group_id')
                 ->where('g.course_id', $course->id)
                 ->where('g.is_active', true)
@@ -289,7 +292,7 @@ class PublicSiteController extends Controller
                 ->pluck('g.id')->all()
             : [];
 
-        $lessonGroupIds = \Illuminate\Support\Facades\DB::table('course_group_lesson as l')
+        $lessonGroupIds = DB::table('course_group_lesson as l')
             ->join('course_groups as g', 'g.id', '=', 'l.course_group_id')
             ->where('g.course_id', $course->id)
             ->get(['l.lesson_id', 'l.course_group_id'])
@@ -312,12 +315,27 @@ class PublicSiteController extends Controller
         $intervalDays = max(1, (int) $course->drip_interval_days);
         $position = 0;
 
-        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $isOwner) {
+        // Per-lesson completion for this enrollment (drives the "done" tick and
+        // lets the client skip a redundant completion call). One query for the
+        // whole course; `withoutTenant()` because the public route has no
+        // tenant context.
+        $completedByLesson = $enrollment
+            ? LessonProgress::withoutTenant()
+                ->where('enrollment_id', $enrollment->id)
+                ->where('status', 'completed')
+                ->pluck('lesson_id')
+                ->all()
+            : [];
+        $completedByLesson = array_flip($completedByLesson);
+
+        $access = app(CourseAccessService::class);
+
+        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $completedByLesson, $access) {
             return [
                 'id' => $section->id,
                 'title' => $section->title,
                 'sort_order' => $section->sort_order,
-                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $isOwner) {
+                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $course, $lessonVisible, $completedByLesson, $access) {
                     $position++;
 
                     // Hidden for this student's group — not merely locked.
@@ -347,6 +365,12 @@ class PublicSiteController extends Controller
                         'locked' => $locked,
                         'unlock_at' => $locked ? $unlockAt?->toIso8601String() : null,
                         'position' => $position,
+                        // Completion + the exact watch policy for this lesson.
+                        // `required_watch_seconds` is 0 for non-video lessons.
+                        // Completion is per-student: null for a guest / a staff
+                        // preview, so the public curriculum never leaks it.
+                        'completed' => $enrollment ? isset($completedByLesson[$lesson->id]) : null,
+                        'required_watch_seconds' => $locked ? 0 : $access->requiredWatchSeconds($lesson),
                         'file_url' => ! $locked && $file
                             ? '/lessons/'.$lesson->id.'/file-ticket?tenant_id='.$course->tenant_id
                             : null,
@@ -360,6 +384,10 @@ class PublicSiteController extends Controller
         return response()->json([
             'course' => $this->coursePayload($course),
             'sections' => $sections,
+            // The caller's active enrollment for this course (null for a guest
+            // or staff previewing). The lesson player needs it to record
+            // progress against the right enrollment.
+            'enrollment_id' => $enrollment?->id,
             // Whether the caller is enrolled (owner/staff count as enrolled):
             // drives the "Enrolled / Guest" badge on the lesson page.
             'is_enrolled' => $enrolled,
@@ -628,6 +656,7 @@ class PublicSiteController extends Controller
             ],
             // True when the viewer is the author / authorised staff.
             'preview' => $isOwner,
+            'enrollment_id' => $enrollment?->id,
             'contents' => $contents,
             'exercise' => $exercise,
         ]);

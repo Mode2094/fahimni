@@ -1,3 +1,5 @@
+import { plural, type Locale } from '@/lib/ar-format';
+
 /**
  * «إنشاء نسخة» — مساعدات نقية لتقارير النسخ.
  *
@@ -41,17 +43,18 @@ const SKIP_LABELS: Record<string, [string, string]> = {
 /** رسالة واضحة: ماذا نُسخ بالضبط، وما الذي تعذّر نسخه بأمان. */
 export function summarizeDuplicateReport(report: DuplicateReport, locale: string): DuplicateSummary {
   const ar = locale === 'ar';
+  const l = locale as Locale;
   const t = (a: string, e: string) => (ar ? a : e);
 
   const first: string[] = [];
-  if (report.sections > 0) first.push(`${report.sections} ${t('وحدة', 'units')}`);
-  if (report.lessons > 0) first.push(`${report.lessons} ${t('درس', 'lessons')}`);
-  if (report.exams > 0) first.push(`${report.exams} ${t('اختبار', 'exams')}`);
-  if (report.assignments > 0) first.push(`${report.assignments} ${t('واجب', 'assignments')}`);
+  if (report.sections > 0) first.push(plural.units(report.sections, l));
+  if (report.lessons > 0) first.push(plural.lessons(report.lessons, l));
+  if (report.exams > 0) first.push(plural.exams(report.exams, l));
+  if (report.assignments > 0) first.push(plural.assignments(report.assignments, l));
 
   const reused: string[] = [];
-  if (report.videos_reused > 0) reused.push(`${report.videos_reused} ${t('فيديو', 'videos')}`);
-  if (report.files_reused > 0) reused.push(`${report.files_reused} ${t('ملف', 'files')}`);
+  if (report.videos_reused > 0) reused.push(plural.videos(report.videos_reused, l));
+  if (report.files_reused > 0) reused.push(plural.files(report.files_reused, l));
 
   const title = t('تم إنشاء النسخة (مسودة)', 'Copy created (draft)');
 
@@ -63,7 +66,11 @@ export function summarizeDuplicateReport(report: DuplicateReport, locale: string
     );
   }
   if (report.questions_reused > 0) {
-    parts.push(t(`أُعيد ربط ${report.questions_reused} سؤال من بنك الأسئلة`, `${report.questions_reused} question(s) relinked from the bank`));
+    parts.push(
+      ar
+        ? `أُعيد ربط ${plural.questions(report.questions_reused, l)} من بنك الأسئلة`
+        : `Relinked ${plural.questions(report.questions_reused, l)} from the bank`,
+    );
   }
   if (!parts.length) parts.push(t('نسخة فارغة جاهزة للتحرير', 'An empty copy ready to edit'));
 

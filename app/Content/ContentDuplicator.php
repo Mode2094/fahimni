@@ -249,6 +249,7 @@ class ContentDuplicator
         foreach (ExamQuestion::withoutTenant()->where('exam_id', $source->id)->orderBy('sort_order')->get() as $examQuestion) {
             if (! Question::withoutTenant()->whereKey($examQuestion->question_id)->exists()) {
                 $report['skipped'][] = ['type' => 'question', 'title' => 'missing question'];
+
                 continue;
             }
 
@@ -413,7 +414,9 @@ class ContentDuplicator
             'title' => $source->title,
             'description' => $source->description,
             'points' => $source->points,
-            'due_at' => $source->due_at,
+            // نسخة جديدة = مسودة لن تطبيق جديد: لا نرث موعد تسليم النسخة
+            // الأصلية (قد يكون في الماضي أو مرتبطاً بفصلٍ آخر) — يحدده المعلم.
+            'due_at' => null,
             'allow_late' => $source->allow_late,
             // نسخة جديدة = مسودة.
             'is_published' => false,

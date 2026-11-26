@@ -15,10 +15,28 @@ class Exam extends Model
 {
     use BelongsToTenant, HasFactory, HasUuid, SoftDeletes;
 
+    /** Formal graded examination (default). */
+    public const MODE_GRADED = 'graded';
+
+    /** Ungraded interactive skill practice. */
+    public const MODE_PRACTICE = 'practice';
+
+    /**
+     * Anti-cheat threshold for a formal graded exam: reaching this many
+     * server-recorded violations auto-submits the attempt. Single source of
+     * truth — the client is told this number and never invents its own.
+     */
+    public const ANTI_CHEAT_VIOLATION_LIMIT = 3;
+
+    public function isPractice(): bool
+    {
+        return $this->assessment_mode === self::MODE_PRACTICE;
+    }
+
     protected $fillable = [
         'tenant_id', 'course_id', 'section_id', 'title', 'description',
         'duration_minutes', 'pass_mark_percent', 'max_attempts',
-        'random_questions_count', 'anti_cheat_enabled',
+        'random_questions_count', 'anti_cheat_enabled', 'assessment_mode',
         'shuffle_questions', 'shuffle_options',
         'show_result_immediately', 'show_correct_answers',
         'is_published', 'starts_at', 'ends_at', 'sort_order', 'metadata',

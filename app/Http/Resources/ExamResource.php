@@ -20,6 +20,7 @@ class ExamResource extends JsonResource
             'max_attempts' => $this->max_attempts,
             'random_questions_count' => $this->random_questions_count,
             'anti_cheat_enabled' => $this->anti_cheat_enabled,
+            'assessment_mode' => $this->assessment_mode ?? 'graded',
             'shuffle_questions' => $this->shuffle_questions,
             'shuffle_options' => $this->shuffle_options,
             'show_result_immediately' => $this->show_result_immediately,

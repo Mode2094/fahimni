@@ -50,6 +50,7 @@ export function InteractiveHtmlQuestion({
   autoCapture = true,
   value = '',
   onChange,
+  onDone,
   locked = false,
 }: {
   questionId: string;
@@ -60,6 +61,8 @@ export function InteractiveHtmlQuestion({
   autoCapture?: boolean;
   value?: string;
   onChange?: (v: string) => void;
+  /** Fired when the exercise reports itself finished (ungraded practice). */
+  onDone?: () => void;
   locked?: boolean;
 }) {
   const { locale } = useLocale();
@@ -151,6 +154,9 @@ export function InteractiveHtmlQuestion({
         case 'resize':
           setFrameHeight(clampHeight(decision.height));
           break;
+        case 'done':
+          onDone?.();
+          break;
         case 'error':
           setError(decision.message.slice(0, 300));
           break;
@@ -161,7 +167,7 @@ export function InteractiveHtmlQuestion({
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [sendInit, token, onChange]);
+  }, [sendInit, token, onChange, onDone]);
 
   // Restore the stored answer when navigating back to an answered question.
   // Skips a value the frame itself just produced, and never fires once the

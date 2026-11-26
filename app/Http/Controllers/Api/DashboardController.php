@@ -10,6 +10,7 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
+use App\Models\Tenant;
 use App\Models\User;
 use App\Services\AdminNotificationService;
 use App\Services\SuperAdminStatisticsService;
@@ -127,7 +128,13 @@ class DashboardController extends Controller
     private function studentDashboard(string $tenantId, $user): JsonResponse
     {
         $now = now();
-        $taskWindowEnd = $now->copy()->addDays(7);
+        // The task window is anchored to the tenant's LOCAL day, not the
+        // server's UTC day: a task due late tonight in the tenant's timezone
+        // must never be dropped just because UTC has already rolled over.
+        // `$now` stays an absolute instant (correct for "overdue"), while the
+        // window end covers the rest of the tenant's today plus 7 days.
+        $timezone = Tenant::whereKey($tenantId)->value('timezone') ?: config('app.timezone');
+        $taskWindowEnd = $now->copy()->setTimezone($timezone)->endOfDay()->addDays(7);
         $courseIds = Enrollment::byTenant($tenantId)
             ->where('user_id', $user->id)
             ->effective()
