@@ -49,6 +49,12 @@ class PlatformSettingController extends Controller
             'student_app_android_url' => $settings['student_app_android_url'] ?? '',
             'student_app_ios_url' => $settings['student_app_ios_url'] ?? '',
             'platform_domain' => $settings['platform_domain'] ?? 'lms.example.com',
+            // ── Custom domain target (Cloudflare for SaaS) ──
+            // Centrally changeable so the target address never lives in code.
+            'cloudflare_saas_enabled' => (bool) ($settings['cloudflare_saas_enabled'] ?? config('services.cloudflare.enabled', false)),
+            'cloudflare_saas_configured' => \App\Services\CloudflareSaasService::configured(),
+            'custom_domain_cname_target' => (string) ($settings['custom_domain_cname_target'] ?? config('services.cloudflare.cname_target', '')),
+            'custom_domain_fallback_origin' => (string) ($settings['custom_domain_fallback_origin'] ?? config('services.cloudflare.fallback_origin', '')),
             // ── Booking gateways (student ↔ teacher one-off payments) ──
             'paytabs_profile_id' => $settings['paytabs_profile_id'] ?? '',
             'paytabs_server_key' => '',
@@ -126,6 +132,9 @@ class PlatformSettingController extends Controller
             'student_app_android_url' => 'nullable|string|max:500',
             'student_app_ios_url' => 'nullable|string|max:500',
             'platform_domain' => 'nullable|string|max:190',
+            'cloudflare_saas_enabled' => 'boolean',
+            'custom_domain_cname_target' => 'nullable|string|max:190',
+            'custom_domain_fallback_origin' => 'nullable|string|max:190',
             'paytabs_profile_id' => 'nullable|string|max:100',
             'paytabs_server_key' => 'nullable|string|max:500',
             'paytabs_enabled' => 'boolean',

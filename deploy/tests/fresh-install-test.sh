@@ -134,18 +134,25 @@ if [ "$open" = "$close" ] && [ "$open" -gt 0 ]; then pass "Caddyfile braces bala
 
 # ── T6b: custom teacher domains are served without a per-domain edit ─────────
 # The apex/www/api hosts are written literally, but a teacher's OWN domain is
-# unknown when the file is generated. It must therefore be served by an
-# on-demand-TLS catch-all whose `ask` gate is the platform (which only blesses a
-# VERIFIED domain), so connecting a new domain needs no server edit and no
-# reload — and no certificate is issued for a hostname nobody owns.
-printf '\n-- T6b custom domains are handled by an on-demand-TLS catch-all\n'
-if grep -q 'on_demand_tls {' "$CADDYFILE"; then pass "global on_demand_tls block present"; else fail "no on_demand_tls block (custom domains cannot get a cert)"; fi
-if grep -q 'public/tls/ask' "$CADDYFILE"; then pass "ask gate points at the platform endpoint"; else fail "no ask gate (any hostname could request a cert)"; fi
+# unknown when the file is generated. It is served by the `:443` catch-all:
+# Cloudflare for SaaS terminates public TLS at the edge and forwards to the
+# zone's fallback origin, so the origin only presents Caddy's internal
+# certificate on the Cloudflare→origin hop (zone SSL mode "Full"). No public
+# certificate is ever requested per custom domain, and connecting a new domain
+# needs no server edit and no reload. The on-demand-TLS `ask` gate is retained
+# as defence-in-depth in case the catch-all is switched back to `tls on_demand`.
+printf '\n-- T6b custom domains are handled by the Cloudflare-for-SaaS catch-all\n'
+if grep -q 'public/tls/ask' "$CADDYFILE"; then pass "ask gate retained (defence-in-depth)"; else fail "no ask gate (any hostname could request a cert)"; fi
 if grep -qE '^:443 \{' "$CADDYFILE"; then pass ":443 catch-all present for unknown hosts"; else fail "no :443 catch-all (custom domains are never served)"; fi
-if awk '/^:443 \{/{f=1} f&&/on_demand/{print;exit}' "$CADDYFILE" | grep -q 'on_demand'; then
-  pass "catch-all issues certificates on demand"
+if awk '/^:443 \{/{f=1} f&&/tls internal/{print;exit}' "$CADDYFILE" | grep -q 'tls internal'; then
+  pass "catch-all presents the origin's internal certificate (Cloudflare terminates public TLS)"
 else
-  fail "catch-all has no on_demand TLS"
+  fail "catch-all does not use tls internal"
+fi
+if awk '/^:443 \{/{f=1} f&&/tls *\{/{print;exit}' "$CADDYFILE" | grep -q 'on_demand'; then
+  fail "catch-all still issues public certificates on demand (should be Cloudflare-terminated)"
+else
+  pass "catch-all does not request public certificates"
 fi
 if grep -qE '^:80 \{' "$CADDYFILE"; then pass ":80 catch-all redirects custom domains to HTTPS"; else fail "no :80 catch-all"; fi
 

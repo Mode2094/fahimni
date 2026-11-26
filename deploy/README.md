@@ -146,8 +146,10 @@ Exact records, verification commands and rollback live in
 - Use TTL 300 during cutover, raise afterwards.
 - **Do not alter MX or TXT records.**
 - Verify from outside: `dig +short fahimni.me api.fahimni.me staging.fahimni.me api-staging.fahimni.me`.
-- Keep Cloudflare/proxy disabled until a DNS-01 setup is chosen; HTTP-01
-  issuance needs port 80 reachable directly.
+- The apex IS behind the Cloudflare proxy, and the origin's `:443` is locked to
+  Cloudflare ranges (`fahimni-cf-firewall`). Teacher custom domains are therefore
+  served via **Cloudflare for SaaS** — see `deploy/cloudflare-saas.md`. Never
+  point a teacher domain straight at the origin IP and never relax the firewall.
 - Only after DNS resolves should Caddy be reloaded, otherwise ACME retries and
   the staging/production TLS check fails (Caddy keeps running, but TLS is not
   ready).

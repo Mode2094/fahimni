@@ -115,4 +115,27 @@ describe('TeacherDomainModal', () => {
       expect(call).toBeTruthy();
     });
   });
+
+  it('renders Cloudflare-mode records and the apex note when provided', async () => {
+    const cfDns = {
+      mode: 'cloudflare_saas',
+      cname_host: '@',
+      cname_value: 'customers.fahimni.me',
+      apex_note: 'استخدم سجل ALIAS للجذر (@).',
+      records: [
+        { type: 'CNAME', host: '@', value: 'customers.fahimni.me', purpose: 'الجذر / apex' },
+        { type: 'TXT', host: '_cf.brand.com', value: 'own-token-123', purpose: 'تحقق الملكية' },
+      ],
+      steps: ['أضف سجل CNAME'],
+    };
+    vi.stubGlobal('fetch', stubFetch({ status: status({ dns_instructions: cfDns }) }));
+
+    render(<TeacherDomainModal open onOpenChange={() => {}} teacher={teacher} />);
+    await screen.findByTestId('domain-status');
+
+    const text = screen.getByTestId('teacher-domain-modal').textContent || '';
+    expect(text).toContain('customers.fahimni.me');
+    expect(text).toContain('own-token-123');
+    expect(screen.getByTestId('apex-note')).toBeInTheDocument();
+  });
 });

@@ -314,13 +314,28 @@ export default function DomainManager() {
                   <p className="text-sm text-gray-400">{t('اربط الدومين أولاً لعرض الخطوات', 'Connect a domain first to see the steps')}</p>
                 ) : (
                   <div className="space-y-3">
-                    <div className="p-3 rounded-xl border bg-gray-50/60">
-                      <p className="text-[11px] text-gray-400 mb-1">CNAME · {t('المضيف', 'Host')}: <b dir="ltr">{data.dns_instructions?.cname_host}</b></p>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-xs bg-white border rounded-lg px-2 py-1.5" dir="ltr">{data.dns_instructions?.cname_value}</code>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copy(data.dns_instructions?.cname_value, 'CNAME')}><Copy className="h-3.5 w-3.5" /></Button>
+                    {(data.dns_instructions?.records?.length ?? 0) > 0 ? (
+                      (data.dns_instructions.records as { type: string; host: string; value: string; purpose?: string }[]).map((r, i) => (
+                        <div key={i} className="p-3 rounded-xl border bg-gray-50/60">
+                          <p className="text-[11px] text-gray-400 mb-1">{r.type} · {t('المضيف', 'Host')}: <b dir="ltr">{r.host}</b>{r.purpose ? ` · ${r.purpose}` : ''}</p>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 text-xs bg-white border rounded-lg px-2 py-1.5 truncate" dir="ltr">{r.value}</code>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copy(r.value, r.type)}><Copy className="h-3.5 w-3.5" /></Button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-3 rounded-xl border bg-gray-50/60">
+                        <p className="text-[11px] text-gray-400 mb-1">CNAME · {t('المضيف', 'Host')}: <b dir="ltr">{data.dns_instructions?.cname_host}</b></p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 text-xs bg-white border rounded-lg px-2 py-1.5" dir="ltr">{data.dns_instructions?.cname_value}</code>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copy(data.dns_instructions?.cname_value, 'CNAME')}><Copy className="h-3.5 w-3.5" /></Button>
+                        </div>
                       </div>
-                    </div>
+                    )}
+                    {data.dns_instructions?.apex_note && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">{data.dns_instructions.apex_note}</p>
+                    )}
                     <ol className="space-y-2 text-xs text-gray-500">
                       {(data.dns_instructions?.steps || []).map((s: string, i: number) => (
                         <li key={i} className="flex gap-2"><span className="text-teal-600 font-bold shrink-0">{i + 1}.</span>{s}</li>
