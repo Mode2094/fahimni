@@ -160,6 +160,11 @@ export async function GET(request: Request) {
   }
 
   let site: SitePayload | null = null;
+  // True when the tenant was resolved from the Host (custom domain /
+  // `{slug}.{platform}` subdomain) rather than a `/t/{slug}` Referer: on the
+  // teacher's own host the site is served from the ROOT, so the PWA must
+  // install from `/`, not the internal `/t/{slug}`.
+  let hostResolved = false;
 
   // 1) Referer-based tenant resolution: same-origin page /t/{slug} → slug.
   const match = referer.match(/\/t\/([^/?#]+)/);
@@ -171,6 +176,7 @@ export async function GET(request: Request) {
   // 2) Host-based resolution: custom domains and teacher subdomains.
   if (!site && host && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/.test(host)) {
     site = await fetchSite(`/public/domain/${encodeURIComponent(host)}`);
+    hostResolved = Boolean(site?.slug);
   }
 
   if (!site || !site.slug) {
@@ -180,7 +186,8 @@ export async function GET(request: Request) {
   }
 
   const name = site.name?.trim() || 'منصتي';
-  const teacherPath = `/t/${encodeURIComponent(site.slug)}`;
+  const basePath = hostResolved ? '' : `/t/${encodeURIComponent(site.slug)}`;
+  const start_url = basePath || '/';
   const logo = site.logo_url ? resolveIcon(site.logo_url) : null;
 
   const manifest = {
@@ -189,9 +196,9 @@ export async function GET(request: Request) {
     description:
       site.site_config?.about_text?.trim().slice(0, 200) ||
       'منصة تعليمية: دورات، طلاب، امتحانات وبث مباشر.',
-    start_url: teacherPath,
-    scope: `${teacherPath}/`,
-    id: teacherPath,
+    start_url,
+    scope: basePath ? `${basePath}/` : '/',
+    id: start_url,
     display: 'standalone',
     background_color: '#ffffff',
     theme_color: site.primary_color || '#2563eb',
