@@ -11,6 +11,7 @@ import {
   Sparkles, ArrowLeftCircle, ChevronLeft, GraduationCap, Menu, X, Users,
 } from 'lucide-react';
 import Link from 'next/link';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -18,6 +19,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
   const { slug } = use(params);
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const [posts, setPosts] = useState<any[]>([]);
   const [site, setSite] = useState<any>(null);
@@ -64,18 +66,18 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
       {/* ─── Header ─────────────────────────────── */}
       <header className="sticky top-0 z-50 backdrop-blur-xl border-b border-gray-100 bg-white/90">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <Link href={`/t/${slug}`} className="flex items-center gap-2.5">
+          <Link href={base || '/'} className="flex items-center gap-2.5">
             {site?.logo_url ? <img src={site.logo_url} className="h-9 w-9 rounded-xl object-cover" alt="" /> :
               <span className="flex h-9 w-9 items-center justify-center rounded-xl shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}><GraduationCap className="h-5 w-5 text-white" /></span>}
             <span className="font-bold text-lg">{site?.name || slug}</span>
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
-            <Link href={`/t/${slug}`} className="text-gray-600 hover:text-gray-900 transition-colors">{t('الرئيسية', 'Home')}</Link>
-            <Link href={`/t/${slug}/blog`} className="font-bold" style={{ color: primary }}>{t('المدونة', 'Blog')}</Link>
-            <Link href={`/t/${slug}/register`} className="text-gray-600 hover:text-gray-900 transition-colors">{t('سجل الآن', 'Register')}</Link>
+            <Link href={base || '/'} className="text-gray-600 hover:text-gray-900 transition-colors">{t('الرئيسية', 'Home')}</Link>
+            <Link href={`${base}/blog`} className="font-bold" style={{ color: primary }}>{t('المدونة', 'Blog')}</Link>
+            <Link href={`${base}/register`} className="text-gray-600 hover:text-gray-900 transition-colors">{t('سجل الآن', 'Register')}</Link>
           </nav>
           <div className="flex items-center gap-2">
-            <Link href={`/t/${slug}`}><Button variant="outline" size="sm" className="gap-1.5 rounded-full hidden sm:inline-flex" style={{ borderRadius: '1rem', color: primary, borderColor: `${primary}55` }}><ArrowLeft className="h-3.5 w-3.5" />{t('الرئيسية', 'Home')}</Button></Link>
+            <Link href={base || '/'}><Button variant="outline" size="sm" className="gap-1.5 rounded-full hidden sm:inline-flex" style={{ borderRadius: '1rem', color: primary, borderColor: `${primary}55` }}><ArrowLeft className="h-3.5 w-3.5" />{t('الرئيسية', 'Home')}</Button></Link>
             <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-gray-600" aria-label="menu">
               {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
@@ -84,8 +86,8 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
         {menuOpen && (
           <div className="md:hidden border-t border-gray-100 bg-white px-4 py-3 space-y-1 shadow-xl">
             {[
-              { href: `/t/${slug}`, label: t('الرئيسية', 'Home') },
-              { href: `/t/${slug}/register`, label: t('سجل الآن', 'Register') },
+              { href: base || '/', label: t('الرئيسية', 'Home') },
+              { href: `${base}/register`, label: t('سجل الآن', 'Register') },
             ].map((l) => (
               <Link key={l.href} href={l.href} onClick={() => setMenuOpen(false)} className="block px-3 py-2.5 rounded-xl text-sm text-gray-700 hover:bg-gray-50">{l.label}</Link>
             ))}
@@ -136,7 +138,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
             title={t('لا توجد مقالات بعد', 'No posts yet')}
             description={t('المعلم لم ينشر أي مقال حتى الآن — عُد لاحقاً أو اكتشف الكورسات', 'Your teacher has not published any articles yet — check back later or explore the courses')}
             action={
-              <Link href={`/t/${slug}#courses`} className="inline-block mt-2">
+              <Link href={`${base}#courses`} className="inline-block mt-2">
                 <Button className="gap-2 rounded-full text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
                   <BookOpen className="h-4 w-4" /> {t('تصفح الكورسات', 'Browse courses')}
                 </Button>
@@ -147,7 +149,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
           <>
             {/* المقال المميز */}
             {featured && !search && category === 'all' && (
-              <Link href={`/t/${slug}/blog/${featured.slug}`} className="group block mb-12">
+              <Link href={`${base}/blog/${featured.slug}`} className="group block mb-12">
                 <div className="grid lg:grid-cols-2 gap-0 overflow-hidden rounded-[2rem] shadow-xl bg-white border border-gray-100 transition-all hover:shadow-2xl">
                   <div className="relative h-64 lg:h-auto overflow-hidden" style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}>
                     {featured.cover_image ? <img src={featured.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={featured.title} /> : (
@@ -179,7 +181,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
             {/* بقية المقالات */}
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {rest.map((p) => (
-                <Link key={p.id} href={`/t/${slug}/blog/${p.slug}`} className="group">
+                <Link key={p.id} href={`${base}/blog/${p.slug}`} className="group">
                   <div className="border-0 shadow-sm card-hover overflow-hidden h-full bg-white border border-gray-100 rounded-[1.5rem] flex flex-col">
                     <div className="h-44 relative overflow-hidden flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${primary}22, ${accent}18)` }}>
                       {p.cover_image ? <img src={p.cover_image} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt={p.title} /> : (
@@ -222,7 +224,7 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
           <div className="relative z-10">
             <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">{t('جاهز تبدأ رحلتك التعليمية؟', 'Ready to start learning?')}</h2>
             <p className="text-white/60 text-sm mb-6">{t('سجل الآن ووصلك كل جديد من معلمك', 'Register now to get the latest from your teacher')}</p>
-            <Link href={`/t/${slug}/register`}>
+            <Link href={`${base}/register`}>
               <Button size="lg" className="h-13 px-10 rounded-full text-white text-base shadow-xl hover:scale-105 transition-transform" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
                 {t('سجل الآن', 'Register now')} <Users className="h-5 w-5" />
               </Button>
@@ -240,9 +242,9 @@ export default function BlogListPage({ params }: { params: Promise<{ slug: strin
             <span className="font-bold text-white text-sm">{site?.name || slug}</span>
           </div>
           <div className="flex items-center gap-5 text-white/40 text-xs">
-            <Link href={`/t/${slug}`} className="hover:text-white transition-colors">{t('الرئيسية', 'Home')}</Link>
-            <Link href={`/t/${slug}#courses`} className="hover:text-white transition-colors">{t('الكورسات', 'Courses')}</Link>
-            <Link href={`/t/${slug}/register`} className="hover:text-white transition-colors">{t('سجل الآن', 'Register')}</Link>
+            <Link href={base || '/'} className="hover:text-white transition-colors">{t('الرئيسية', 'Home')}</Link>
+            <Link href={`${base}#courses`} className="hover:text-white transition-colors">{t('الكورسات', 'Courses')}</Link>
+            <Link href={`${base}/register`} className="hover:text-white transition-colors">{t('سجل الآن', 'Register')}</Link>
             <Link href="/terms" className="hover:text-white transition-colors">{t('الشروط', 'Terms')}</Link>
             <Link href="/privacy" className="hover:text-white transition-colors">{t('الخصوصية', 'Privacy')}</Link>
             <Link href="/refund-policy" className="hover:text-white transition-colors">{t('استرداد الأموال', 'Refunds')}</Link>

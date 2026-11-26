@@ -18,6 +18,7 @@ import { Captcha } from '@/components/security/captcha';
 import Link from 'next/link';
 import PlatformLogo from '@/components/brand/platform-logo';
 import { setStoredTenantId } from '@/lib/auth-client';
+import { useTenantHost } from '@/lib/tenant-host';
 
 function StudentLoginPageInner() {
   const [email, setEmail] = useState('');
@@ -34,7 +35,10 @@ function StudentLoginPageInner() {
   const [captchaKey, setCaptchaKey] = useState(0);
   const router = useRouter();
   const search = useSearchParams();
-  const tenantSlug = search.get('tenant_slug') || '';
+  const { slug: hostTenantSlug } = useTenantHost();
+  // On a teacher's own host the tenant comes from the host itself; the query
+  // param is only needed on the platform (`?tenant_slug=`).
+  const tenantSlug = search.get('tenant_slug') || hostTenantSlug || '';
   const { settings } = useSettings();
   const from = search.get('from') || '';
   const login = useAuth((s) => s.login);
@@ -149,7 +153,7 @@ function StudentLoginPageInner() {
               <div key={i} className="flex items-center gap-3 text-white/80"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10"><it.icon className="h-4 w-4" /></div><span className="text-sm">{it.text}</span></div>
             ))}
           </div>
-          <div className="mt-auto pt-14 text-white/40 text-xs">© 2026 منصة فهمني · {locale === 'ar' ? 'جميع الحقوق محفوظة' : 'All rights reserved'}</div>
+          <div className="mt-auto pt-14 text-white/40 text-xs">© 2026 {settings.platform_name || 'فهمني'} · {locale === 'ar' ? 'جميع الحقوق محفوظة' : 'All rights reserved'}</div>
         </div>
       </div>
 
@@ -215,7 +219,7 @@ function StudentLoginPageInner() {
             )}
           </form>
           <div className="text-center space-y-2">
-            <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href="/register/student" className="text-teal-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>
+            <p className="text-sm text-gray-500">{locale === 'ar' ? 'ليس لديك حساب؟' : "Don't have an account?"} <Link href={tenantSlug ? `/register/student?tenant_slug=${tenantSlug}` : '/register/student'} className="text-teal-600 font-medium hover:underline">{locale === 'ar' ? 'سجل كطالب الآن' : 'Register'}</Link></p>
             <Link href="/" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"><ArrowLeft className="h-3 w-3" /> {locale === 'ar' ? 'العودة للصفحة الرئيسية' : 'Back home'}</Link>
           </div>
         </div>

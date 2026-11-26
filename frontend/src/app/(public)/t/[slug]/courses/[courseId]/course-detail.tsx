@@ -15,6 +15,7 @@ import {
   BookOpen, Clock, Layers, Tag, PlayCircle, Lock, ArrowLeft, CheckCircle2,
   GraduationCap, MessageCircle, Loader2, X, ChevronDown, ShieldCheck,
 } from 'lucide-react';
+import { useTenantBasePath } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -44,6 +45,7 @@ export default function CourseDetail({
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  const base = useTenantBasePath(slug);
 
   const [site, setSite] = useState<any>(initialSite ?? null);
   const [course, setCourse] = useState<any>(null);
@@ -104,7 +106,7 @@ export default function CourseDetail({
   const teacherWhatsapp = cfg.contact_whatsapp || null;
   const teacherName = site?.name || t('المعلم', 'the teacher');
   const courseUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/t/${slug}/courses/${courseId}`
+    ? `${window.location.origin}${base}/courses/${courseId}`
     : '';
 
   const waMessage = t(
@@ -194,13 +196,13 @@ export default function CourseDetail({
         <StorefrontHeader
           site={site} slug={slug} primary={primary} accent={accent} radius="1rem"
           font={{ heading: headingFont, body: headingFont }} loggedIn={loggedIn}
-          links={[{ href: `/t/${slug}/courses`, label: t('كل الكورسات', 'All courses') }]}
+          links={[{ href: `${base}/courses`, label: t('كل الكورسات', 'All courses') }]}
         />
         <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-4 pt-32 text-center">
           <BookOpen className="h-12 w-12 text-slate-300" />
           <p className="text-lg font-bold">{t('هذه الدورة غير متوفرة', 'This course is not available')}</p>
           <p className="text-sm text-slate-500">{t('ربما تم حذفها أو إلغاء نشرها.', 'It may have been removed or unpublished.')}</p>
-          <Link href={`/t/${slug}/courses`} className="mt-2">
+          <Link href={`${base}/courses`} className="mt-2">
             <Button variant="outline">{t('تصفّح الكورسات المتاحة', 'Browse available courses')}</Button>
           </Link>
         </div>
@@ -209,8 +211,8 @@ export default function CourseDetail({
   }
 
   const navLinks = [
-    { href: `/t/${slug}`, label: t('الرئيسية', 'Home') },
-    { href: `/t/${slug}/courses`, label: t('كل الكورسات', 'All courses') },
+    { href: base || '/', label: t('الرئيسية', 'Home') },
+    { href: `${base}/courses`, label: t('كل الكورسات', 'All courses') },
     ...(teacherWhatsapp ? [{ href: 'https://wa.me/' + String(teacherWhatsapp).replace(/[^\d]/g, ''), label: t('تواصل', 'Contact') }] : []),
   ];
 
@@ -226,7 +228,7 @@ export default function CourseDetail({
         <section className="relative overflow-hidden border-b border-slate-100 bg-white">
           <div className="mx-auto grid max-w-6xl gap-8 px-4 py-8 sm:py-12 lg:grid-cols-[1.15fr_1fr] lg:gap-12">
             <div className="order-2 lg:order-1">
-              <Link href={`/t/${slug}/courses`} className="mb-5 inline-flex min-h-[44px] items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
+              <Link href={`${base}/courses`} className="mb-5 inline-flex min-h-[44px] items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
                 <ArrowLeft className="h-4 w-4" /> {t('كل الكورسات', 'All courses')}
               </Link>
               <h1 className="text-2xl font-bold leading-snug sm:text-4xl" style={{ fontFamily: headingFont }}>{course.title}</h1>
@@ -268,7 +270,7 @@ export default function CourseDetail({
                         </Button>
                       </a>
                     ) : (
-                      <Link href={`/t/${slug}/register?course=${courseId}`}>
+                      <Link href={`${base}/register?course=${courseId}`}>
                         <Button size="lg" variant="outline" className="min-h-[48px] gap-2 rounded-full px-6" style={{ color: primary, borderColor: `${primary}55` }}>
                           {t('اطلب الاشتراك', 'Request enrollment')}
                         </Button>
@@ -431,7 +433,7 @@ export default function CourseDetail({
                     <div className="flex aspect-video flex-col items-center justify-center gap-4 rounded-2xl bg-slate-900 px-6 text-center">
                       <ShieldCheck className="h-12 w-12 text-white/60" />
                       <p className="text-sm text-white/80">{t('أنشئ حساباً مجانياً لمشاهدة هذه المعاينة.', 'Create a free account to watch this preview.')}</p>
-                      <Link href={`/t/${slug}/register?course=${courseId}`}>
+                      <Link href={`${base}/register?course=${courseId}`}>
                         <Button className="min-h-[44px] rounded-full px-6 text-white" style={{ background: `linear-gradient(135deg, ${primary}, ${accent})` }}>
                           {t('إنشاء حساب مجاني', 'Create a free account')}
                         </Button>

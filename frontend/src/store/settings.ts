@@ -62,15 +62,48 @@ export type PlatformSettings = {
   trial_days: number;
 };
 
+/**
+ * Teacher branding shown when the browser is on the teacher's OWN host (custom
+ * domain / `{slug}.{platform}` subdomain). It overrides the platform identity
+ * for display only — the settings row is never rewritten.
+ */
+export type TenantBrandingOverride = {
+  name: string;
+  logoUrl: string | null;
+  primary: string;
+  accent: string;
+};
+
 type SettingsState = {
   settings: PlatformSettings;
+  /** Present only on a teacher host; `null` on the platform. */
+  tenantBranding: TenantBrandingOverride | null;
   loaded: boolean;
   load: () => Promise<void>;
+  setTenantBranding: (branding: TenantBrandingOverride | null) => void;
   save: (patch: Partial<PlatformSettings>) => Promise<void>;
   formatPrice: (amount: number | string | null | undefined) => string;
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+
+/**
+ * Overlay a teacher's branding onto the platform settings for display. Kept as
+ * a pure helper so `load()`/`save()` re-apply it after any refresh.
+ */
+function applyTenantBranding(
+  settings: PlatformSettings,
+  tenant: TenantBrandingOverride | null,
+): PlatformSettings {
+  if (!tenant) return settings;
+
+  return {
+    ...settings,
+    platform_name: tenant.name || settings.platform_name,
+    logo_url: tenant.logoUrl ?? settings.logo_url,
+    primary_color: tenant.primary || settings.primary_color,
+  };
+}
 
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: {
@@ -131,6 +164,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     trial_days: 7,
   },
   loaded: false,
+  tenantBranding: null,
 
   load: async () => {
     try {
@@ -146,16 +180,26 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // official identity without rewriting the settings row.
       const merged = { ...get().settings, ...d.settings };
       set({
-        settings: {
-          ...merged,
-          platform_name: normalizeBrandName(merged.platform_name),
-          contact_email: normalizeBrandEmail(merged.contact_email),
-        },
+        settings: applyTenantBranding(
+          {
+            ...merged,
+            platform_name: normalizeBrandName(merged.platform_name),
+            contact_email: normalizeBrandEmail(merged.contact_email),
+          },
+          get().tenantBranding,
+        ),
         loaded: true,
       });
     } catch {
       set({ loaded: false });
     }
+  },
+
+  setTenantBranding: (branding) => {
+    set((state) => ({
+      tenantBranding: branding,
+      settings: applyTenantBranding(state.settings, branding),
+    }));
   },
 
   save: async (patch) => {
@@ -171,11 +215,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
     const d = await res.json();
     const merged = { ...get().settings, ...d.settings };
     set({
-      settings: {
-        ...merged,
-        platform_name: normalizeBrandName(merged.platform_name),
-        contact_email: normalizeBrandEmail(merged.contact_email),
-      },
+      settings: applyTenantBranding(
+        {
+          ...merged,
+          platform_name: normalizeBrandName(merged.platform_name),
+          contact_email: normalizeBrandEmail(merged.contact_email),
+        },
+        get().tenantBranding,
+      ),
     });
   },
 
