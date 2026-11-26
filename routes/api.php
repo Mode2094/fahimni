@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
+use App\Http\Controllers\Api\Admin\ManualSubscriptionController;
 use App\Http\Controllers\Api\Admin\ViewAsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
@@ -417,6 +418,12 @@ Route::prefix('v1')->group(function () {
                 Route::post('subscriptions/{subscription}/extend', [AdminController::class, 'subscriptionExtend']);
                 Route::post('subscriptions/{subscription}/extend-trial', [AdminController::class, 'subscriptionExtendTrial']);
                 Route::post('subscriptions/{subscription}/plan', [AdminController::class, 'subscriptionPlan']);
+
+                // ─── Manual subscription management (per teacher) ────────
+                Route::get('teachers/{teacher}/subscription/history', [ManualSubscriptionController::class, 'history']);
+                Route::post('teachers/{teacher}/subscription/preview', [ManualSubscriptionController::class, 'preview']);
+                Route::post('teachers/{teacher}/subscription/manual', [ManualSubscriptionController::class, 'apply']);
+                Route::get('manual-subscription-operations/{operation}/proof', [ManualSubscriptionController::class, 'proof']);
 
                 Route::get('students', [AdminController::class, 'students']);
                 Route::post('students', [AdminController::class, 'studentStore']);
