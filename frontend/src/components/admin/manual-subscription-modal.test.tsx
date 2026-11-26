@@ -24,7 +24,7 @@ const preview = {
 };
 
 function stubFetch(overrides: Record<string, any> = {}) {
-  return vi.fn((input: unknown) => {
+  return vi.fn((input: unknown, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes('/subscription/preview')) {
       return Promise.resolve({ ok: true, json: async () => ({ preview: { ...preview, ...(overrides.preview || {}) } }) });

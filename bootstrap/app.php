@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\BlockSensitiveSupportWrites;
 use App\Http\Middleware\BlockViewAsWrites;
 use App\Http\Middleware\CheckFeature;
 use App\Http\Middleware\DeviceSessionMiddleware;
@@ -58,6 +59,12 @@ return Application::configure(basePath: dirname(__DIR__))
         // outside the main group — bookings, uploads, cancellations. A write
         // during a preview is refused no matter which route it targets.
         $middleware->appendToGroup('api', BlockViewAsWrites::class);
+
+        // The write-enabled support session (Admin Impersonation) gets its own
+        // guard: normal content writes are allowed, but money/credentials/
+        // ownership/deletes are refused server-side and every allowed write is
+        // audited under the REAL admin identity.
+        $middleware->appendToGroup('api', BlockSensitiveSupportWrites::class);
 
         // API-only app: unauthenticated requests must return 401 JSON,
         // never redirect to a non-existent web "login" route.

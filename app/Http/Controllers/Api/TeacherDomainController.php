@@ -450,6 +450,17 @@ class TeacherDomainController extends Controller
 
     private function dnsInstructions(?string $domain, string $platform): array
     {
+        return self::instructionsFor($domain, $platform);
+    }
+
+    /**
+     * The exact DNS records a teacher (or a support admin acting for them) must
+     * publish — derived from the real production configuration, never inventing
+     * an IP. Reused by the teacher endpoint, the Super-Admin domain section and
+     * the Hostinger guidance.
+     */
+    public static function instructionsFor(?string $domain, string $platform): array
+    {
         $ip = self::platformIp($platform);
 
         return [
@@ -461,6 +472,9 @@ class TeacherDomainController extends Controller
             'a_host' => '@',
             'a_value' => $ip,
             'platform_ip' => $ip,
+            // Ownership TXT (optional): proves control of the apex name.
+            'txt_host' => '@',
+            'txt_value' => 'fahimni-verify='.$platform,
             'steps' => $domain ? [
                 'افتح لوحة تحكم مزود الدومين (Namecheap / GoDaddy / Cloudflare / Hostinger...)',
                 "أضف سجل CNAME: المضيف (Host) = www والقيمة (Value) = {$platform}",
@@ -468,6 +482,17 @@ class TeacherDomainController extends Controller
                 'احفظ السجلات وانتظر من 5 دقائق إلى 24 ساعة لانتشار DNS',
                 'اضغط «تحقق من الربط» — يتفعّل HTTPS تلقائيًا بعد نجاح التحقق',
             ] : [],
+            // Hostinger-specific steps (no Hostinger password is ever requested
+            // or stored — the admin edits DNS in the Hostinger hPanel).
+            'hostinger_steps' => $domain ? [
+                'سجّل الدخول إلى hPanel على Hostinger ← Domains ← اختر الدومين',
+                'افتح DNS / Nameservers ← Manage DNS records',
+                "أضف سجل CNAME: Name = www ، Points to = {$platform} ، TTL = 3600",
+                "أو أضف سجل A: Name = @ ، Points to = {$ip} ، TTL = 3600",
+                "أضف سجل TXT للتحقق من الملكية: Name = @ ، Value = fahimni-verify={$platform}",
+                'احفظ التغييرات ثم اضغط «تحقق من الربط» هنا',
+            ] : [],
+            'provider_note' => 'لا نحتاج كلمة مرور Hostinger إطلاقًا — تُدار سجلات DNS من حسابك لديهم.',
         ];
     }
 }

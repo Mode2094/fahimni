@@ -679,6 +679,7 @@ class AuthController extends Controller
         return response()->json([
             'user' => new UserResource($user),
             'view_as' => $this->viewAsState($request),
+            'admin_support' => \App\Support\AdminSupportSession::payload($request),
         ]);
     }
 

@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
+use App\Http\Controllers\Api\Admin\AdminSupportController;
 use App\Http\Controllers\Api\Admin\ManualSubscriptionController;
+use App\Http\Controllers\Api\Admin\TeacherDomainController as AdminTeacherDomainController;
 use App\Http\Controllers\Api\Admin\ViewAsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
@@ -181,6 +183,17 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [ViewAsController::class, 'show'])->name('admin.view-as.show');
             Route::post('{user}', [ViewAsController::class, 'start'])->name('admin.view-as.start');
             Route::delete('/', [ViewAsController::class, 'stop'])->name('admin.view-as.stop');
+        });
+
+        // ─── Admin: write-enabled support session (Admin Impersonation) ──
+        // `begin` mints a one-time token; `activate` consumes it in the new tab;
+        // `stop` restores the admin and is whitelisted while a session is
+        // active. All re-check super-admin server-side in the controller.
+        Route::prefix('admin/support')->group(function () {
+            Route::post('{teacher}/begin', [AdminSupportController::class, 'begin'])->name('admin.support.begin');
+            Route::post('activate', [AdminSupportController::class, 'activate'])->name('admin.support.activate');
+            Route::get('/', [AdminSupportController::class, 'show'])->name('admin.support.show');
+            Route::delete('/', [AdminSupportController::class, 'stop'])->name('admin.support.stop');
         });
 
         // `profile` blocks a teacher whose mandatory phone is still missing from
@@ -424,6 +437,12 @@ Route::prefix('v1')->group(function () {
                 Route::post('teachers/{teacher}/subscription/preview', [ManualSubscriptionController::class, 'preview']);
                 Route::post('teachers/{teacher}/subscription/manual', [ManualSubscriptionController::class, 'apply']);
                 Route::get('manual-subscription-operations/{operation}/proof', [ManualSubscriptionController::class, 'proof']);
+
+                // ─── Custom domain management (per teacher) ──────────────
+                Route::get('teachers/{teacher}/domain', [AdminTeacherDomainController::class, 'show']);
+                Route::put('teachers/{teacher}/domain', [AdminTeacherDomainController::class, 'connect']);
+                Route::post('teachers/{teacher}/domain/verify', [AdminTeacherDomainController::class, 'verify']);
+                Route::delete('teachers/{teacher}/domain', [AdminTeacherDomainController::class, 'disconnect']);
 
                 Route::get('students', [AdminController::class, 'students']);
                 Route::post('students', [AdminController::class, 'studentStore']);

@@ -16,11 +16,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import AdminSubscriptionMetrics from '@/components/admin/subscription-metrics';
 import ManualSubscriptionModal from '@/components/admin/manual-subscription-modal';
+import TeacherDomainModal from '@/components/admin/teacher-domain-modal';
 import {
   Users, Plus, Search, Trash2, Loader2, Mail, Crown, Ban, CheckCircle2,
   BookOpen, GraduationCap, CreditCard, Ticket, Eye, KeyRound,
   Wallet, TrendingUp, ClipboardList, FileText, Percent, Layers, Timer, Award, Star, Play,
   ExternalLink, Copy, Phone, MessageCircle, CalendarPlus, History, AlertCircle,
+  ShieldCheck, Globe, LogIn,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -54,6 +56,8 @@ export default function AdminTeachersPanel() {
   const [extending, setExtending] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [domainOpen, setDomainOpen] = useState(false);
+  const [supportBusy, setSupportBusy] = useState(false);
 
   const headers = () => ({ 'X-Tenant-Id': '', Accept: 'application/json' });
 
@@ -323,6 +327,40 @@ export default function AdminTeachersPanel() {
     setExtendDays(mode === 'trial' ? '7' : '30');
     setExtendRequestId(newRequestId());
     setExtendOpen(true);
+  };
+
+  /**
+   * Enter the teacher's real dashboard in a NEW TAB as a Super Admin support
+   * session: mint a one-time token, then open the entry route which redeems it
+   * and lands on the teacher panel with the support banner on top.
+   */
+  const enterSupport = async () => {
+    const teacher = detail?.teacher;
+    if (!teacher) return;
+
+    setSupportBusy(true);
+    try {
+      const res = await fetch(`${API}/admin/support/${teacher.id}/begin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers() },
+        body: JSON.stringify({ reason: 'admin_support_panel' }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(d.message || t('تعذّر بدء جلسة الدعم', 'Could not start the support session'));
+        return;
+      }
+      const tab = window.open(d.enter_path, '_blank', 'noopener');
+      if (!tab) {
+        toast.error(t('يرجى السماح بالنوافذ المنبثقة لفتح لوحة المعلم.', 'Please allow pop-ups to open the teacher panel.'));
+        return;
+      }
+      toast.success(t('تم فتح لوحة المعلم في تبويب جديد.', 'The teacher panel was opened in a new tab.'));
+    } catch {
+      toast.error(t('تعذّر بدء جلسة الدعم', 'Could not start the support session'));
+    } finally {
+      setSupportBusy(false);
+    }
   };
 
   const extend = async () => {
@@ -693,6 +731,38 @@ export default function AdminTeachersPanel() {
                         </div>
                       </div>
                     )}
+                    {detail.tenant && (
+                      <div className="p-4 rounded-xl border bg-sky-50/40">
+                        <div className="flex items-center gap-2 mb-3">
+                          <ShieldCheck className="h-4 w-4 text-sky-600" />
+                          <div className="text-sm font-semibold">{t('إدارة منصة المعلم والدعم', 'Manage the teacher platform & support')}</div>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                          <button type="button" onClick={enterSupport} disabled={supportBusy} data-testid="enter-support"
+                            className="group flex items-center gap-2 p-3 rounded-xl bg-white border text-sm hover:border-sky-400 transition-colors text-start disabled:opacity-60">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-700">
+                              {supportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-semibold">{t('الدخول إلى لوحة المعلم', 'Enter the teacher dashboard')}</span>
+                              <span className="block text-[11px] text-gray-400">{t('فتح لوحة المعلم في تبويب جديد بوضع الدعم الإداري', 'Open the teacher dashboard in a new tab in support mode')}</span>
+                            </span>
+                          </button>
+                          <button type="button" onClick={() => setDomainOpen(true)} data-testid="open-domain"
+                            className="group flex items-center gap-2 p-3 rounded-xl bg-white border text-sm hover:border-teal-400 transition-colors text-start">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-700"><Globe className="h-4 w-4" /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-semibold">{t('الدومين المخصص', 'Custom domain')}</span>
+                              <span className="block text-[11px] text-gray-400">{t('ربط دومين المعلم والتحقق منه وإدارة SSL', 'Connect, verify and manage the teacher’s domain & SSL')}</span>
+                            </span>
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-2 flex items-center gap-1.5">
+                          <AlertCircle className="h-3 w-3 shrink-0" />
+                          {t('يُسجَّل كل تعديل بهوية السوبر أدمن. العمليات المالية والأمنية الحساسة تبقى محظورة داخل وضع الدعم وتُنفَّذ من لوحة الإدارة.', 'Every change is logged under the Super Admin. Money/security-sensitive actions stay blocked in support mode and are performed from the admin panel.')}
+                        </p>
+                      </div>
+                    )}
                     <div className="p-4 rounded-xl border bg-gradient-to-br from-teal-50/60 to-white space-y-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Crown className="h-4 w-4 text-amber-500" />
@@ -982,6 +1052,16 @@ export default function AdminTeachersPanel() {
             trial_ends_at: detail.access?.trial_ends_at || null,
           }}
           plans={plans}
+          onDone={() => openDetail({ id: detail.teacher.id })}
+        />
+      )}
+
+      {/* Super-Admin custom-domain management (per teacher). */}
+      {detail?.teacher && (
+        <TeacherDomainModal
+          open={domainOpen}
+          onOpenChange={setDomainOpen}
+          teacher={{ id: detail.teacher.id, name: detail.teacher.name }}
           onDone={() => openDetail({ id: detail.teacher.id })}
         />
       )}
