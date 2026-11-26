@@ -34,11 +34,11 @@ describe('summarizeDuplicateReport', () => {
 
     expect(s.hasWarnings).toBe(false);
     expect(s.title).toBe('تم إنشاء النسخة (مسودة)');
-    expect(s.detail).toContain('2 وحدة');
-    expect(s.detail).toContain('5 درس');
-    expect(s.detail).toContain('أُعيد استخدام: 3 فيديو، 2 ملف');
+    expect(s.detail).toContain('وحدتان');
+    expect(s.detail).toContain('5 دروس');
+    expect(s.detail).toContain('أُعيد استخدام: 3 فيديوهات، ملفان');
     expect(s.detail).toContain('بلا نسخ تخزين إضافي');
-    expect(s.detail).toContain('8 سؤال من بنك الأسئلة');
+    expect(s.detail).toContain('أُعيد ربط 8 أسئلة من بنك الأسئلة');
   });
 
   it('surfaces what was NOT copied (e.g. a live session) as a warning', () => {
