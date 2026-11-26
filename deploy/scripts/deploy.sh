@@ -131,6 +131,7 @@ restore_previous() {
   docker image inspect "fahimni-app:${previous_tag}" >/dev/null 2>&1 || return 0
   warn "attempting automatic restore of image tag $previous_tag"
   ( cd "$REPO_DIR" && IMAGE_TAG="$previous_tag" docker compose up -d --remove-orphans ) || true
+  reload_nginx
   "$SCRIPT_DIR/healthcheck.sh" --env "$env_name" --env-file "$env_file" --wait 60 || true
 }
 
@@ -138,6 +139,27 @@ fail_with_restore() {
   local message="$1"
   restore_previous
   die "$message"
+}
+
+# nginx caches the addresses of app:9000 and frontend:3000 when it loads its
+# config (docker/nginx/default.conf). Recreating app/frontend hands them NEW
+# addresses, so a running nginx keeps proxying to the DEAD ones until it
+# re-reads its config — the "502 after a redeploy" regression that takes the
+# whole UI/API down. Validate, then reload (re-read + re-resolve) BEFORE the
+# health check so a perfectly healthy deploy is never reported as failed and
+# never triggers a pointless rollback. A container restart is the fallback.
+reload_nginx() {
+  if ! compose exec -T nginx nginx -t >/dev/null 2>&1; then
+    warn "nginx -t failed after deploy — restarting nginx to re-resolve upstreams"
+    compose restart nginx >/dev/null 2>&1 || warn "could not restart nginx"
+    return 0
+  fi
+  if compose exec -T nginx nginx -s reload >/dev/null 2>&1; then
+    log "nginx config reloaded — app/frontend upstream addresses re-resolved"
+  else
+    warn "nginx -s reload failed — restarting nginx"
+    compose restart nginx >/dev/null 2>&1 || warn "could not restart nginx"
+  fi
 }
 
 log "validating compose configuration"
@@ -156,6 +178,9 @@ fi
 log "starting stack (migrations run in the one-shot migrate service)"
 compose up -d --remove-orphans \
   || fail_with_restore "docker compose up failed"
+
+# Re-resolve the recreated upstream container addresses before health checking.
+reload_nginx
 
 log "waiting for health (budget ${wait_seconds}s)"
 "$SCRIPT_DIR/healthcheck.sh" --env "$env_name" --env-file "$env_file" --wait "$wait_seconds" \
