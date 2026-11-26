@@ -3,7 +3,7 @@
 #
 # The bug this pins: when a response carries MORE THAN ONE Permissions-Policy
 # header the browser intersects them, so the MOST restrictive value wins. The
-# nginx edge (and two Caddy fragments) published a stricter policy than the
+# nginx edge (and the Caddy edge) published a stricter policy than the
 # Next.js app — `camera=()`, `microphone=()`, `payment=()` — which disabled
 # live-class video/microphone and Freemius checkout even though the app
 # explicitly allowed them. The platform also leaked `X-Powered-By` on both the
@@ -88,12 +88,13 @@ else
   bad "docker/php/php.ini must set expose_php = Off"
 fi
 
-# The live edge is Caddy, so it must strip X-Powered-By itself (nginx hides it
-# on its own path, but it never sees the production traffic).
-if grep -qE '^[[:space:]]*-X-Powered-By[[:space:]]*$' "$ROOT_DIR/deploy/caddy/fahimni.caddy"; then
+# The live edge is the standalone Fahimni Caddy container, so it must strip
+# X-Powered-By itself (nginx hides it on its own path, but the edge never sees
+# the production traffic directly).
+if grep -qE '^[[:space:]]*-X-Powered-By[[:space:]]*$' "$ROOT_DIR/deploy/caddy/fahimni-standalone.caddy"; then
   ok "Caddy strips X-Powered-By at the edge"
 else
-  bad "deploy/caddy/fahimni.caddy must remove X-Powered-By (add '-X-Powered-By')"
+  bad "deploy/caddy/fahimni-standalone.caddy must remove X-Powered-By (add '-X-Powered-By')"
 fi
 
 if [[ "$fails" -ne 0 ]]; then

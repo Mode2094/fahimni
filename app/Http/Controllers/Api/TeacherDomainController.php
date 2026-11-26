@@ -5,12 +5,14 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
+use App\Services\CloudflareSaasService;
 use App\Services\FeatureService;
 use App\Services\TenantDomainResolver;
 use App\Services\TenantSlugService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\Uid\UuidV7;
 
 class TeacherDomainController extends Controller
@@ -62,10 +64,9 @@ class TeacherDomainController extends Controller
         $domain = $setting?->custom_domain;
         $verified = (bool) ($setting?->metadata['domain_verified'] ?? false);
 
-        // A domain is only ever SERVED (and only ever gets a certificate) once
-        // it is verified: the edge asks `public/tls/ask` before issuing, and
-        // that endpoint only allows verified domains. So `status` is the single
-        // honest verdict the teacher sees.
+        // The single honest verdict: a domain only ever SERVES once it is
+        // verified — which, under Cloudflare for SaaS, means Cloudflare has
+        // both validated the hostname and issued the edge certificate.
         $status = $domain === null ? 'none' : ($verified ? 'active' : 'pending_dns');
 
         return response()->json([
@@ -78,7 +79,8 @@ class TeacherDomainController extends Controller
             'site_url' => $domain ? 'https://'.$domain : null,
             'www_url' => $domain ? 'https://www.'.$domain : null,
             'platform_domain' => $this->platformDomain(),
-            'dns_instructions' => $this->dnsInstructions($domain, $this->platformDomain()),
+            'dns_instructions' => self::instructionsFor($domain, $this->platformDomain(), self::hostnameContext($setting)),
+            'hostname' => self::hostnameContext($setting),
             ...$this->slugPayload($request->current_tenant),
         ]);
     }
@@ -157,11 +159,6 @@ class TeacherDomainController extends Controller
         ]);
 
         $domain = strtolower(rtrim($validated['domain'], '.'));
-
-        // Store the APEX name only: `www.` is not a separate domain, it is a
-        // variant of the same one, and lookup()/tls-ask already answer for
-        // both `teacher.com` and `www.teacher.com`. Storing `www.` would make
-        // the apex unserved and allow the same site to be claimed twice.
         $domain = preg_replace('/^www\./', '', $domain) ?? $domain;
 
         $platform = $this->platformDomain();
@@ -170,10 +167,6 @@ class TeacherDomainController extends Controller
             return response()->json(['message' => 'This domain belongs to the platform itself.'], 422);
         }
 
-        // A domain can only be claimed by one tenant — the DB unique index
-        // would otherwise turn the duplicate into an uncaught 500. The lookup
-        // must ignore the tenant scope: another tenant's row is exactly what
-        // we are trying to see.
         $claimed = TenantSetting::withoutTenant()
             ->where('custom_domain', $domain)
             ->where('tenant_id', '!=', $request->current_tenant->id)
@@ -191,6 +184,7 @@ class TeacherDomainController extends Controller
         $metadata = $setting->metadata ?? [];
         $metadata['domain_verified'] = false;
         $metadata['domain_verified_at'] = null;
+        unset($metadata['domain_last_error']);
 
         try {
             $setting->update([
@@ -198,16 +192,21 @@ class TeacherDomainController extends Controller
                 'metadata' => $metadata,
             ]);
         } catch (UniqueConstraintViolationException) {
-            // Lost a race with another tenant claiming the same name between
-            // the check above and this write.
             return response()->json(['message' => 'This domain is already connected to another platform.'], 422);
         }
+
+        // Register the domain with Cloudflare for SaaS so TLS is provisioned and
+        // the origin stays hidden behind the Cloudflare-only firewall.
+        self::syncCustomHostname($setting->fresh());
+
+        $setting = $setting->fresh();
 
         return response()->json([
             'message' => 'Domain connected. Follow the DNS instructions below, then verify.',
             'domain' => $domain,
             'verified' => false,
-            'dns_instructions' => $this->dnsInstructions($domain, $platform),
+            'dns_instructions' => self::instructionsFor($domain, $platform, self::hostnameContext($setting)),
+            'hostname' => self::hostnameContext($setting),
         ]);
     }
 
@@ -216,9 +215,20 @@ class TeacherDomainController extends Controller
         $this->ensureTeacher($request);
 
         $setting = TenantSetting::where('tenant_id', $request->current_tenant->id)->first();
+
         if ($setting) {
+            // Remove the Cloudflare custom hostname first so no certificate is
+            // left dangling for a domain the tenant no longer owns.
+            self::releaseCustomHostname($setting);
+
             $metadata = $setting->metadata ?? [];
-            unset($metadata['domain_verified'], $metadata['domain_verified_at']);
+            unset(
+                $metadata['domain_verified'], $metadata['domain_verified_at'],
+                $metadata['domain_last_error'], $metadata['cf_hostname_id'],
+                $metadata['cf_status'], $metadata['cf_ssl_status'],
+                $metadata['cf_ownership'], $metadata['cf_validation_records'],
+                $metadata['cf_last_synced_at'],
+            );
             $setting->update(['custom_domain' => null, 'metadata' => $metadata]);
         }
 
@@ -236,31 +246,159 @@ class TeacherDomainController extends Controller
             return response()->json(['message' => 'No domain connected yet.'], 422);
         }
 
-        $platform = $this->platformDomain();
-        $records = self::dnsRecordsFor($domain);
-        $verified = self::recordsPointAtPlatform($records, $platform);
+        if (CloudflareSaasService::enabled()) {
+            // Authoritative: Cloudflare validates the CNAME and issues the edge
+            // certificate. No DNS lookups of our own are needed.
+            $verified = self::syncCustomHostname($setting);
+            $setting->refresh();
+            $records = [
+                'CNAME → '.(CloudflareSaasService::cnameTarget() ?: ''),
+                'Cloudflare hostname: '.($setting->metadata['cf_status'] ?? 'pending'),
+                'SSL: '.($setting->metadata['cf_ssl_status'] ?? 'pending'),
+            ];
+        } else {
+            $platform = $this->platformDomain();
+            $records = self::dnsRecordsFor($domain);
+            $verified = self::recordsPointAtPlatform($records, $platform);
+        }
+
+        $metadata = $setting->metadata ?? [];
 
         if ($verified) {
-            $metadata = $setting->metadata ?? [];
             $metadata['domain_verified'] = true;
-            $metadata['domain_verified_at'] = now()->toIso8601String();
-            $setting->update(['metadata' => $metadata]);
+            $metadata['domain_verified_at'] = $metadata['domain_verified_at'] ?? now()->toIso8601String();
+            unset($metadata['domain_last_error']);
+        } else {
+            $metadata['domain_verified'] = false;
         }
+
+        $setting->update(['metadata' => $metadata]);
 
         return response()->json([
             'verified' => $verified,
             'found_records' => $records,
             'message' => $verified
-                ? 'Domain verified! Your site is live at https://'.$domain.' — an SSL certificate is issued automatically on the first visit (a few seconds).'
-                : 'Not verified yet. Point the domain at the platform with a CNAME to '.$platform
-                    .' (or an A record to '.self::platformIp($platform).'), then retry. DNS can take up to 24h to propagate.',
+                ? 'Domain verified! Your site is live at https://'.$domain.' with an SSL certificate managed by Cloudflare.'
+                : ($metadata['domain_last_error']
+                    ?? 'Not verified yet. Publish the DNS records below, then retry. DNS can take up to 24h to propagate.'),
+            'hostname' => self::hostnameContext($setting->fresh()),
         ]);
     }
 
     /**
+     * Ensure the Cloudflare custom hostname exists and refresh its status into
+     * the setting metadata. Returns true only when the hostname AND its edge
+     * certificate are both active — the exact moment the domain is safe to serve.
+     */
+    public static function syncCustomHostname(TenantSetting $setting): bool
+    {
+        $domain = (string) ($setting->custom_domain ?? '');
+
+        if (! CloudflareSaasService::enabled() || $domain === '') {
+            return false;
+        }
+
+        $metadata = $setting->metadata ?? [];
+
+        try {
+            $id = $metadata['cf_hostname_id'] ?? null;
+            $host = $id ? CloudflareSaasService::getHostname((string) $id) : null;
+
+            // Missing locally or removed in Cloudflare → (re)create it.
+            if (! $host) {
+                $host = CloudflareSaasService::createHostname($domain);
+                $metadata['cf_hostname_id'] = $host['id'] ?? null;
+            }
+
+            $metadata['cf_status'] = $host['status'] ?? null;
+            $metadata['cf_ssl_status'] = $host['ssl']['status'] ?? null;
+            $metadata['cf_ownership'] = $host['ownership_verification'] ?? ($metadata['cf_ownership'] ?? null);
+            $metadata['cf_validation_records'] = $host['ssl']['validation_records'] ?? ($metadata['cf_validation_records'] ?? []);
+            $metadata['cf_last_synced_at'] = now()->toIso8601String();
+
+            $ready = ($metadata['cf_status'] === 'active') && ($metadata['cf_ssl_status'] === 'active');
+
+            if ($ready) {
+                unset($metadata['domain_last_error']);
+            } else {
+                $metadata['domain_last_error'] = self::pendingReason($metadata['cf_status'], $metadata['cf_ssl_status']);
+            }
+
+            $setting->update(['metadata' => $metadata]);
+
+            return $ready;
+        } catch (\Throwable $e) {
+            $metadata['cf_last_synced_at'] = now()->toIso8601String();
+            $metadata['domain_last_error'] = $e->getMessage();
+            $setting->update(['metadata' => $metadata]);
+
+            Log::warning('Cloudflare custom hostname sync failed', [
+                'domain' => $domain,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /** Best-effort removal of the Cloudflare custom hostname (and its cert). */
+    public static function releaseCustomHostname(TenantSetting $setting): void
+    {
+        if (! CloudflareSaasService::enabled()) {
+            return;
+        }
+
+        $id = $setting->metadata['cf_hostname_id'] ?? null;
+
+        if (! $id) {
+            return;
+        }
+
+        try {
+            CloudflareSaasService::deleteHostname((string) $id);
+        } catch (\Throwable $e) {
+            Log::warning('Cloudflare custom hostname delete failed', [
+                'domain' => $setting->custom_domain,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * The Cloudflare state for a setting, surfaced to the UIs so both the
+     * teacher and the Super Admin see the same, real provisioning status.
+     *
+     * @return array<string, mixed>
+     */
+    public static function hostnameContext(?TenantSetting $setting): array
+    {
+        $meta = $setting?->metadata ?? [];
+
+        return [
+            'enabled' => CloudflareSaasService::enabled(),
+            'cname_target' => CloudflareSaasService::cnameTarget(),
+            'hostname_id' => $meta['cf_hostname_id'] ?? null,
+            'status' => $meta['cf_status'] ?? null,
+            'ssl_status' => $meta['cf_ssl_status'] ?? null,
+            'ownership' => $meta['cf_ownership'] ?? null,
+            'validation_records' => $meta['cf_validation_records'] ?? [],
+            'last_synced_at' => $meta['cf_last_synced_at'] ?? null,
+        ];
+    }
+
+    private static function pendingReason(?string $status, ?string $sslStatus): string
+    {
+        if ($status !== 'active') {
+            return 'Cloudflare has not validated the hostname yet. Confirm the CNAME record below and wait a few minutes.';
+        }
+
+        return 'DNS validated. The SSL certificate is being issued by Cloudflare — usually ready within a few minutes.';
+    }
+
+    /**
      * The DNS answers currently published for a domain, as human-readable
-     * strings. Used by verify() so the teacher can see exactly what the
-     * platform observed, and by the daily re-verification job.
+     * strings. Used by verify() (legacy direct mode) and by the re-verification
+     * job so the platform can see exactly what the domain resolves to.
      */
     public static function dnsRecordsFor(string $domain): array
     {
@@ -309,16 +447,23 @@ class TeacherDomainController extends Controller
 
     /**
      * True when the published answers bind the domain to the platform: an
-     * exact CNAME to the platform hostname, or an A/AAAA record that equals
-     * the platform's own address (many registrars refuse a CNAME at the apex,
-     * so the A record must be accepted too).
+     * exact CNAME to the platform hostname or to the Cloudflare CNAME target,
+     * or an A/AAAA record that equals the platform's own address (many
+     * registrars refuse a CNAME at the apex, so the A record must be accepted
+     * too).
      *
      * $platformIps is injectable so callers/tests can supply the platform's
      * addresses without a live DNS lookup.
      */
     public static function recordsPointAtPlatform(array $records, string $platform, ?array $platformIps = null): bool
     {
-        $wantHost = strtolower(rtrim($platform, '.'));
+        $wantHosts = [strtolower(rtrim($platform, '.'))];
+
+        $target = strtolower(rtrim(CloudflareSaasService::cnameTarget(), '.'));
+        if ($target !== '') {
+            $wantHosts[] = $target;
+        }
+
         $wantIps = [];
 
         if ($platformIps === null) {
@@ -341,8 +486,8 @@ class TeacherDomainController extends Controller
 
         foreach ($records as $record) {
             if (str_starts_with($record, self::REC_CNAME)) {
-                $target = strtolower(rtrim(substr($record, strlen(self::REC_CNAME)), '.'));
-                if ($target === $wantHost) {
+                $t = strtolower(rtrim(substr($record, strlen(self::REC_CNAME)), '.'));
+                if (in_array($t, $wantHosts, true)) {
                     return true;
                 }
             } elseif (str_starts_with($record, self::REC_A) || str_starts_with($record, self::REC_AAAA)) {
@@ -358,8 +503,8 @@ class TeacherDomainController extends Controller
     }
 
     /**
-     * Live DNS check used by verify() and by the daily re-verification job so
-     * a domain that was moved away is unverified again.
+     * Live DNS check used by the daily re-verification job (legacy direct mode)
+     * so a domain that was moved away is unverified again.
      */
     public static function dnsPointsAtPlatform(string $domain, string $platform): bool
     {
@@ -367,10 +512,10 @@ class TeacherDomainController extends Controller
     }
 
     /**
-     * Caddy's on-demand-TLS `ask` gate: it calls this before issuing a
-     * certificate for a hostname. Only a VERIFIED custom domain (apex or
-     * `www.`), a live platform subdomain, or the platform's own hosts are
-     * allowed — anything else gets a 403 and no certificate.
+     * Caddy's on-demand-TLS `ask` gate. Under Cloudflare for SaaS the origin no
+     * longer issues certificates for custom domains, but this gate is retained
+     * as defence-in-depth: only a VERIFIED custom domain (apex or `www.`), a
+     * live platform subdomain, or the platform's own hosts are ever blessed.
      */
     public function tlsAsk(Request $request): \Illuminate\Http\Response
     {
@@ -448,33 +593,113 @@ class TeacherDomainController extends Controller
         return response()->json(['message' => 'Domain not found.'], 404);
     }
 
-    private function dnsInstructions(?string $domain, string $platform): array
-    {
-        return self::instructionsFor($domain, $platform);
-    }
-
     /**
      * The exact DNS records a teacher (or a support admin acting for them) must
      * publish — derived from the real production configuration, never inventing
-     * an IP. Reused by the teacher endpoint, the Super-Admin domain section and
-     * the Hostinger guidance.
+     * an address.
+     *
+     * Under Cloudflare for SaaS the teacher only needs a CNAME to the platform's
+     * CNAME target (the apex is supported wherever the registrar offers an
+     * ALIAS / CNAME-flattening record, e.g. Hostinger). In legacy direct mode it
+     * falls back to the classic CNAME-to-platform / apex-A instructions.
+     *
+     * @param  array<string, mixed>|null  $cf  {@see hostnameContext()}
      */
-    public static function instructionsFor(?string $domain, string $platform): array
+    public static function instructionsFor(?string $domain, string $platform, ?array $cf = null): array
+    {
+        $cfEnabled = (bool) ($cf['enabled'] ?? CloudflareSaasService::enabled());
+        $target = trim((string) ($cf['cname_target'] ?? CloudflareSaasService::cnameTarget()));
+
+        if ($cfEnabled && $target !== '') {
+            return self::cloudflareInstructions($domain, $platform, $target, $cf ?? []);
+        }
+
+        return self::legacyInstructions($domain, $platform);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cf
+     * @return array<string, mixed>
+     */
+    private static function cloudflareInstructions(?string $domain, string $platform, string $target, array $cf): array
+    {
+        $ownership = $cf['ownership'] ?? null;
+        $validation = is_array($cf['validation_records'] ?? null) ? $cf['validation_records'] : [];
+
+        $records = [];
+        $records[] = ['type' => 'CNAME', 'host' => '@', 'value' => $target, 'purpose' => 'الجذر / apex'];
+        $records[] = ['type' => 'CNAME', 'host' => 'www', 'value' => $target, 'purpose' => 'www'];
+
+        $txtHost = null;
+        $txtValue = null;
+
+        if (is_array($ownership) && ! empty($ownership['name']) && ! empty($ownership['value'])) {
+            $txtHost = (string) $ownership['name'];
+            $txtValue = (string) $ownership['value'];
+            $records[] = ['type' => 'TXT', 'host' => $txtHost, 'value' => $txtValue, 'purpose' => 'تحقق الملكية'];
+        }
+
+        foreach ($validation as $v) {
+            if (is_array($v) && ! empty($v['txt_name']) && ! empty($v['txt_value'])) {
+                $records[] = ['type' => 'TXT', 'host' => (string) $v['txt_name'], 'value' => (string) $v['txt_value'], 'purpose' => 'تحقق الشهادة (DCV)'];
+            }
+        }
+
+        return [
+            'mode' => 'cloudflare_saas',
+            'cname_host' => '@',
+            'cname_value' => $target,
+            'www_host' => 'www',
+            'www_value' => $target,
+            // No A record is used under Cloudflare for SaaS — pointing an A
+            // record at an address would bypass the edge and break TLS.
+            'a_host' => null,
+            'a_value' => null,
+            'platform_ip' => null,
+            'txt_host' => $txtHost,
+            'txt_value' => $txtValue,
+            'cname_target' => $target,
+            'records' => $records,
+            'apex_note' => 'للجذر (@) استخدم سجل CNAME على مزوّد يدعم ALIAS/تسطيح CNAME (مثل Hostinger الذي يحوّل CNAME على @ إلى ALIAS تلقائيًا).',
+            'steps' => $domain ? [
+                'افتح لوحة DNS لدى مزوّد الدومين (Hostinger / Namecheap / GoDaddy / Cloudflare...)',
+                "أضف سجل CNAME للمضيف www والقيمة {$target}",
+                "وللجذر @ أضف سجل CNAME/ALIAS بنفس القيمة {$target} (Hostinger يدعمه تلقائيًا كـ ALIAS)",
+                $txtValue ? 'أضف سجل TXT للتحقق بالقيمة الموضّحة بالأسفل' : 'انتظر بضع دقائق حتى يتحقق Cloudflare من الدومين تلقائيًا',
+                'اضغط «تحقق من الربط» — يُصدر Cloudflare شهادة SSL تلقائيًا ويتجدد تلقائيًا',
+            ] : [],
+            'hostinger_steps' => $domain ? [
+                'سجّل الدخول إلى hPanel على Hostinger ← Domains ← اختر الدومين',
+                'افتح DNS / Nameservers ← Manage DNS records',
+                "أضف سجل CNAME: Name = www ، Points to = {$target} ، TTL = 3600",
+                "أضف سجل CNAME: Name = @ (يحوّله Hostinger تلقائيًا إلى ALIAS) ، Points to = {$target}",
+                $txtValue ? 'أضف سجل TXT للتحقق الملكية بالقيمة الموضّحة بالأسفل' : 'احفظ التغييرات ثم اضغط «تحقق من الربط» هنا',
+                'احفظ التغييرات ثم اضغط «تحقق من الربط» هنا',
+            ] : [],
+            'provider_note' => 'لا نحتاج حساب Cloudflare خاصًا بك ولا كلمة مرور مزوّد الدومين — تُدار سجلات DNS من حسابك، وتُدار الشهادة تلقائيًا من المنصة.',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function legacyInstructions(?string $domain, string $platform): array
     {
         $ip = self::platformIp($platform);
 
         return [
-            // Recommended: CNAME on `www` (works at every registrar).
+            'mode' => 'direct',
             'cname_host' => 'www',
             'cname_value' => $platform,
-            // Apex fallback: many registrars refuse a CNAME at `@`, so an A
-            // record pointing at the platform's own address is accepted too.
             'a_host' => '@',
             'a_value' => $ip,
             'platform_ip' => $ip,
-            // Ownership TXT (optional): proves control of the apex name.
             'txt_host' => '@',
             'txt_value' => 'fahimni-verify='.$platform,
+            'records' => [
+                ['type' => 'CNAME', 'host' => 'www', 'value' => $platform, 'purpose' => 'www'],
+                ['type' => 'A', 'host' => '@', 'value' => $ip, 'purpose' => 'الجذر / apex'],
+            ],
             'steps' => $domain ? [
                 'افتح لوحة تحكم مزود الدومين (Namecheap / GoDaddy / Cloudflare / Hostinger...)',
                 "أضف سجل CNAME: المضيف (Host) = www والقيمة (Value) = {$platform}",
@@ -482,8 +707,6 @@ class TeacherDomainController extends Controller
                 'احفظ السجلات وانتظر من 5 دقائق إلى 24 ساعة لانتشار DNS',
                 'اضغط «تحقق من الربط» — يتفعّل HTTPS تلقائيًا بعد نجاح التحقق',
             ] : [],
-            // Hostinger-specific steps (no Hostinger password is ever requested
-            // or stored — the admin edits DNS in the Hostinger hPanel).
             'hostinger_steps' => $domain ? [
                 'سجّل الدخول إلى hPanel على Hostinger ← Domains ← اختر الدومين',
                 'افتح DNS / Nameservers ← Manage DNS records',

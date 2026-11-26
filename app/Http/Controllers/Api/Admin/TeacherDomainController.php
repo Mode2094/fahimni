@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Tenant;
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\CloudflareSaasService;
 use App\Services\TenantDomainResolver;
 use App\Support\AuditLogger;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -82,6 +83,11 @@ class TeacherDomainController extends Controller
             return response()->json(['message' => 'This domain is already connected to another platform.'], 422);
         }
 
+        // Register with Cloudflare for SaaS so TLS is provisioned and the origin
+        // stays hidden behind the Cloudflare-only firewall (same machinery the
+        // teacher's own page uses).
+        TeacherDomain::syncCustomHostname($setting->fresh());
+
         AuditLogger::log($request, 'admin.teacher_domain.connect', 'tenant', $tenant->id, [
             'domain' => $domain,
         ], $tenant->id);
@@ -107,18 +113,29 @@ class TeacherDomainController extends Controller
         }
 
         $platform = app(TenantDomainResolver::class)->platformDomain();
-        $records = TeacherDomain::dnsRecordsFor($domain);
-        $verified = TeacherDomain::recordsPointAtPlatform($records, $platform);
+
+        if (CloudflareSaasService::enabled()) {
+            $verified = TeacherDomain::syncCustomHostname($setting);
+            $setting->refresh();
+            $records = [
+                'CNAME → '.(CloudflareSaasService::cnameTarget() ?: ''),
+                'Cloudflare hostname: '.($setting->metadata['cf_status'] ?? 'pending'),
+                'SSL: '.($setting->metadata['cf_ssl_status'] ?? 'pending'),
+            ];
+        } else {
+            $records = TeacherDomain::dnsRecordsFor($domain);
+            $verified = TeacherDomain::recordsPointAtPlatform($records, $platform);
+        }
 
         $metadata = $setting->metadata ?? [];
 
         if ($verified) {
             $metadata['domain_verified'] = true;
-            $metadata['domain_verified_at'] = now()->toIso8601String();
+            $metadata['domain_verified_at'] = $metadata['domain_verified_at'] ?? now()->toIso8601String();
             unset($metadata['domain_last_error']);
         } else {
             $metadata['domain_verified'] = false;
-            $metadata['domain_last_error'] = 'DNS records do not point at the platform yet.';
+            $metadata['domain_last_error'] = $metadata['domain_last_error'] ?? 'DNS records do not point at the platform yet.';
             $metadata['domain_last_check_at'] = now()->toIso8601String();
         }
 
@@ -134,8 +151,8 @@ class TeacherDomainController extends Controller
             'verified' => $verified,
             'found_records' => $records,
             'message' => $verified
-                ? 'Domain verified — your site is live at https://'.$domain.' and an SSL certificate is issued automatically on the first visit.'
-                : 'Not verified yet. Point the domain at '.$platform.' with the records below (DNS can take up to 24h), then retry.',
+                ? 'Domain verified — your site is live at https://'.$domain.' with a Cloudflare-managed SSL certificate.'
+                : ($metadata['domain_last_error'] ?? 'Not verified yet. Publish the records below (DNS can take up to 24h), then retry.'),
             ...$this->statusPayload($tenant, $setting->fresh(), $records),
         ]);
     }
@@ -148,8 +165,18 @@ class TeacherDomainController extends Controller
         $domain = $setting?->custom_domain;
 
         if ($setting) {
+            // Remove the Cloudflare custom hostname first so no edge certificate
+            // is left dangling for a domain the tenant no longer owns.
+            TeacherDomain::releaseCustomHostname($setting);
+
             $metadata = $setting->metadata ?? [];
-            unset($metadata['domain_verified'], $metadata['domain_verified_at'], $metadata['domain_last_error'], $metadata['domain_last_check_at']);
+            unset(
+                $metadata['domain_verified'], $metadata['domain_verified_at'],
+                $metadata['domain_last_error'], $metadata['domain_last_check_at'],
+                $metadata['cf_hostname_id'], $metadata['cf_status'],
+                $metadata['cf_ssl_status'], $metadata['cf_ownership'],
+                $metadata['cf_validation_records'], $metadata['cf_last_synced_at'],
+            );
             $setting->update(['custom_domain' => null, 'metadata' => $metadata]);
         }
 
@@ -181,6 +208,8 @@ class TeacherDomainController extends Controller
             default => 'pending_dns',
         };
 
+        $hostname = TeacherDomain::hostnameContext($setting);
+
         return [
             'teacher' => ['id' => $tenant->id, 'name' => $tenant->name],
             'tenant_id' => $tenant->id,
@@ -192,14 +221,15 @@ class TeacherDomainController extends Controller
             'status_reason' => $lastError,
             'https_enabled' => $verified,
             'ssl' => $verified ? 'auto' : 'pending',
-            'ssl_note' => 'يُصدر الشهادة تلقائيًا عند أول زيارة بعد نجاح التحقق من DNS.',
+            'ssl_note' => 'تُصدر شهادة SSL وتُجدَّد تلقائيًا عبر Cloudflare دون أي خطوة من المعلّم.',
             'site_url' => $domain ? 'https://'.$domain : null,
             'www_url' => $domain ? 'https://www.'.$domain : null,
             'platform_domain' => $platform,
             'subdomain' => $tenant->slug.'.'.$platform,
             'subdomain_url' => 'https://'.$tenant->slug.'.'.$platform,
             'found_records' => $foundRecords,
-            'dns_instructions' => TeacherDomain::instructionsFor($domain, $platform),
+            'hostname' => $hostname,
+            'dns_instructions' => TeacherDomain::instructionsFor($domain, $platform, $hostname),
         ];
     }
 

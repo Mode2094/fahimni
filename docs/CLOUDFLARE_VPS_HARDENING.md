@@ -37,37 +37,15 @@ docker compose ps          # every service healthy
   (https://www.cloudflare.com/ips/ — sync occasionally) and SSH from the
   admin IP. Deny everything else.
 
-> **This host is shared.** The same Caddy container terminates TLS for **both**
-> `fahimni.me` and **LooksLoop**, so restricting `80/443` to Cloudflare IPs only
-> is safe **iff every vhost on the host is behind Cloudflare**. If LooksLoop is
-> ever reachable without Cloudflare, a blanket deny takes it offline. Never run
-> a blanket `ufw deny 22` or a catch-all `ufw deny` here.
+> **This host is dedicated to Fahimni.** The only public TLS terminator is
+> Fahimni's own `fahimni-edge` Caddy container (`fahimni.me`, `api.fahimni.me`,
+> plus Cloudflare-for-SaaS teacher custom domains via on-demand TLS). Locking
+> `:443` to Cloudflare ranges is safe because **every** host on this server is
+> fronted by Cloudflare. Never run a blanket `ufw deny 22` or a catch-all
+> `ufw deny` here — SSH must always work from the admin IP.
 >
-> Use the committed, dry-run-by-default script instead of typing rules by hand.
-> It always allows SSH from `ADMIN_SSH_IP` first, never touches port 22 with a
-> deny, is idempotent, and **refuses `--apply` unless LooksLoop-behind-Cloudflare
-> is explicitly confirmed**:
-
-```bash
-# 1) dry run — prints the exact rules, changes nothing
-ADMIN_SSH_IP=<your.ssh.ip> ./deploy/scripts/cloudflare-ufw.sh
-
-# 2) apply (ONLY after LooksLoop is confirmed behind Cloudflare)
-sudo ADMIN_SSH_IP=<your.ssh.ip> CONFIRM_LOOKSLOOP_OK=yes \
-     ./deploy/scripts/cloudflare-ufw.sh --apply
-
-# rollback at any time, over the same SSH session:
-sudo ufw disable
-```
-
-> **Docker hosts: ufw alone is not enough.** When 80/443 are published by a
-> container (as here: the Caddy edge), Docker inserts its own rules in the
-> `FORWARD` chain (`DOCKER-USER` → `DOCKER-FORWARD`) that run **before** ufw's
-> forward chains — so a ufw rule cannot restrict a Docker-published port.
-> Use the Docker-aware script instead, which locks `:443` to the Cloudflare
-> ranges in the `DOCKER-USER` chain (IPv4 + IPv6), leaves `:22` and `:80`
-> untouched, and is idempotent:
->
+> Because 80/443 are published by the Dockerized Caddy edge, use the
+> **Docker-aware** script below (not plain `ufw`):
 > ```bash
 > # dry run / status / apply / rollback
 > ./deploy/scripts/cloudflare-origin-firewall.sh
@@ -120,9 +98,9 @@ The earlier draft of this section assumed Cloudflare talks **directly** to nginx
 It does not. The verified production path is:
 
 ```text
- internet ──▶ Cloudflare edge ──▶ Caddy container ──▶ nginx ──▶ PHP-FPM
-             (CF-Connecting-IP)   (LooksLoop's,      (127.0.0.1:8080
-                                   publishes 80/443)   / fahimni-proxy)
+ internet ──▶ Cloudflare edge ──▶ Caddy edge ──▶ nginx ──▶ PHP-FPM
+             (CF-Connecting-IP)   (fahimni-edge, (127.0.0.1:8080
+                                   publishes 80/443) / fahimni-proxy)
 ```
 
 Consequences that matter:
@@ -137,11 +115,11 @@ Consequences that matter:
 - `CF-Connecting-IP` survives the Caddy hop intact and always carries the true
   client IP. Use it.
 
-### 5.2 Enable it in nginx (no Caddy / LooksLoop change)
+### 5.2 Enable it in nginx
 
-The cleanest fix is **nginx-native** and touches nothing LooksLoop owns (its
-Caddyfile is a read-only bind mount and must not be edited — see
-`deploy/caddy-docker.md`):
+The cleanest fix is **nginx-native**: it keeps the client-IP logic next to the
+app (it also applies to the on-demand-TLS custom-domain path) and does not
+require touching the edge Caddyfile:
 
 1. Uncomment the `set_real_ip_from ...` block near the top of
    `docker/nginx/default.conf` and set the header directive to
@@ -172,12 +150,15 @@ Caddyfile is a read-only bind mount and must not be edited — see
 
 ### 5.3 Why not fix it in Caddy?
 
-Caddy's `trusted_proxies` / `client_ip_headers` are **global options**, and the
-single global options block on this host is owned by LooksLoop's read-only
-Caddyfile. The Fahimni fragment (`deploy/caddy/fahimni.caddy`) deliberately
-defines no global options block, so it cannot set them without editing
-LooksLoop's config — out of scope. The nginx-native fix above gives the same
-result and stays inside the Fahimni stack.
+Caddy's `trusted_proxies` / `client_ip_headers` are **global options**. Fahimni
+now owns the edge (`deploy/caddy/fahimni-standalone.caddy`), so it *could* set
+them there — but the nginx-native fix above is preferred: the edge already
+forwards `CF-Connecting-IP` unchanged, the fix covers the on-demand-TLS
+custom-domain path identically, and it keeps the trusted-proxy list (private hop
++ Cloudflare ranges) in one place next to Laravel's own trust config. If the
+edge ever needs to be the source of truth, add a single global options block to
+the standalone Caddyfile — it is ours now and there is no other project to
+coordinate with.
 
 ### 5.4 Verify
 

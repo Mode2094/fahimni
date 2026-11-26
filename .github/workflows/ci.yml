@@ -135,7 +135,7 @@ jobs:
         run: npm run test:e2e
 
   deploy-assets:
-    name: Deploy assets (shellcheck + compose + Caddy merge)
+    name: Deploy assets (shellcheck + compose + Caddy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -234,18 +234,6 @@ jobs:
           docker compose --env-file deploy/env/staging.env.example config --quiet
           cp deploy/env/production.env.example .env
           docker compose --env-file deploy/env/production.env.example config --quiet
-
-      - name: Caddy merge validates against a LooksLoop-shaped base
-        # Proves the additive Fahimni vhosts merge with LooksLoop's global block,
-        # :443 on-demand catch-all and :80 redirect without collision, and that
-        # the duplicate-host guard fires.
-        run: deploy/tests/caddy-merge-validate.sh
-
-      - name: Caddy reconcile detects a recreated LooksLoop container
-        # Real Docker: recreates the fake LooksLoop Caddy container (network-detach
-        # and container-id paths) and reloads its own Caddyfile (live-config path),
-        # proving --reconcile re-applies even when the Caddyfile bytes are unchanged.
-        run: deploy/tests/caddy-reconcile-recreate.sh
 
   compose-isolation:
     name: Caddy edge is a separate compose project (real Docker)

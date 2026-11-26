@@ -20,13 +20,19 @@ const headers = () => ({ 'X-Tenant-Id': '', Accept: 'application/json' });
 export type DomainTeacher = { id: string; name: string };
 
 type Dns = {
+  mode?: 'cloudflare_saas' | 'direct';
   cname_host?: string;
   cname_value?: string;
+  cname_target?: string;
+  www_host?: string;
+  www_value?: string;
   a_host?: string;
   a_value?: string;
   platform_ip?: string;
   txt_host?: string;
   txt_value?: string;
+  apex_note?: string;
+  records?: { type: string; host: string; value: string; purpose?: string }[];
   steps?: string[];
   hostinger_steps?: string[];
   provider_note?: string;
@@ -246,9 +252,20 @@ export default function TeacherDomainModal({ open, onOpenChange, teacher, onDone
               <div className="text-sm font-semibold flex items-center gap-1.5">
                 <Globe className="h-4 w-4 text-teal-600" /> {t('سجلات DNS المطلوبة', 'Required DNS records')}
               </div>
-              <RecordRow label={t('CNAME', 'CNAME')} host={dns.cname_host} value={dns.cname_value} />
-              <RecordRow label={t('A (بديل)', 'A (fallback)')} host={dns.a_host} value={dns.a_value} />
-              {dns.txt_value && <RecordRow label="TXT" host={dns.txt_host} value={dns.txt_value} />}
+              {(dns.records?.length ?? 0) > 0 ? (
+                dns.records!.map((r, i) => (
+                  <RecordRow key={i} label={r.purpose ? `${r.type} · ${r.purpose}` : r.type} host={r.host} value={r.value} />
+                ))
+              ) : (
+                <>
+                  <RecordRow label={t('CNAME', 'CNAME')} host={dns.cname_host} value={dns.cname_value} />
+                  {dns.a_value && <RecordRow label={t('A (بديل)', 'A (fallback)')} host={dns.a_host} value={dns.a_value} />}
+                  {dns.txt_value && <RecordRow label="TXT" host={dns.txt_host} value={dns.txt_value} />}
+                </>
+              )}
+              {dns.apex_note && (
+                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="apex-note">{dns.apex_note}</p>
+              )}
 
               {(dns.hostinger_steps?.length ?? 0) > 0 && (
                 <details className="rounded-xl border bg-white p-3 text-sm">

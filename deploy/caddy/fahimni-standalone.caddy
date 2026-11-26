@@ -52,6 +52,10 @@
 		# Freemius `payment=` allowance and a nonce'd CSP). Overriding them at
 		# the edge would weaken or break the app's own policy.
 		-Server
+		# Do not advertise the framework/version. The upstream stack (Next.js,
+		# PHP, nginx) already suppresses it, but strip it at the edge so a stale
+		# image can never leak it.
+		-X-Powered-By
 	}
 }
 

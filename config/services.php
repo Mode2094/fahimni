@@ -48,6 +48,42 @@ return [
         'path' => env('BACKUP_RCLONE_PATH', 'backups'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Cloudflare for SaaS (teacher custom domains)
+    |--------------------------------------------------------------------------
+    | The origin is locked to Cloudflare's network (strict origin firewall), so
+    | a teacher domain is served ONLY as a Cloudflare custom hostname on the
+    | platform zone. Cloudflare terminates TLS at the edge and forwards to the
+    | zone's fallback origin — the teacher never needs a Cloudflare account and
+    | the origin IP is never exposed.
+    |
+    | CLOUDFLARE_API_TOKEN            Scoped token (secret, env only). Needs
+    |                                 Zone → SSL and Certificates → Edit,
+    |                                 Zone → DNS → Edit, Zone → Zone → Read.
+    | CLOUDFLARE_ZONE_ID              Zone id of fahimni.me.
+    | CLOUDFLARE_ZONE_NAME            Zone apex (fahimni.me).
+    | CLOUDFLARE_SAAS_ORIGIN_IP       Origin VPS address for the fallback record.
+    | CLOUDFLARE_SAAS_FALLBACK_ORIGIN Proxied host that receives custom traffic.
+    | CLOUDFLARE_SAAS_CNAME_TARGET    Host teachers point their CNAME at.
+    | CLOUDFLARE_SAAS_ENABLED         Master switch (also admin-editable).
+    |
+    | The fallback origin and CNAME target can additionally be overridden from
+    | the admin panel (platform_settings) so the target address is centrally
+    | changeable without a redeploy.
+    */
+
+    'cloudflare' => [
+        'api_token' => (string) env('CLOUDFLARE_API_TOKEN', ''),
+        'account_id' => (string) env('CLOUDFLARE_ACCOUNT_ID', ''),
+        'zone_id' => (string) env('CLOUDFLARE_ZONE_ID', ''),
+        'zone_name' => (string) env('CLOUDFLARE_ZONE_NAME', ''),
+        'origin_ip' => (string) env('CLOUDFLARE_SAAS_ORIGIN_IP', ''),
+        'fallback_origin' => (string) env('CLOUDFLARE_SAAS_FALLBACK_ORIGIN', ''),
+        'cname_target' => (string) env('CLOUDFLARE_SAAS_CNAME_TARGET', ''),
+        'enabled' => (bool) env('CLOUDFLARE_SAAS_ENABLED', false),
+    ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),

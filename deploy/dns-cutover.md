@@ -24,10 +24,10 @@ repository; the owner applies it in the Hostinger DNS panel.
   `_dmarc`). If mail is delegated to another provider, do not touch those
   records or nameservers. See **§3b** for the Resend records and how to verify
   them before and after the cutover.
-- Any record belonging to **LooksLoop** (its own A/AAAA/CNAME and TLS-related
-  TXT/ACME records). Adding `fahimni.me` A records for a name that is already
-  an A/CNAME pair does not affect other hostnames on the same IP, but do not
-  edit or delete LooksLoop entries.
+- Any **other** hostname's records (other A/AAAA/CNAME and their TLS/ACME TXT
+  records) that are not part of the Fahimni plan. Adding `fahimni.me` records
+  for a name that is already an A/CNAME pair does not affect other hostnames on
+  the same IP, but do not edit or delete unrelated entries.
 - Nameservers: keep the current ones unless the owner explicitly decides to
   move DNS.
 
@@ -37,7 +37,7 @@ repository; the owner applies it in the Hostinger DNS panel.
 2. Change the `A @` record from `2.57.91.91` to `187.127.87.101`.
 3. Add `A api`, `A staging`, `A api-staging` → `187.127.87.101`.
 4. Ensure `www` is `CNAME www → fahimni.me`.
-5. Leave MX/TXT/LooksLoop entries untouched. Save.
+5. Leave MX/TXT and any unrelated records untouched. Save.
 
 ## 3b. Email DNS (Resend) — record now, verify, then never touch
 
@@ -102,9 +102,10 @@ Expected: the four Fahimni names return `187.127.87.101`; MX/TXT unchanged.
 ## 5. Ordering (important)
 
 1. DNS applied and verified (this file).
-2. Port 80 reachable for ACME; apply the Fahimni vhosts **only** after DNS
-   resolves (`deploy/scripts/caddy-docker-integrate.sh --apply --yes`), otherwise
-   certificates cannot be issued and staging stays without TLS.
+2. Port 80 reachable for ACME; recreate the edge **only** after DNS resolves
+   (`docker compose -p fahimni-edge -f deploy/caddy/docker-compose.caddy.yml
+   --env-file /etc/fahimni/caddy.env up -d`), otherwise certificates cannot be
+   issued and the host stays without TLS.
 3. Deploy Staging (`deploy/scripts/deploy.sh --env staging`).
 4. Production only after Staging + Freemius Sandbox pass, with new approval.
 
@@ -115,9 +116,9 @@ HTTP-01 needs port 80 reachable directly.
 
 - Restore `A @` to `2.57.91.91` (parking) and delete `api`, `staging`,
   `api-staging` to return to the current state.
-- Then remove the Fahimni vhosts from the LooksLoop Caddy **container** (in place,
-  no restart, LooksLoop keeps serving):
-  `deploy/scripts/caddy-docker-integrate.sh --rollback --yes --disconnect`
-  (details in `deploy/caddy-docker.md` §7–8).
-- Do not edit, restart or recreate the LooksLoop container, and do not touch its
-  DNS records.
+- Then recreate the Caddy edge from the previous release's Caddyfile
+  (`docker compose -p fahimni-edge -f deploy/caddy/docker-compose.caddy.yml
+  --env-file /etc/fahimni/caddy.env up -d` after checking out the old
+  `deploy/caddy/fahimni-standalone.caddy`). The edge is stateless; see
+  `deploy/README.md` §7.
+- Fahimni owns the host: there is no other project's Caddy or DNS to preserve.
