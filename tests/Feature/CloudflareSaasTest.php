@@ -273,4 +273,111 @@ class CloudflareSaasTest extends TenantTestCase
         $this->assertSame('www', $dns['cname_host']);
         $this->assertSame('fahimni.me', $dns['cname_value']);
     }
+
+    public function test_pending_apex_does_not_block_an_active_www_and_marks_the_domain_verified(): void
+    {
+        $this->enableCloudflare();
+
+        // Apex still pending (its registrar flattens the apex into A records, so
+        // Cloudflare cannot validate it); `www` is already active. The tenant
+        // must be served on www instead of being wrongly held unverified.
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET' && preg_match('#/custom_hostnames/([^/?]+)$#', $request->url(), $m)) {
+                $active = $m[1] === 'ch_www';
+
+                return Http::response(['success' => true, 'result' => [
+                    'id' => $m[1],
+                    'hostname' => $active ? 'www.brand-shop.com' : 'brand-shop.com',
+                    'status' => $active ? 'active' : 'pending',
+                    'ssl' => ['status' => $active ? 'active' : 'pending_validation', 'validation_records' => []],
+                    'ownership_verification' => ['type' => 'txt', 'name' => '_cf-custom-hostname.brand-shop.com', 'value' => 'own-token'],
+                ]], 200);
+            }
+
+            return Http::response(['success' => false, 'errors' => [['message' => 'unexpected']]], 404);
+        });
+
+        $tenant = $this->makeTenant();
+        $teacher = $this->teacherFor($tenant);
+
+        TenantSetting::withoutTenant()->create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $tenant->id,
+            'custom_domain' => 'brand-shop.com',
+            'metadata' => [
+                'domain_verified' => false,
+                'cf_hostname_id' => 'ch_apex',
+                'cf_hostname_id_www' => 'ch_www',
+                'cf_status' => 'pending',
+                'cf_ssl_status' => 'pending_validation',
+                'cf_status_www' => 'active',
+                'cf_ssl_status_www' => 'active',
+            ],
+        ]);
+
+        $this->postJson('/api/v1/teacher/domain/verify', [], $this->authHeaders($teacher, $tenant))
+            ->assertOk()
+            ->assertJsonPath('verified', true);
+
+        $setting = TenantSetting::withoutTenant()->where('tenant_id', $tenant->id)->first();
+        $this->assertTrue((bool) $setting->metadata['domain_verified']);
+        $this->assertSame('active', $setting->metadata['cf_status_www']);
+        $this->assertSame('pending', $setting->metadata['cf_status']);
+
+        // The edge `ask` gate must bless the working www host and the site lookup
+        // must serve it — even though the apex is still pending.
+        $this->getJson('/api/v1/public/tls/ask?domain=www.brand-shop.com')->assertOk();
+        $this->getJson('/api/v1/public/domain/www.brand-shop.com')->assertOk();
+    }
+
+    public function test_sync_adopts_an_existing_hostname_and_never_recreates_or_rotates_the_token(): void
+    {
+        $this->enableCloudflare();
+
+        Http::fake(function (Request $request) {
+            $url = $request->url();
+
+            if ($request->method() === 'GET' && str_contains($url, '/custom_hostnames?hostname=')) {
+                $isWww = str_contains($url, 'www.');
+                $id = $isWww ? 'ch_www_existing' : 'ch_existing';
+
+                return Http::response(['success' => true, 'result' => [[
+                    'id' => $id,
+                    'hostname' => $isWww ? 'www.brand-shop.com' : 'brand-shop.com',
+                    'status' => 'pending',
+                    'ssl' => ['status' => 'pending_validation', 'validation_records' => []],
+                    'ownership_verification' => ['type' => 'txt', 'name' => '_cf-custom-hostname.brand-shop.com', 'value' => 'stable-token'],
+                ]]], 200);
+            }
+
+            if ($request->method() === 'GET' && preg_match('#/custom_hostnames/([^/?]+)$#', $url, $m)) {
+                // The locally stored id no longer exists in Cloudflare.
+                return Http::response(['success' => false, 'errors' => [['message' => 'not found', 'code' => 1436]]], 404);
+            }
+
+            return Http::response(['success' => false, 'errors' => [['message' => 'unexpected']]], 404);
+        });
+
+        $tenant = $this->makeTenant();
+        $this->teacherFor($tenant);
+
+        $setting = TenantSetting::withoutTenant()->create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $tenant->id,
+            'custom_domain' => 'brand-shop.com',
+            'metadata' => ['domain_verified' => false, 'cf_hostname_id' => 'ch_stale'],
+        ]);
+
+        \App\Http\Controllers\Api\TeacherDomainController::syncCustomHostname($setting->fresh());
+
+        $setting->refresh();
+        // Adopted the live hostname by name instead of creating a duplicate…
+        $this->assertSame('ch_existing', $setting->metadata['cf_hostname_id']);
+        $this->assertSame('ch_www_existing', $setting->metadata['cf_hostname_id_www']);
+        // …and the ownership verification token (never rotated) is preserved.
+        $this->assertSame('stable-token', $setting->metadata['cf_ownership']['value']);
+
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/custom_hostnames'));
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'DELETE');
+    }
 }

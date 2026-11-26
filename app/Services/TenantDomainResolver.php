@@ -75,7 +75,24 @@ class TenantDomainResolver
 
         $setting = TenantSetting::withoutTenant()->where('custom_domain', $apex)->first();
 
-        if (! $setting || ($setting->metadata['domain_verified'] ?? false) !== true) {
+        if (! $setting) {
+            return false;
+        }
+
+        $meta = $setting->metadata ?? [];
+
+        // Servable when the tenant's domain is verified (at least one of its
+        // hostnames is active on Cloudflare) OR when THIS exact host is already
+        // active on Cloudflare. The second clause is defence-in-depth: a
+        // still-pending apex must never block an already-active `www` (and vice
+        // versa) even before the next sync refreshes `domain_verified`.
+        $verified = ($meta['domain_verified'] ?? false) === true;
+
+        $hostActive = $host === 'www.'.$apex
+            ? ($meta['cf_status_www'] ?? null) === 'active' && ($meta['cf_ssl_status_www'] ?? null) === 'active'
+            : ($meta['cf_status'] ?? null) === 'active' && ($meta['cf_ssl_status'] ?? null) === 'active';
+
+        if (! $verified && ! $hostActive) {
             return false;
         }
 

@@ -248,15 +248,27 @@ class TeacherDomainController extends Controller
             return response()->json(['message' => 'No domain connected yet.'], 422);
         }
 
+        $liveHost = $domain;
+
         if (CloudflareSaasService::enabled()) {
             // Authoritative: Cloudflare validates the CNAME and issues the edge
             // certificate. No DNS lookups of our own are needed.
             $verified = self::syncCustomHostname($setting);
             $setting->refresh();
+
+            $meta = $setting->metadata ?? [];
+            $apexLive = ($meta['cf_status'] ?? null) === 'active' && ($meta['cf_ssl_status'] ?? null) === 'active';
+            $wwwLive = ($meta['cf_status_www'] ?? null) === 'active' && ($meta['cf_ssl_status_www'] ?? null) === 'active';
+
+            // Serve the host Cloudflare actually validated. The apex can be
+            // legitimately pending when the registrar flattens it into A records,
+            // while `www` is live.
+            $liveHost = (! $apexLive && $wwwLive) ? 'www.'.$domain : $domain;
+
             $records = [
                 'CNAME → '.(CloudflareSaasService::cnameTarget() ?: ''),
-                'Cloudflare hostname: '.($setting->metadata['cf_status'] ?? 'pending'),
-                'SSL: '.($setting->metadata['cf_ssl_status'] ?? 'pending'),
+                'Cloudflare hostname: '.($meta['cf_status'] ?? 'pending'),
+                'SSL: '.($meta['cf_ssl_status'] ?? 'pending'),
             ];
         } else {
             $platform = $this->platformDomain();
@@ -280,7 +292,7 @@ class TeacherDomainController extends Controller
             'verified' => $verified,
             'found_records' => $records,
             'message' => $verified
-                ? 'Domain verified! Your site is live at https://'.$domain.' with an SSL certificate managed by Cloudflare.'
+                ? 'Domain verified! Your site is live at https://'.$liveHost.' with an SSL certificate managed by Cloudflare.'
                 : ($metadata['domain_last_error']
                     ?? 'Not verified yet. Publish the DNS records below, then retry. DNS can take up to 24h to propagate.'),
             'hostname' => self::hostnameContext($setting->fresh()),
@@ -288,14 +300,16 @@ class TeacherDomainController extends Controller
     }
 
     /**
-     * Ensure the Cloudflare custom hostname exists and refresh its status into
-     * the setting metadata. Returns true only when the hostname AND its edge
-     * certificate are both active — the exact moment the domain is safe to serve.
+     * Ensure the Cloudflare custom hostnames exist and refresh their status into
+     * the setting metadata. Returns true when the apex OR its `www.` sibling is
+     * fully active (hostname + edge certificate) — the moment the domain is safe
+     * to serve.
      *
-     * The apex and its `www.` sibling are BOTH registered as custom hostnames so
-     * the edge certificate covers whichever host the visitor typed. The apex
-     * decides «verified»; `www` is tracked separately and is best-effort, so a
-     * slow or as-yet-unpublished `www` record never blocks the apex site.
+     * Both hostnames are registered so the edge certificate covers whichever
+     * host the visitor typed. Whichever one Cloudflare validates first makes the
+     * tenant servable: a still-pending apex (which needs the Enterprise Apex
+     * Proxying add-on once a registrar flattens it into A records) never blocks
+     * `www`, and an as-yet-unpublished `www` never blocks a validated apex.
      */
     public static function syncCustomHostname(TenantSetting $setting): bool
     {
@@ -310,9 +324,11 @@ class TeacherDomainController extends Controller
         try {
             $apexReady = self::syncOneHostname($metadata, $domain, 'cf_hostname_id', 'cf_status', 'cf_ssl_status');
 
+            $wwwReady = false;
+
             if (! str_starts_with($domain, 'www.')) {
                 try {
-                    self::syncOneHostname($metadata, 'www.'.$domain, 'cf_hostname_id_www', 'cf_status_www', 'cf_ssl_status_www');
+                    $wwwReady = self::syncOneHostname($metadata, 'www.'.$domain, 'cf_hostname_id_www', 'cf_status_www', 'cf_ssl_status_www');
                 } catch (\Throwable $e) {
                     Log::warning('Cloudflare www custom hostname sync failed', [
                         'domain' => $domain,
@@ -323,15 +339,24 @@ class TeacherDomainController extends Controller
 
             $metadata['cf_last_synced_at'] = now()->toIso8601String();
 
-            if ($apexReady) {
+            // A domain is servable when AT LEAST ONE of its hostnames (apex or
+            // `www`) is fully active on Cloudflare. The apex can only validate
+            // when the registrar keeps a real CNAME to the SaaS zone — Cloudflare
+            // requires the Enterprise Apex Proxying add-on when the apex is
+            // flattened into A records. A still-pending apex must therefore NEVER
+            // block the working `www` host, or the whole tenant would be wrongly
+            // marked unverified and its edge certificate withheld.
+            $served = $apexReady || $wwwReady;
+
+            if ($served) {
                 unset($metadata['domain_last_error']);
             } else {
-                $metadata['domain_last_error'] = self::pendingReason($metadata['cf_status'] ?? null, $metadata['cf_ssl_status'] ?? null);
+                $metadata['domain_last_error'] = self::pendingReason($metadata);
             }
 
             $setting->update(['metadata' => $metadata]);
 
-            return $apexReady;
+            return $served;
         } catch (\Throwable $e) {
             $metadata['cf_last_synced_at'] = now()->toIso8601String();
             $metadata['domain_last_error'] = $e->getMessage();
@@ -359,10 +384,28 @@ class TeacherDomainController extends Controller
         $host = $id ? CloudflareSaasService::getHostname((string) $id) : null;
 
         // Missing locally or removed in Cloudflare → reuse an existing one (so we
-        // never hit a duplicate-hostname error) or create it.
+        // never hit a duplicate-hostname error) or create it. Creating only ever
+        // happens when no hostname with this exact name exists, so the ownership
+        // verification token is never rotated by a needless re-create.
         if (! $host) {
-            $host = CloudflareSaasService::findHostnameByName($name)
-                ?? CloudflareSaasService::createHostname($name);
+            $host = CloudflareSaasService::findHostnameByName($name);
+
+            if (! $host) {
+                try {
+                    $host = CloudflareSaasService::createHostname($name);
+                } catch (\Throwable $e) {
+                    // Cloudflare refuses a duplicate name (e.g. a concurrent
+                    // sync already created it). Adopt the existing hostname
+                    // instead of failing — never delete and re-create, which
+                    // would invalidate the domain's published ownership token.
+                    $host = CloudflareSaasService::findHostnameByName($name);
+
+                    if (! $host) {
+                        throw $e;
+                    }
+                }
+            }
+
             $metadata[$idKey] = $host['id'] ?? $id;
         }
 
@@ -430,10 +473,14 @@ class TeacherDomainController extends Controller
         ];
     }
 
-    private static function pendingReason(?string $status, ?string $sslStatus): string
+    /** @param array<string, mixed> $metadata */
+    private static function pendingReason(array $metadata): string
     {
-        if ($status !== 'active') {
-            return 'Cloudflare has not validated the hostname yet. Confirm the CNAME record below and wait a few minutes.';
+        $apex = $metadata['cf_status'] ?? null;
+        $www = $metadata['cf_status_www'] ?? null;
+
+        if ($apex !== 'active' && $www !== 'active') {
+            return 'Cloudflare has not validated the hostname yet. Publish the CNAME record below and wait a few minutes.';
         }
 
         return 'DNS validated. The SSL certificate is being issued by Cloudflare — usually ready within a few minutes.';
@@ -642,10 +689,12 @@ class TeacherDomainController extends Controller
      * publish — derived from the real production configuration, never inventing
      * an address.
      *
-     * Under Cloudflare for SaaS the teacher only needs a CNAME to the platform's
-     * CNAME target (the apex is supported wherever the registrar offers an
-     * ALIAS / CNAME-flattening record, e.g. Hostinger). In legacy direct mode it
-     * falls back to the classic CNAME-to-platform / apex-A instructions.
+     * Under Cloudflare for SaaS the teacher needs a CNAME to the platform's
+     * CNAME target; the `www` host always works. The apex only validates when
+     * the registrar keeps a real CNAME to the SaaS zone — Cloudflare requires
+     * its Enterprise Apex Proxying add-on once the apex is flattened into A
+     * records (as Hostinger does). In legacy direct mode it falls back to the
+     * classic CNAME-to-platform / apex-A instructions.
      *
      * @param  array<string, mixed>|null  $cf  {@see hostnameContext()}
      */
@@ -680,7 +729,11 @@ class TeacherDomainController extends Controller
         if (is_array($ownership) && ! empty($ownership['name']) && ! empty($ownership['value'])) {
             $txtHost = (string) $ownership['name'];
             $txtValue = (string) $ownership['value'];
-            $records[] = ['type' => 'TXT', 'host' => $txtHost, 'value' => $txtValue, 'purpose' => 'تحقق الملكية'];
+            // Required for the apex whenever the registrar flattens the apex
+            // CNAME/ALIAS into A records (Hostinger, Namecheap ALIAS…): Cloudflare
+            // then cannot match a CNAME and validates ownership from this TXT
+            // instead. Without it the apex hostname stays `pending` forever.
+            $records[] = ['type' => 'TXT', 'host' => $txtHost, 'value' => $txtValue, 'purpose' => 'تحقق الملكية (إلزامي للجذر)'];
         }
 
         foreach ($validation as $v) {
@@ -704,12 +757,14 @@ class TeacherDomainController extends Controller
             'txt_value' => $txtValue,
             'cname_target' => $target,
             'records' => $records,
-            'apex_note' => 'للجذر (@) استخدم سجل CNAME على مزوّد يدعم ALIAS/تسطيح CNAME (مثل Hostinger الذي يحوّل CNAME على @ إلى ALIAS تلقائيًا).',
+            'apex_note' => 'العنوان الموثوق الذي يعمل دائمًا هو «www» (سجل CNAME نحو الهدف). أما الجذر (@) فيعمل عبر CNAME/ALIAS فقط إذا أبقى مزوّد الدومين سجل CNAME حقيقيًا؛ بعض المزوّدين (مثل Hostinger) يحوّلون الجذر إلى سجلات A فلا يتمكّن Cloudflare من التحقق منه، ويبقى الجذر بانتظار التحقق بينما يُخدَم موقعك على www. أضف سجل TXT للتحقق المُدرج بالأسفل وأبقِه حتى تصبح حالة الدومين «نشطة» (active).',
             'steps' => $domain ? [
                 'افتح لوحة DNS لدى مزوّد الدومين (Hostinger / Namecheap / GoDaddy / Cloudflare...)',
-                "أضف سجل CNAME للمضيف www والقيمة {$target}",
-                "وللجذر @ أضف سجل CNAME/ALIAS بنفس القيمة {$target} (Hostinger يدعمه تلقائيًا كـ ALIAS)",
-                $txtValue ? 'أضف سجل TXT للتحقق بالقيمة الموضّحة بالأسفل' : 'انتظر بضع دقائق حتى يتحقق Cloudflare من الدومين تلقائيًا',
+                "أضف سجل CNAME للمضيف www والقيمة {$target} — هذا العنوان الذي يعمل دائمًا",
+                "وللجذر @ أضف سجل CNAME/ALIAS بنفس القيمة {$target} (اختياري — يعمل فقط إذا أبقى مزوّدك سجل CNAME على الجذر)",
+                $txtValue
+                    ? "أضف سجل TXT للتحقق من الملكية: المضيف {$txtHost} والقيمة {$txtValue} — إلزامي عندما يسطّح المزوّد الجذر إلى سجلات A"
+                    : 'انتظر بضع دقائق حتى يتحقق Cloudflare من الدومين تلقائيًا',
                 'اضغط «تحقق من الربط» — يُصدر Cloudflare شهادة SSL تلقائيًا ويتجدد تلقائيًا',
             ] : [],
             'hostinger_steps' => $domain ? [
@@ -717,7 +772,9 @@ class TeacherDomainController extends Controller
                 'افتح DNS / Nameservers ← Manage DNS records',
                 "أضف سجل CNAME: Name = www ، Points to = {$target} ، TTL = 3600",
                 "أضف سجل CNAME: Name = @ (يحوّله Hostinger تلقائيًا إلى ALIAS) ، Points to = {$target}",
-                $txtValue ? 'أضف سجل TXT للتحقق الملكية بالقيمة الموضّحة بالأسفل' : 'احفظ التغييرات ثم اضغط «تحقق من الربط» هنا',
+                $txtValue
+                    ? "أضف سجل TXT: Name = {$txtHost} ، Value = {$txtValue} (إلزامي للجذر @ — يتحقق Cloudflare من الملكية عبره)"
+                    : 'احفظ التغييرات ثم اضغط «تحقق من الربط» هنا',
                 'احفظ التغييرات ثم اضغط «تحقق من الربط» هنا',
             ] : [],
             'provider_note' => 'لا نحتاج حساب Cloudflare خاصًا بك ولا كلمة مرور مزوّد الدومين — تُدار سجلات DNS من حسابك، وتُدار الشهادة تلقائيًا من المنصة.',
