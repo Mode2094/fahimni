@@ -10,10 +10,12 @@ import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-ques
 
 export type AnswerValue = string | string[] | { left: string; right: string }[];
 
-export function QuestionRenderer({ q, value, onChange }: {
+export function QuestionRenderer({ q, value, onChange, onDone }: {
   q: any;
   value: AnswerValue;
   onChange: (v: AnswerValue) => void;
+  /** Interactive exercise reported itself finished (ungraded practice only). */
+  onDone?: () => void;
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -185,6 +187,7 @@ export function QuestionRenderer({ q, value, onChange }: {
         autoCapture={interactive.auto_capture !== false}
         value={typeof value === 'string' ? value : ''}
         onChange={onChange}
+        onDone={onDone}
       />
     );
   }

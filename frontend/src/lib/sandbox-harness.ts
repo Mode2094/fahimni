@@ -278,7 +278,10 @@ export const sandboxHarnessHtml = `<!DOCTYPE html>
     getValue: function () { return currentValue; },
     onChange: function (cb) { if (typeof cb === 'function') changeListeners.push(cb); },
     onRestore: function (cb) { if (typeof cb === 'function') restoreListeners.push(cb); },
-    collect: function () { return collectFields(); }
+    collect: function () { return collectFields(); },
+    // Signal that the exercise is finished. A hint only: the host marks an
+    // ungraded practice exercise complete; it can never score or end an exam.
+    done: function () { post('done', {}); }
   };
 
   window.addEventListener('message', function (event) {

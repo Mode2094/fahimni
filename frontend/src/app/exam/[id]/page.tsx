@@ -8,7 +8,7 @@ import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertTriangle, Clock, CheckCircle, Trophy, XCircle, ArrowLeft, RotateCcw, ShieldAlert, Pencil } from 'lucide-react';
+import { Loader2, AlertTriangle, Clock, CheckCircle, Trophy, XCircle, ArrowLeft, RotateCcw, ShieldAlert, Pencil, Sparkles } from 'lucide-react';
 import { QuestionRenderer, type AnswerValue } from '@/components/exam/question-renderer';
 import { Latex } from '@/components/exam/latex';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -39,6 +39,8 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [antiCheat, setAntiCheat] = useState(false);
   const [warnShown, setWarnShown] = useState(false);
   const [previewAnswers, setPreviewAnswers] = useState<any[]>([]);
+  // Ungraded skill-practice completion (practice exams only).
+  const [practiceCompleted, setPracticeCompleted] = useState(false);
   // Teacher preview: `?preview=1` replays the exact student experience against
   // the preview endpoints — no attempt is recorded, no score stored, and no
   // anti-cheat (verifying an exam must not auto-submit the teacher).
@@ -50,6 +52,10 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const startedAtRef = useRef(0);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef('');
+
+  // Ungraded skill practice: no timer, no points, no pass/fail, no anti-cheat.
+  // The server decides completion; this only reflects the exam's own mode.
+  const practice = exam?.assessment_mode === 'practice';
 
   const typeLabel = (tp: string) => {
     const map: Record<string, [string, string]> = {
@@ -211,6 +217,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       setPreviewAnswers([]);
       setCurrent(0);
       setResult(null);
+      setPracticeCompleted(false);
       if (d.deadline) setDeadline(new Date(d.deadline).getTime());
       else setDeadline(null);
       if (d.resumed && !previewMode) {
@@ -268,6 +275,28 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     } catch { submittedRef.current = false; toast.error(t('فشل', 'Failed')); }
     setSubmitting(false);
   };
+
+  // Complete an ungraded skill-practice attempt. Idempotent on the server: a
+  // duplicate done:true, a retry or a reload all land on the same "completed"
+  // state and never record a second result or a fake grade.
+  const completePractice = async () => {
+    if (submittedRef.current || previewMode) return;
+    submittedRef.current = true;
+    setSubmitting(true);
+    const tid = localStorage.getItem('tenant_id');
+    try {
+      const res = await fetch(`${API}/exams/${id}/attempts/${attemptId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tid || '', Accept: 'application/json' },
+      });
+      const d = await res.json();
+      if (!res.ok) { submittedRef.current = false; toast.error(d.message || t('فشل', 'Failed')); return; }
+      setPracticeCompleted(true);
+      setStarted(false);
+      setDeadline(null);
+    } catch { submittedRef.current = false; toast.error(t('فشل', 'Failed')); }
+    setSubmitting(false);
+  };
   submitRef.current = submit;
 
   if (loading) return <div className="flex items-center justify-center h-screen"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>;
@@ -303,11 +332,31 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
           <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 mx-auto"><AlertTriangle className="h-10 w-10 text-primary" /></div>
           <h1 className="text-3xl font-bold">{exam?.title || t('اختبار', 'Exam')}</h1>
           <div className="grid grid-cols-3 gap-3 text-sm">
-            <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('المدة', 'Duration')}</p><p className="font-bold text-lg">{exam?.duration_minutes || 0} {t('د', 'm')}</p></div>
-            <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('الأسئلة', 'Questions')}</p><p className="font-bold text-lg">{exam?.questions_count ?? questions.length}</p></div>
-            <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('النجاح', 'Pass')}</p><p className="font-bold text-lg">{exam?.pass_mark_percent || 0}%</p></div>
+            {practice ? (
+              <>
+                <div className="p-3 rounded-xl bg-teal-50"><p className="text-xs text-teal-700/70">{t('النمط', 'Mode')}</p><p className="font-bold text-base">{t('تمرين مهارة', 'Skill practice')}</p></div>
+                <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('الأسئلة', 'Questions')}</p><p className="font-bold text-lg">{exam?.questions_count ?? questions.length}</p></div>
+                <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('الوقت', 'Time')}</p><p className="font-bold text-base">{t('بدون حد', 'No limit')}</p></div>
+              </>
+            ) : (
+              <>
+                <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('المدة', 'Duration')}</p><p className="font-bold text-lg">{exam?.duration_minutes || 0} {t('د', 'm')}</p></div>
+                <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('الأسئلة', 'Questions')}</p><p className="font-bold text-lg">{exam?.questions_count ?? questions.length}</p></div>
+                <div className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400">{t('النجاح', 'Pass')}</p><p className="font-bold text-lg">{exam?.pass_mark_percent || 0}%</p></div>
+              </>
+            )}
           </div>
-          {result ? (
+          {practiceCompleted ? (
+            <div className="space-y-3">
+              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-teal-100 mx-auto"><CheckCircle className="h-12 w-12 text-teal-600" /></div>
+              <h2 className="text-3xl font-bold">{t('أكملت التمرين!', 'Practice completed!')}</h2>
+              <p className="text-sm text-gray-500">{t('هذا تمرين مهارة غير مُقيَّم — لا تُحتسب درجات، ولا يؤثر على معدلك أو ترتيبك.', 'This is an ungraded skill practice — no score, and it does not affect your average or ranking.')}</p>
+              <div className="flex justify-center gap-3 pt-2">
+                <Button onClick={startExam} className="gap-2 rounded-full"><RotateCcw className="h-4 w-4" />{t('تمرين مرة أخرى', 'Practice again')}</Button>
+                <a href="/my-learning"><Button variant="outline">{t('العودة', 'Back')}</Button></a>
+              </div>
+            </div>
+          ) : result ? (
             <div className="space-y-3">
               <div className={`flex h-24 w-24 items-center justify-center rounded-full mx-auto ${result.passed ? 'bg-emerald-100' : 'bg-red-100'}`}>{result.passed ? <Trophy className="h-12 w-12 text-emerald-500" /> : <XCircle className="h-12 w-12 text-red-500" />}</div>
               <h2 className="text-3xl font-bold">{result.passed ? t('مبروك!', 'Passed!') : t('حاول مرة أخرى', 'Try again')}</h2>
@@ -354,17 +403,19 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
             </div>
           ) : (
             <>
-              <p className="text-gray-500">{t(`لديك ${exam?.duration_minutes || 30} دقيقة. نسبة النجاح ${exam?.pass_mark_percent ?? 0}%.`, `You have ${exam?.duration_minutes || 30} minutes. Pass mark ${exam?.pass_mark_percent ?? 0}%.`)}</p>
-              {!previewMode && exam?.anti_cheat_enabled !== false && (
+              <p className="text-gray-500">{practice
+                ? t('تمرين مهارة بلا وقت ولا درجات — أكمله متى شئت. لا يُحتسب في معدلك ولا في ترتيب الطلاب.', 'A skill practice with no timer and no score — finish whenever you like. It never affects your average or the leaderboard.')
+                : t(`لديك ${exam?.duration_minutes || 30} دقيقة. نسبة النجاح ${exam?.pass_mark_percent ?? 0}%.`, `You have ${exam?.duration_minutes || 30} minutes. Pass mark ${exam?.pass_mark_percent ?? 0}%.`)}</p>
+              {!previewMode && !practice && exam?.anti_cheat_enabled !== false && (
                 <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 text-amber-700 text-xs text-start">
                   <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                   <span>{t('وضع منع الغش مفعل: مغادرة الصفحة تُسجل مخالفة، و3 مخالفات = تسليم تلقائي. النسخ والنقر الأيمن معطلان.', 'Anti-cheat is ON: leaving the page counts as a violation, 3 = auto-submit. Copy & right-click are disabled.')}</span>
                 </div>
               )}
-              {!previewMode && exam?.max_attempts > 0 && (
+              {!previewMode && !practice && exam?.max_attempts > 0 && (
                 <p className="text-xs text-gray-400">{t(`عدد المحاولات المسموح بها لهذا الاختبار: ${exam.max_attempts}. تظهر لك المتبقي عند البدء.`, `This exam allows ${exam.max_attempts} attempts. Your remaining count is shown when you start.`)}</p>
               )}
-              <Button size="lg" onClick={startExam}>{previewMode ? t('ابدأ المعاينة', 'Start preview') : t('ابدأ الاختبار', 'Start Exam')}</Button>
+              <Button size="lg" onClick={startExam}>{previewMode ? t('ابدأ المعاينة', 'Start preview') : practice ? t('ابدأ التمرين', 'Start practice') : t('ابدأ الاختبار', 'Start Exam')}</Button>
             </>
           )}
         </Card>
@@ -393,6 +444,9 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   // that explicit instead of silently dropping them.
   const confirmSubmit = async () => {
     if (previewMode) { submit(); return; }
+    // A skill practice has nothing to grade and no pass mark: completing it is
+    // the whole point, so skip the "unanswered questions" warning.
+    if (practice) { completePractice(); return; }
     const unanswered = questions.length - answeredCount;
     if (unanswered > 0 && !(await confirmDialog({
       description: t(
@@ -410,6 +464,12 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-xs font-semibold text-violet-800" role="status">
           <ShieldAlert className="h-3.5 w-3.5" />
           {t('وضع المعاينة — لا تُحفظ الإجابات ولا تُحتسب النتيجة.', 'Preview mode — answers and score are not saved.')}
+        </div>
+      )}
+      {practice && !previewMode && (
+        <div className="flex items-center gap-2 rounded-xl border border-teal-200 bg-teal-50 p-2.5 text-xs font-semibold text-teal-800" role="status">
+          <Sparkles className="h-3.5 w-3.5" />
+          {t('تمرين مهارة — بلا وقت ولا درجات، ولا يُحتسب في معدلك أو ترتيبك.', 'Skill practice — no timer, no score, and it does not affect your average or ranking.')}
         </div>
       )}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -443,13 +503,14 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       <Card className="border-0 shadow-sm p-8">
         <div className="flex items-center gap-1.5 mb-2">
           <Badge variant="outline" className="text-[10px]">{typeLabel(q.question_type)}</Badge>
-          <Badge variant="outline" className="text-[10px]">{q.points} {t('نقطة', 'pts')}</Badge>
+          {/* Practice hides points — there is no score to earn. */}
+          {!practice && <Badge variant="outline" className="text-[10px]">{q.points} {t('نقطة', 'pts')}</Badge>}
         </div>
         <h2 className="text-xl font-semibold mb-3"><Latex text={q.question_text} /></h2>
         {q.metadata?.image_url && <img src={q.metadata.image_url} className="rounded-xl border max-h-64 mb-4 object-contain" alt={t('صورة السؤال', 'Question image')} />}
         {/* key forces a fresh renderer per question: an interactive iframe must
             not be reused across questions (no duplicate init, no stale HTML). */}
-        <QuestionRenderer key={q.exam_question_id} q={q} value={answers[q.exam_question_id] ?? (q.question_type === 'drag_drop' || q.question_type === 'matching' ? [] : q.question_type === 'ordering' ? (q.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text) : q.question_type === 'fill_blank' ? [] : '')} onChange={(v) => setAnswers({ ...answers, [q.exam_question_id]: v })} />
+        <QuestionRenderer key={q.exam_question_id} q={q} value={answers[q.exam_question_id] ?? (q.question_type === 'drag_drop' || q.question_type === 'matching' ? [] : q.question_type === 'ordering' ? (q.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text) : q.question_type === 'fill_blank' ? [] : '')} onChange={(v) => setAnswers({ ...answers, [q.exam_question_id]: v })} onDone={practice && !previewMode ? completePractice : undefined} />
       </Card>
 
       <div className="flex justify-between items-center gap-3 flex-wrap">
@@ -465,10 +526,10 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
             onClick={confirmSubmit}
             disabled={submitting}
             className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
-            aria-label={previewMode ? t('تصحيح المعاينة', 'Grade preview') : t('تسليم الاختبار', 'Submit exam')}
+            aria-label={previewMode ? t('تصحيح المعاينة', 'Grade preview') : practice ? t('إكمال التمرين', 'Complete practice') : t('تسليم الاختبار', 'Submit exam')}
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-            {previewMode ? t('إنهاء المعاينة والتصحيح', 'Finish & grade preview') : t('تسليم الاختبار', 'Submit exam')}
+            {previewMode ? t('إنهاء المعاينة والتصحيح', 'Finish & grade preview') : practice ? t('إكمال التمرين', 'Complete practice') : t('تسليم الاختبار', 'Submit exam')}
           </Button>
         </div>
       </div>

@@ -393,6 +393,8 @@ Route::prefix('v1')->group(function () {
             Route::post('exams/{exam}/preview', [ExamAttemptController::class, 'preview']);
             Route::post('exams/{exam}/preview/grade', [ExamAttemptController::class, 'previewGrade']);
             Route::post('exams/{exam}/attempts/{attempt}/submit', [ExamAttemptController::class, 'submit']);
+            // Ungraded practice completion — idempotent, no score/pass-fail.
+            Route::post('exams/{exam}/attempts/{attempt}/complete', [ExamAttemptController::class, 'complete']);
             // Autosave: persist in-progress answers so a reload/reconnect can
             // resume the same attempt without losing answers or a slot.
             Route::post('exams/{exam}/attempts/{attempt}/autosave', [ExamAttemptController::class, 'autosave']);

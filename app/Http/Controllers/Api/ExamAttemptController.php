@@ -16,9 +16,12 @@ use App\Services\ExamPaper;
 use App\Services\NotificationService;
 use App\Services\StudentGamificationService;
 use App\Traits\AuthorizesTenantAccess;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\Uid\UuidV7;
 
 class ExamAttemptController extends Controller
@@ -77,7 +80,7 @@ class ExamAttemptController extends Controller
      * sanitised metadata (the answer key never leaks) and identical
      * ordering/shuffling. Real attempts serve their frozen paper instead.
      */
-    private function livePayload(\Illuminate\Support\Collection $examQuestions, Exam $exam): \Illuminate\Support\Collection
+    private function livePayload(Collection $examQuestions, Exam $exam): Collection
     {
         return $this->paper->payload(
             ['version' => ExamPaper::VERSION, 'questions' => $examQuestions->map(fn ($eq) => [
@@ -104,7 +107,7 @@ class ExamAttemptController extends Controller
      * payload was dropped to keep the paper small are re-served from the live
      * bank (their grading key stays frozen).
      */
-    private function paperPayload(array $paper, Exam $exam): \Illuminate\Support\Collection
+    private function paperPayload(array $paper, Exam $exam): Collection
     {
         $liveSandbox = $this->liveSandboxQuestions($paper);
 
@@ -331,7 +334,9 @@ class ExamAttemptController extends Controller
             }
         }
 
-        $maxAttempts = $exam->max_attempts > 0 ? $exam->max_attempts : PHP_INT_MAX;
+        $maxAttempts = $exam->isPractice()
+            ? PHP_INT_MAX // skill practice is repeatable — never blocks a retry
+            : ($exam->max_attempts > 0 ? $exam->max_attempts : PHP_INT_MAX);
 
         // Term scope: the student's current effective enrollment for this
         // exam's course decides which term's attempt budget applies.
@@ -343,17 +348,20 @@ class ExamAttemptController extends Controller
             // An in-progress attempt that has outlived its duration is a
             // dead end: auto-submit it (grade whatever exists, zero answers
             // if nothing was saved) so it can never block a retake. Scoped to
-            // this term so another term's live attempt is untouched.
-            $stale = $this->scopeToTerm(
-                ExamAttempt::where('exam_id', $exam->id)
-                    ->where('user_id', $user->id)
-                    ->where('status', 'in_progress'),
-                $termId
-            )->where('started_at', '<', now()->subMinutes(max(1, $exam->duration_minutes)))
-                ->get();
+            // this term so another term's live attempt is untouched. Practice
+            // exercises have no clock, so a resumed one is simply continued.
+            if (! $exam->isPractice()) {
+                $stale = $this->scopeToTerm(
+                    ExamAttempt::where('exam_id', $exam->id)
+                        ->where('user_id', $user->id)
+                        ->where('status', 'in_progress'),
+                    $termId
+                )->where('started_at', '<', now()->subMinutes(max(1, $exam->duration_minutes)))
+                    ->get();
 
-            foreach ($stale as $staleAttempt) {
-                $this->autoSubmit($staleAttempt);
+                foreach ($stale as $staleAttempt) {
+                    $this->autoSubmit($staleAttempt);
+                }
             }
 
             // Resume a still-live attempt instead of opening another one: a
@@ -396,6 +404,7 @@ class ExamAttemptController extends Controller
                 'academic_term_id' => $termId,
                 'attempt_number' => $attemptNumber,
                 'status' => 'in_progress',
+                'assessment_mode' => $exam->assessment_mode ?? Exam::MODE_GRADED,
                 'started_at' => now(),
             ]), false];
         });
@@ -458,19 +467,23 @@ class ExamAttemptController extends Controller
             }
         }
 
-        $attemptsUsed = $this->scopeToTerm(
-            ExamAttempt::where('exam_id', $exam->id)
-                ->where('user_id', $user->id)
-                ->where('status', 'submitted'),
-            $termId
-        )->count();
-        $attemptsLeft = $exam->max_attempts > 0 ? max(0, $exam->max_attempts - $attemptsUsed) : -1;
+        $attemptsUsed = $exam->isPractice()
+            ? 0
+            : $this->scopeToTerm(
+                ExamAttempt::where('exam_id', $exam->id)
+                    ->where('user_id', $user->id)
+                    ->where('status', 'submitted'),
+                $termId
+            )->count();
+        $attemptsLeft = $exam->isPractice()
+            ? -1
+            : ($exam->max_attempts > 0 ? max(0, $exam->max_attempts - $attemptsUsed) : -1);
 
         // The deadline always runs from when THIS attempt actually started, so
         // resuming a reloaded/reconnected attempt continues the real clock
-        // instead of silently restarting it.
+        // instead of silently restarting it. Practice exercises have no clock.
         $deadline = null;
-        if ($exam->duration_minutes > 0) {
+        if (! $exam->isPractice() && $exam->duration_minutes > 0) {
             $deadline = $attempt->started_at->copy()->addMinutes($exam->duration_minutes)->toIso8601String();
         }
 
@@ -494,10 +507,12 @@ class ExamAttemptController extends Controller
             'attempts_left' => $attemptsLeft,
             'exam' => [
                 'title' => $exam->title,
-                'duration_minutes' => $exam->duration_minutes,
+                'duration_minutes' => $exam->isPractice() ? null : $exam->duration_minutes,
                 'shuffle_questions' => $exam->shuffle_questions,
-                'anti_cheat_enabled' => (bool) $exam->anti_cheat_enabled,
+                'anti_cheat_enabled' => $exam->isPractice() ? false : (bool) $exam->anti_cheat_enabled,
                 'allow_resume' => true,
+                'assessment_mode' => $exam->assessment_mode ?? Exam::MODE_GRADED,
+                'is_practice' => $exam->isPractice(),
             ],
         ]);
     }
@@ -570,8 +585,66 @@ class ExamAttemptController extends Controller
         return response()->json(['saved' => true, 'count' => count($rows)]);
     }
 
+    /**
+     * Complete an ungraded skill-practice attempt.
+     *
+     * Idempotent by design: a duplicate `done:true`, a retry, a reconnect or a
+     * page that reloads after finishing all land on the same "completed" state
+     * and never create a second record or a misleading grade. This endpoint is
+     * only for practice exams — a graded exam must go through submit().
+     */
+    public function complete(Request $request, string $examId, string $attemptId): JsonResponse
+    {
+        $exam = Exam::findOrFail($examId);
+
+        $this->authorize('attempt', $exam);
+
+        if (! $exam->isPractice()) {
+            return response()->json(['message' => 'This assessment is graded; use the exam submit flow.'], 422);
+        }
+
+        return DB::transaction(function () use ($request, $exam, $attemptId) {
+            $attempt = ExamAttempt::where('exam_id', $exam->id)
+                ->where('id', $attemptId)
+                ->where('user_id', $request->user()->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            // Already done — return the same result (no second record, no error).
+            if ($attempt->status === 'completed') {
+                return response()->json([
+                    'attempt' => new ExamAttemptResource($attempt->fresh()),
+                    'already_completed' => true,
+                ]);
+            }
+
+            if ($attempt->status !== 'in_progress') {
+                return response()->json(['message' => 'This exercise can no longer be completed.'], 409);
+            }
+
+            $attempt->update([
+                'status' => 'completed',
+                'assessment_mode' => Exam::MODE_PRACTICE,
+                'completed_at' => now(),
+                'submitted_at' => now(),
+            ]);
+
+            return response()->json([
+                'attempt' => new ExamAttemptResource($attempt->fresh()),
+                'already_completed' => false,
+            ]);
+        });
+    }
+
     public function submit(SubmitExamRequest $request, string $examId, string $attemptId): JsonResponse
     {
+        // A practice exercise has nothing to grade. If a client submits it as
+        // an exam, record completion instead of a meaningless "Failed 0%".
+        $exam = Exam::findOrFail($examId);
+        if ($exam->isPractice()) {
+            return $this->complete($request, $examId, $attemptId);
+        }
+
         $reviewNotification = null;
         $response = DB::transaction(function () use ($request, $examId, $attemptId, &$reviewNotification) {
             return $this->submitWithinTransaction($request, $examId, $attemptId, $reviewNotification);
@@ -589,8 +662,7 @@ class ExamAttemptController extends Controller
         string $examId,
         string $attemptId,
         ?array &$reviewNotification,
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $exam = Exam::findOrFail($examId);
         $attempt = ExamAttempt::where('exam_id', $exam->id)
             ->where('id', $attemptId)
@@ -806,7 +878,7 @@ class ExamAttemptController extends Controller
                 ],
             );
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('exam.review_notification_failed', [
+            Log::warning('exam.review_notification_failed', [
                 'tenant_id' => $context['tenant_id'],
                 'attempt_id' => $context['attempt_id'],
                 'error' => $e->getMessage(),
@@ -899,7 +971,7 @@ class ExamAttemptController extends Controller
             );
         }
 
-        app(\App\Services\NotificationService::class)->notify(
+        app(NotificationService::class)->notify(
             notifiable: $attempt->student,
             type: 'exam.graded',
             title: 'Your exam has been reviewed',
@@ -983,7 +1055,7 @@ class ExamAttemptController extends Controller
      * legacy "no term" rows only, so old results are never pulled into a
      * term-bound limit.
      */
-    private function scopeToTerm(\Illuminate\Database\Eloquent\Builder $query, ?string $termId): \Illuminate\Database\Eloquent\Builder
+    private function scopeToTerm(Builder $query, ?string $termId): Builder
     {
         return $termId === null
             ? $query->whereNull('academic_term_id')
