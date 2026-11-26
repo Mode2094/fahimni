@@ -729,7 +729,7 @@ class AuthController extends Controller
         $stored = $user->email_verify_token;
         $expiresAt = $user->email_verify_token_expires_at;
 
-        if (! $stored || ! hash_equals($stored, $request->token)) {
+        if (! $stored || ! hash_equals($stored, hash('sha256', $request->token))) {
             return response()->json(['message' => 'Invalid verification link.'], 422);
         }
 
