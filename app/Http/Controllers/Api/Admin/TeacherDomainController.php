@@ -114,13 +114,23 @@ class TeacherDomainController extends Controller
 
         $platform = app(TenantDomainResolver::class)->platformDomain();
 
+        $liveHost = $domain;
+
         if (CloudflareSaasService::enabled()) {
             $verified = TeacherDomain::syncCustomHostname($setting);
             $setting->refresh();
+
+            $meta = $setting->metadata ?? [];
+            $apexLive = ($meta['cf_status'] ?? null) === 'active' && ($meta['cf_ssl_status'] ?? null) === 'active';
+            $wwwLive = ($meta['cf_status_www'] ?? null) === 'active' && ($meta['cf_ssl_status_www'] ?? null) === 'active';
+            // Serve the host Cloudflare actually validated; the apex can be
+            // legitimately pending when the registrar flattens it into A records.
+            $liveHost = (! $apexLive && $wwwLive) ? 'www.'.$domain : $domain;
+
             $records = [
                 'CNAME → '.(CloudflareSaasService::cnameTarget() ?: ''),
-                'Cloudflare hostname: '.($setting->metadata['cf_status'] ?? 'pending'),
-                'SSL: '.($setting->metadata['cf_ssl_status'] ?? 'pending'),
+                'Cloudflare hostname: '.($meta['cf_status'] ?? 'pending'),
+                'SSL: '.($meta['cf_ssl_status'] ?? 'pending'),
             ];
         } else {
             $records = TeacherDomain::dnsRecordsFor($domain);
@@ -151,7 +161,7 @@ class TeacherDomainController extends Controller
             'verified' => $verified,
             'found_records' => $records,
             'message' => $verified
-                ? 'Domain verified — your site is live at https://'.$domain.' with a Cloudflare-managed SSL certificate.'
+                ? 'Domain verified — your site is live at https://'.$liveHost.' with a Cloudflare-managed SSL certificate.'
                 : ($metadata['domain_last_error'] ?? 'Not verified yet. Publish the records below (DNS can take up to 24h), then retry.'),
             ...$this->statusPayload($tenant, $setting->fresh(), $records),
         ]);
