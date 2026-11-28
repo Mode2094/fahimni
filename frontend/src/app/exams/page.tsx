@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ClipboardList, Play, Clock, Target, FileQuestion, CheckCircle2, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
+import { showsPassMark } from '@/lib/exam-display';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -41,7 +42,9 @@ export default function ExamsPage() {
   const totalQuestions = exams.reduce((a, e) => a + (e.questions_count ?? 0), 0);
   // Per-exam pass marks differ, so the header shows the average of the
   // published exams instead of the first exam's mark (which was misleading).
+  // A practice has no pass mark: averaging its 0 in would drag the figure down.
   const passMarks = published
+    .filter((e) => showsPassMark(e))
     .map((e) => Number(e.pass_mark_percent))
     .filter((n) => Number.isFinite(n) && n > 0);
   const avgPassMark = passMarks.length ? Math.round(passMarks.reduce((a, n) => a + n, 0) / passMarks.length) : null;
@@ -112,7 +115,11 @@ export default function ExamsPage() {
                   <p className="text-xs text-muted-foreground mt-1.5">{e.description || t('اختبر معلوماتك في هذا الاختبار', 'Test your knowledge in this exam')}</p>
                   <div className="flex flex-wrap items-center gap-2 mt-3">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700"><Clock className="h-3 w-3" />{e.duration_minutes} {t('دقيقة', 'min')}</span>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700"><Target className="h-3 w-3" />{t('نجاح', 'Pass')}: {e.pass_mark_percent}%</span>
+                    {showsPassMark(e) ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700"><Target className="h-3 w-3" />{t('نجاح', 'Pass')}: {e.pass_mark_percent}%</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700"><Target className="h-3 w-3" />{t('تمرين غير مُقيَّم', 'Ungraded practice')}</span>
+                    )}
                     {e.shuffle_questions && <Badge className="bg-teal-50 text-teal-700 border-0 text-[10px] rounded-full">{t('أسئلة عشوائية', 'Shuffled')}</Badge>}
                   </div>
                   <div className="mt-4 pt-4 border-t flex-1 flex items-end">

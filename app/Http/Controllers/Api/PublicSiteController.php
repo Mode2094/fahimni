@@ -629,6 +629,9 @@ class PublicSiteController extends Controller
                     'questions_count' => (int) $exam->questions_count,
                     'duration_minutes' => $exam->duration_minutes,
                     'pass_mark_percent' => (float) $exam->pass_mark_percent,
+                    // The client hides every pass-mark / pass-fail indicator for
+                    // an ungraded practice (assessment_mode = practice).
+                    'assessment_mode' => $exam->assessment_mode ?? 'graded',
                     'max_attempts' => $exam->max_attempts,
                     'attempts_used' => $used,
                     'attempts_left' => $attemptsLeft,

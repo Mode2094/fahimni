@@ -112,7 +112,7 @@ export default function ResultsPage() {
                 : inProgress
                   ? { label: t('قيد الاختبار', 'In progress'), icon: RefreshCw, color: 'text-amber-600', bg: 'bg-amber-500/10', accent: 'linear-gradient(180deg, #d97706, #f59e0b)' }
                   : pendingReview
-                    ? { label: t('بانتظار مراجعة المعلم', 'Awaiting teacher review'), icon: AlertCircle, color: 'text-amber-600', bg: 'bg-amber-500/10', accent: 'linear-gradient(180deg, #d97706, #f59e0b)' }
+                    ? { label: t('تم التسليم', 'Submitted'), icon: CheckCircle, color: 'text-teal-600', bg: 'bg-teal-500/10', accent: 'linear-gradient(180deg, #0d9488, #14b8a6)' }
                     : ok
                       ? { label: t('ناجح', 'Passed'), icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-500/10', accent: 'linear-gradient(180deg, #059669, #10b981)' }
                       : { label: t('راسب', 'Failed'), icon: XCircle, color: 'text-red-500', bg: 'bg-red-500/10', accent: 'linear-gradient(180deg, #ef4444, #f97316)' };
@@ -134,7 +134,7 @@ export default function ResultsPage() {
                           <view.icon className="h-3 w-3 me-1" />{view.label}
                         </Badge>
                       </div>
-                      {isGradedResult || pendingReview ? (
+                      {isGradedResult ? (
                         <div className="flex items-center gap-3 mt-2">
                           <div className="h-2 w-40 max-w-full rounded-full bg-gray-100 overflow-hidden">
                             <div className={`h-full rounded-full transition-all duration-700 ${ok ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-gradient-to-r from-amber-400 to-orange-400'}`} style={{ width: `${Math.min(100, pct)}%` }} />
@@ -145,13 +145,15 @@ export default function ResultsPage() {
                         <p className="text-xs text-gray-500 mt-1.5">
                           {isPractice
                             ? t('لا يُحتسب هذا التمرين في معدلك ولا في ترتيب الطلاب.', 'This practice does not affect your average or the leaderboard.')
-                            : t('لم تُسجَّل نتيجة بعد — أكمل الاختبار لعرض النتيجة.', 'No result yet — finish the exam to see it.')}
+                            : pendingReview
+                              ? t('تم استلام تسليمك.', 'Your submission was received.')
+                              : t('لم تُسجَّل نتيجة بعد — أكمل الاختبار لعرض النتيجة.', 'No result yet — finish the exam to see it.')}
                         </p>
                       )}
                     </div>
                     <div className="text-start shrink-0">
-                      {isGradedResult || pendingReview ? (
-                        <div className={`text-3xl font-black ${ok ? 'text-emerald-600' : pendingReview ? 'text-amber-600' : 'text-red-500'}`}>{pct}%</div>
+                      {isGradedResult ? (
+                        <div className={`text-3xl font-black ${ok ? 'text-emerald-600' : 'text-red-500'}`}>{pct}%</div>
                       ) : (
                         <div className={`text-sm font-bold ${view.color}`}>{view.label}</div>
                       )}

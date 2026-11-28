@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/store';
 import { PanelShell } from './panel-shell';
+import { EmailVerifyBanner } from './email-verify-banner';
 import { PublicShell } from './public-shell';
 import { AuthUnavailable } from '@/components/auth/auth-unavailable';
 import { isAdminRoute, isStudentRoute, isTeacherRoute, isPublicShellRoute } from './nav-config';
@@ -29,8 +30,6 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
   const { user, initialized, status } = useAuth();
   const { slug: tenantHostSlug } = useTenantHost();
   const [mounted, setMounted] = useState(false);
-
-  const t = (ar: string, en: string) => (user?.locale === 'ar' ? ar : en);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -92,13 +91,7 @@ export function RouteShell({ children }: { children: React.ReactNode }) {
         : 'student';
     return (
       <>
-        {user && !user.email_verified_at && (
-          <div className="bg-amber-500 text-white text-sm px-4 py-2 text-center">
-            <a href="/verify-email" className="underline font-medium">
-              {t('فعّل بريدك الإلكتروني لتأمين حسابك', 'Verify your email to secure your account')}
-            </a>
-          </div>
-        )}
+        {user && !user.email_verified_at && <EmailVerifyBanner userId={user.id} />}
         <PanelShell variant={variant}>{children}</PanelShell>
       </>
     );

@@ -65,3 +65,44 @@ describe('Course learn page — smoke', () => {
     expect(await screen.findByText('الوحدة الأولى')).toBeInTheDocument();
   });
 });
+
+describe('Course learn page — practice exercise card', () => {
+  function mockLesson(exercise: Record<string, unknown>) {
+    global.fetch = vi.fn((input: any) => {
+      const url = String(input);
+      if (url.includes('/sections')) return json(SECTIONS);
+      if (url.includes('/lessons/')) {
+        return json({ contents: [{ id: 'ct1', content_type: 'text', text: { body: 'محتوى الدرس' } }], exercise });
+      }
+      return json({});
+    }) as any;
+  }
+
+  it('hides the pass mark on an ungraded practice card', async () => {
+    mockLesson({
+      id: 'ex1', exam_id: 'e1', title: 'تمرين HTML', questions_count: 3,
+      duration_minutes: 0, pass_mark_percent: 0, attempts_used: 0, attempts_left: 3,
+      assessment_mode: 'practice', position: 'after_content',
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('تمرين HTML')).toBeInTheDocument();
+    expect(screen.getByText('غير مُقيَّم')).toBeInTheDocument();
+    expect(screen.queryByText(/نجاح 0%/)).toBeNull();
+  });
+
+  it('keeps the pass mark on a normal graded exercise card', async () => {
+    mockLesson({
+      id: 'ex2', exam_id: 'e2', title: 'اختبار قصير', questions_count: 5,
+      duration_minutes: 15, pass_mark_percent: 60, attempts_used: 0, attempts_left: 2,
+      assessment_mode: 'graded', position: 'after_content',
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('اختبار قصير')).toBeInTheDocument();
+    expect(screen.getByText(/نجاح 60%/)).toBeInTheDocument();
+    expect(screen.queryByText('غير مُقيَّم')).toBeNull();
+  });
+});
