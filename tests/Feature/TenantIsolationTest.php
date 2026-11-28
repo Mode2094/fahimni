@@ -12,11 +12,23 @@ use Symfony\Component\Uid\UuidV7;
 
 class TenantIsolationTest extends TenantTestCase
 {
-    public function test_middleware_rejects_request_without_tenant_header(): void
+    public function test_middleware_resolves_the_only_active_tenant_without_a_header(): void
     {
         $user = $this->makeUser();
         $tenant = $this->makeTenant();
         $this->attachToTenant($user, $tenant, 'owner');
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$user->createToken('test')->plainTextToken)
+            ->getJson('/api/v1/dashboard');
+
+        $response->assertOk();
+    }
+
+    public function test_middleware_requires_explicit_context_when_membership_is_ambiguous(): void
+    {
+        $user = $this->makeUser();
+        $this->attachToTenant($user, $this->makeTenant(), 'student');
+        $this->attachToTenant($user, $this->makeTenant(), 'student');
 
         $response = $this->withHeader('Authorization', 'Bearer '.$user->createToken('test')->plainTextToken)
             ->getJson('/api/v1/dashboard');

@@ -1,6 +1,8 @@
 <?php
 
+use App\Jobs\AcademicTermReminderJob;
 use App\Jobs\ExpirePendingBookingsJob;
+use App\Jobs\ExpireActivationCardsJob;
 use App\Jobs\ExpireSubscriptionsJob;
 use App\Jobs\ExpireTeacherInvitationsJob;
 use App\Jobs\ExpiryFollowUpJob;
@@ -31,6 +33,10 @@ Schedule::job(new RenewalReminderJob)->dailyAt('08:00');
 // Daily post-expiry countdown inside the grace window.
 Schedule::job(new ExpiryFollowUpJob)->dailyAt('08:30');
 
+// Warn teachers before an academic term ends (notification only — never
+// archives students automatically).
+Schedule::job(new AcademicTermReminderJob)->dailyAt('08:15');
+
 // NOTE: automatic deletion of tenant content on subscription expiry is
 // DISABLED by policy. Teacher/student content is never destroyed because a
 // payment lapsed. The PurgeExpiredTenantContentJob is intentionally no longer
@@ -41,6 +47,10 @@ Schedule::job(new ExpiryFollowUpJob)->dailyAt('08:30');
 Schedule::job(new ReconcileFreemiusWebhooksJob)->everyFiveMinutes()->name('freemius-reconcile')->withoutOverlapping();
 
 Schedule::job(new ExpireTeacherInvitationsJob)->hourly();
+
+// Issued-but-unused activation cards past their expiry date become `expired`
+// so counts and redemption stay honest (redeemed cards are never touched).
+Schedule::job(new ExpireActivationCardsJob)->hourly()->name('expire-activation-cards');
 
 // Abandoned bookings hold calendar slots: expire them before users
 // notice the slot is gone.

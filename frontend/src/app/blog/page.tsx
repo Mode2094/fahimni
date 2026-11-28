@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Select } from '@/components/ui/select';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -60,7 +61,7 @@ export default function BlogPage() {
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(editing ? t('تم تحديث المقال', 'Post updated') : t('تم إنشاء المقال', 'Post created'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setSaving(false);
   };
 
@@ -70,17 +71,17 @@ export default function BlogPage() {
       if (!res.ok) throw new Error();
       toast.success(p.status === 'published' ? t('تم الإخفاء', 'Unpublished') : t('تم النشر — يظهر في صفحتك', 'Published — live on your page'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
   };
 
   const remove = async (p: any) => {
-    if (!confirm(t('حذف هذا المقال نهائياً؟', 'Delete this post permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا المقال نهائياً؟', 'Delete this post permanently?') }))) return;
     setDeletingId(p.id);
     try {
       const res = await fetch(`${API}/teacher/blog/${p.id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setDeletingId(null);
   };
 
@@ -95,7 +96,7 @@ export default function BlogPage() {
       if (!res.ok) throw new Error();
       const d = await res.json();
       setForm({ ...form, cover_image: d.url });
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = '';
   };

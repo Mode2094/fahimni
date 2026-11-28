@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Select } from '@/components/ui/select';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -47,6 +48,7 @@ export default function AnnouncementsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [courses, setCourses] = useState<any[]>([]);
   const [isStaff, setIsStaff] = useState(false);
+  const [detail, setDetail] = useState<any | null>(null);
 
   const [form, setForm] = useState({
     title: '',
@@ -57,14 +59,34 @@ export default function AnnouncementsPage() {
   });
 
   useEffect(() => {
-    announcementsApi.list().then((d) => setAnnouncements(d.announcements || [])).catch(() => {}).finally(() => setLoading(false));
-    try {
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const roles = user.roles || [];
-      setIsStaff(user.is_super_admin || roles.includes('Teacher') || roles.includes('Admin') || roles.includes('Owner'));
-    } catch { /* */ }
+    announcementsApi.list().then((d) => {
+      setAnnouncements(d.announcements || []);
+      // Server-derived staff capability (session membership) — the source of
+      // truth; never trust a possibly-stale localStorage snapshot alone.
+      if (typeof d.meta?.can_manage === 'boolean') {
+        setIsStaff(d.meta.can_manage);
+        return;
+      }
+      try {
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const roles = user.roles || [];
+        setIsStaff(user.is_super_admin || roles.includes('Teacher') || roles.includes('Admin') || roles.includes('Owner'));
+      } catch { /* */ }
+    }).catch(() => {
+      try {
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const roles = user.roles || [];
+        setIsStaff(user.is_super_admin || roles.includes('Teacher') || roles.includes('Admin') || roles.includes('Owner'));
+      } catch { /* */ }
+    }).finally(() => setLoading(false));
+
+    // Deep link from a notification (e.g. /announcements?open=<id>).
+    if (typeof window !== 'undefined') {
+      const openId = new URLSearchParams(window.location.search).get('open');
+      if (openId) announcementsApi.get(openId).then(setDetail).catch(() => {});
+    }
+
     const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
-    const token = localStorage.getItem('lms_authed');
     const tid = localStorage.getItem('tenant_id');
     fetch(`${API}/courses`, { headers: { 'X-Tenant-Id': tid || '', Accept: 'application/json' } })
       .then(r => r.json()).then((d) => setCourses(d.courses || [])).catch(() => {});
@@ -108,7 +130,7 @@ export default function AnnouncementsPage() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm(t('حذف هذا الإعلان نهائياً؟', 'Delete this announcement permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الإعلان نهائياً؟', 'Delete this announcement permanently?') }))) return;
     setDeletingId(id);
     try {
       await announcementsApi.remove(id);
@@ -133,11 +155,15 @@ export default function AnnouncementsPage() {
           </div>
         </div>
         {isStaff && (
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button className="rounded-xl text-white" style={{ background: '#d97706' }}><Megaphone className="h-4 w-4 ms-1" />{t('إعلان جديد', 'New announcement')}</Button>
-            </DialogTrigger>
-            <DialogContent>
+          <>
+            {/* The trigger must live OUTSIDE <Dialog>: this Dialog renders its
+                children only while open, so a DialogTrigger inside it would
+                never be clickable (the button must always be visible). */}
+            <Button onClick={() => setOpen(true)} className="rounded-xl text-white" style={{ background: '#d97706' }}>
+              <Megaphone className="h-4 w-4 ms-1" />{t('إعلان جديد', 'New announcement')}
+            </Button>
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogContent>
               <DialogHeader>
                 <DialogTitle>{t('إنشاء إعلان', 'Create announcement')}</DialogTitle>
               </DialogHeader>
@@ -185,7 +211,8 @@ export default function AnnouncementsPage() {
                 </Button>
               </div>
             </DialogContent>
-          </Dialog>
+            </Dialog>
+          </>
         )}
       </div>
 
@@ -196,7 +223,7 @@ export default function AnnouncementsPage() {
       ) : (
         <div className="space-y-4">
           {announcements.map((a) => (
-            <Card key={a.id}>
+            <Card key={a.id} data-testid="announcement-card">
               <CardHeader className="flex-row items-center justify-between gap-3">
                 <CardTitle className="text-base flex items-center gap-2 min-w-0">
                   <Megaphone className="h-4 w-4 text-amber-500 shrink-0" />
@@ -218,7 +245,7 @@ export default function AnnouncementsPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{a.body}</p>
+                <p onClick={() => setDetail(a)} className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed cursor-pointer hover:text-gray-900">{a.body}</p>
                 <div className="flex items-center justify-between flex-wrap gap-2 mt-4">
                   <div className="flex items-center gap-2">
                     {a.sender && (
@@ -244,6 +271,33 @@ export default function AnnouncementsPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) setDetail(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5 text-amber-500 shrink-0" />
+              <span>{detail?.title}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {detail && (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-amber-600 border-amber-200">
+                    {t((AUDIENCE_LABELS[detail.audience] || AUDIENCE_LABELS.all).ar, (AUDIENCE_LABELS[detail.audience] || AUDIENCE_LABELS.all).en)}
+                  </Badge>
+                  {detail.sender?.name && <span className="text-xs text-gray-500">{detail.sender.name}</span>}
+                  <span className="text-xs text-gray-400" dir="ltr">
+                    {detail.published_at ? new Date(detail.published_at).toLocaleString(locale === 'ar' ? 'ar' : 'en') : ''}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{detail.body}</p>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

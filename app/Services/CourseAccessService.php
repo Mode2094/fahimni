@@ -4,9 +4,11 @@ namespace App\Services;
 
 use App\Models\Course;
 use App\Models\Enrollment;
+use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\Lesson;
 use App\Models\LessonProgress;
+use App\Models\User;
 
 /**
  * Single source of truth for course-content access rules:
@@ -22,10 +24,44 @@ use App\Models\LessonProgress;
 class CourseAccessService
 {
     /**
-     * Fraction of a video lesson's duration the student must have watched
-     * (min 60s, max 20min) before the lesson may be marked complete.
+     * Minimum genuine watch coverage (fraction of the lesson's duration) before
+     * a video lesson counts as complete. This is the platform default policy:
+     * ~90% of the video actually watched — no seeking to the end. Capped below
+     * by a floor of 60s and a ceiling of 20min so a very short or very long
+     * lesson stays reasonable.
      */
-    private const MIN_WATCH_FRACTION = 0.6;
+    private const MIN_WATCH_FRACTION = 0.9;
+
+    /**
+     * Course-group visibility — the single implementation every content path
+     * must call so the rule can never drift between web, mobile, media, files,
+     * search and Q&A.
+     *
+     * A lesson shared to specific course groups is visible only to members of
+     * at least one of those groups; a lesson with no group rows is visible to
+     * every enrolled student. Staff and super admins bypass the check (they
+     * own the content), so callers that have already granted staff access can
+     * skip this.
+     */
+    public function lessonVisibleToUser(Lesson $lesson, ?User $user): bool
+    {
+        $query = Lesson::query()->whereKey($lesson->id);
+
+        // A guest can still reach an UNRESTRICTED lesson (free preview). Only a
+        // lesson shared to groups is hidden from a caller we cannot identify.
+        return $user
+            ? $query->visibleToStudent((string) $user->id)->exists()
+            : $query->whereDoesntHave('groups')->exists();
+    }
+
+    public function examVisibleToUser(Exam $exam, ?User $user): bool
+    {
+        $query = Exam::query()->whereKey($exam->id);
+
+        return $user
+            ? $query->visibleToStudent((string) $user->id)->exists()
+            : $query->whereDoesntHave('groups')->exists();
+    }
 
     public function enrollmentIsValid(?Enrollment $enrollment): bool
     {
@@ -148,16 +184,31 @@ class CourseAccessService
 
     /**
      * Minimum watch time (seconds) before a video lesson counts as complete.
+     * Non-video lessons (text, file, live) have no watch-time requirement — the
+     * gate only ever applied to video, and requiring it elsewhere would make a
+     * text lesson impossible to finish.
+     *
+     * The requirement is a fraction of the lesson's own duration (the platform
+     * default is ~90% genuine coverage), floored at 60s so a very short clip
+     * still asks for a real watch, and capped at the video's own length so it
+     * can never exceed 100%.
      */
     public function requiredWatchSeconds(Lesson $lesson): int
     {
+        if ($lesson->lesson_type !== 'video') {
+            return 0;
+        }
+
         $duration = (int) $lesson->duration_minutes;
 
         if ($duration <= 0) {
             return 0;
         }
 
-        return min(max((int) round($duration * 60 * self::MIN_WATCH_FRACTION), 60), 1200);
+        $durationSeconds = $duration * 60;
+        $required = (int) round($durationSeconds * self::MIN_WATCH_FRACTION);
+
+        return min(max($required, 60), $durationSeconds);
     }
 
     /**

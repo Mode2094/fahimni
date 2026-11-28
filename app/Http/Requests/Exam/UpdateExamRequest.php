@@ -21,6 +21,7 @@ class UpdateExamRequest extends FormRequest
             'max_attempts' => 'nullable|integer|min:0',
             'random_questions_count' => 'nullable|integer|min:1',
             'anti_cheat_enabled' => 'nullable|boolean',
+            'assessment_mode' => 'nullable|string|in:graded,practice',
             'shuffle_questions' => 'nullable|boolean',
             'shuffle_options' => 'nullable|boolean',
             'show_result_immediately' => 'nullable|boolean',

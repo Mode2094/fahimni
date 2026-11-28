@@ -1,26 +1,41 @@
 import { NextRequest } from 'next/server';
-import { jsonWithCookies, statefulPost } from '@/lib/bff';
+import { jsonWithCookies, statefulPost, withExpiredCookies } from '@/lib/bff';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /** POST /api/session/logout — destroys the server-side session. */
 export async function POST(request: NextRequest) {
-  const origin = new URL(request.url).origin;
+  const origin = await resolveRequestOrigin(request);
 
   try {
     const { status, data, cookies } = await statefulPost('/auth/logout', origin, {}, {
       cookieHeader: request.headers.get('cookie'),
     });
 
-    // Already signed out (expired session): treat as success. The stale
-    // cookie is invalid server-side and is overwritten on the next login.
+    // Already signed out (expired session): treat as success. Expire any
+    // cookie the upstream did not clear so a dead session cannot come back.
     if (status === 401) {
-      return jsonWithCookies(200, { message: 'Logged out.' }, []);
+      return jsonWithCookies(
+        200,
+        { message: 'Logged out.' },
+        withExpiredCookies([], request.headers.get('cookie'), origin),
+      );
     }
 
-    return jsonWithCookies(status, data, cookies);
+    return jsonWithCookies(
+      status,
+      data,
+      withExpiredCookies(cookies, request.headers.get('cookie'), origin),
+    );
   } catch {
-    return jsonWithCookies(502, { message: 'Authentication service unavailable.' }, []);
+    // Network/5xx: the server session may still exist, but the browser must
+    // not keep a cookie that would silently restore it on the next load.
+    return jsonWithCookies(
+      200,
+      { message: 'Logged out locally.' },
+      withExpiredCookies([], request.headers.get('cookie'), origin),
+    );
   }
 }

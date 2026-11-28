@@ -22,29 +22,55 @@ Freemius هو **Merchant of Record (MoR)** — أي أنه يتولى عنك:
 1. سجّل في [Freemius Dashboard](https://dashboard.freemius.com/register/).
 2. أنشئ منتجًا جديدًا من نوع **SaaS**:  
    `Products → Add New → SaaS`.
-3. اذهب إلى **Plans** وأنشئ خططك (شهرية وسنوية) **بعملة USD**:
+3. اذهب إلى **Plans** وأنشئ **خطة واحدة لكل فئة** (شهري + سنوي على نفس الخطة) بعملة **USD**:
 
-   | خطتنا المحلية | السعر المحلي (USD) | مُعرّف Freemius (مثال) |
-   |---|---|---|
-   | Starter | 49 / 490 | Plan ID: `12345` (شهري) / `12346` (سنوي) |
-   | Professional | 99 / 990 | Plan ID: `12347` / `12348` |
-   | Enterprise | 199 / 1990 | Plan ID: `12349` / `12350` |
+   | خطتنا المحلية | الاسم في Freemius | السعر الشهري (USD) | السعر السنوي (USD) |
+   |---|---|---|---|
+   | `starter` | Starter | 49 | 490 |
+   | `professional` | Professional | 99 | 990 |
+   | `elite` (legacy: `enterprise`) | Elite | 199 | 1990 |
+
+   في كل خطة: اضبط **Pricing واحد بالدولار (USD)** يحمل **`monthly_price` و`annual_price` معًا** (هذا هو نموذج Freemius الرسمي — سجل التسعير الواحد يحتوي أسعار الدورتین). دورة الفوترة تُحدَّد عند الدفع عبر `billing_cycle=monthly|annual`، فلا حاجة لخطة منفصلة لكل دورة.
+
+   > بديل مدعوم أيضًا: خطة مستقلة لكل دورة (6 خطط) مع ربط `freemius_monthly_plan_id` و`freemius_yearly_plan_id` بمعرّفين مختلفين. النظام يدعم الحالتين.
+   >
+   > في كل الحالات: إن كان للخطة **أكثر من تسعير** ولم تكن مربوطة بـPricing ID محدد، يصبح الشراء محجوبًا بحالة `ambiguous` حتى تربط المعرّف الصحيح.
 
 4. **العملة:** أسعار اشتراكات المنصة **USD حصريًا** (الواجهة والـAPI وقاعدة البيانات). Freemius لا يدعم الدينار الأردني (JOD)، ولا يوجد أي عرض بـJOD للاشتراكات. السعر المعروض = السعر المُحصَّل (USD)، ويجب أن **يطابق** السعر المضبوط في خطة Freemius تمامًا.
 5. (مستحسن) اترك خيار **Restrict Single Subscription Per User** مُفعّلاً — يمنع اشتراكين متعارضين لنفس المستخدم.
 
 ### التمييز بين Plan ID وPricing ID ودورة الفوترة
 - **Plan ID** = الخطة نفسها (مثلاً "Starter"). وهو **ما نستخدمه للشراء**.
-- **Pricing ID** = خيار تسعير محدد داخل الخطة (يفيد عند وجود عدة أسعار لنفس الخطة). اختياري؛ يُخزَّن للدقة ولا يُستخدم مباشرة في رابط الشراء.
-- **دورة الفوترة (billing cycle)** = شهري/سنوي، وهي **خاصية داخل الخطة**: لكل دورة خطة Freemius مستقلة بمعرّف مختلف. لذلك نربط `freemius_monthly_plan_id` و`freemius_yearly_plan_id` (وليس معرّفًا واحدًا)، ونمرّر الدورة عبر رابط الـCheckout الصحيح.
+- **Pricing ID** = سجل التسعير الواحد داخل الخطة، ويحمل **`monthly_price` و`annual_price` معًا**. يُخزَّن للدقة وللتحقق من تطابق السعر.
+- **دورة الفوترة (billing cycle)** = شهري/سنوي، وهي **ليست خطة منفصلة** في النموذج الموصى به: تُختار عند الدفع عبر `billing_cycle=monthly|annual` على **نفس الخطة** (القيمة الرسمية لـ«سنوي» عند Freemius هي `annual`).
+  - في النموذج الموصى به (خطة واحدة لكل فئة): `freemius_monthly_plan_id` و`freemius_yearly_plan_id` يشيران إلى **نفس** Plan ID، و`freemius_monthly_pricing_id` و`freemius_yearly_pricing_id` إلى **نفس** Pricing ID.
+  - **بديل مدعوم (6 خطط):** خطة Freemius مستقلة لكل دورة (شهري/سنوي) بمعرّفات مختلفة. النظام يدعم الحالتين.
 
 > **للحصول على المعرّفات:** Plan ID يظهر بجانب اسم الخطة في صفحة **Plans**. Pricing ID يظهر عند فتح الخطة بجانب كل خيار تسعير.
+> **أسهل طريقة:** شغّل أمر التهيئة الآلي (§4.2) — يفحص الخطط الموجودة، ويُنشئ الناقص، ويقرأ المعرّفات الفعلية، ويربطها، ويتحقق من الأسعار تلقائيًا.
+
+### قيم هذا المنتج (منتج `fahimni` — غير سرية)
+
+| البند | القيمة |
+| --- | --- |
+| Store ID | `22133` |
+| Developer ID | `40270` |
+| Product ID | `44761` (النوع: SaaS) |
+| Product Public Key | `pk_71552ad3cbd7ba073324d17f79f9a` |
+| Developer Public Key | `pk_30044d98026f304534b5b24d44a8c` |
+
+**هذه ليست أسرارًا.** الأسرار (`*_SECRET_KEY` و`API_TOKEN`) تُضبط في بيئة الخادم فقط (§3) ولا تُرفع إلى git أبدًا.
+
+> ⚠️ إذا ظهر `plans: []` عند `GET /v1/products/44761/plans.json` فالمنتج **لا يحتوي أي خطة بعد**، وبالتالي لا يعمل أي شراء. أنشئ الخطط إما من الـDashboard، أو — المستحسن — عبر أمر التهيئة الآلي `php artisan freemius:provision-plans --apply` (§4.2) الذي يُنشئ **خطة واحدة لكل فئة مع تسعير USD واحد** ويقرأ المعرّفات ويربطها.
 
 ### ضبط Redirect الشراء الموقّع (إلزامي)
 في `Plans → Customization`:
 1. فعّل **Redirect Checkout to a custom URL**.
-2. أدخل رابط صفحة النجاح على نطاقك: `https://app.<نطاقك>/checkout/success`
-   (يجب أن يكون HTTPS، **وألا يعيد توجيهًا على الخادم** — وإلا يفشل التحقق من التوقيع).
+2. أدخل رابط صفحة النجاح على نطاقك: `https://<FRONTEND_URL>/checkout/success`
+   - **الإنتاج:** `https://fahimni.me/checkout/success` — وهو **نفس** قيمة `FRONTEND_URL` في `deploy/env/production.env`.
+   - **التجربة:** `https://staging.fahimni.me/checkout/success`.
+   - ⚠️ **لا تستخدم نطاقًا فرعيًا غير موجود** مثل `app.fahimni.me` — الواجهة تُقدَّم من `fahimni.me` نفسه، و`app.fahimni.me` **لا يملك سجل DNS** (تم التحقق). الرابط يجب أن يكون على النطاق الذي يخدم `/checkout/success` فعلًا.
+   - يجب أن يكون HTTPS، **وألا يعيد توجيهًا على الخادم** (301/302) — وإلا يفشل التحقق من التوقيع.
 3. بعد الشراء سيعيد Freemius التوجيه إلى هذا الرابط مع `license_id`, `email`, `plan_id`, `signature`, … ويقوم backend بالتحقق والربط.
 
 ---
@@ -55,19 +81,30 @@ Freemius هو **Merchant of Record (MoR)** — أي أنه يتولى عنك:
 
 ```env
 FREEMIUS_ENABLED=true
-FREEMIUS_PRODUCT_ID=12345
+FREEMIUS_PRODUCT_ID=44761
 FREEMIUS_API_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxx
 FREEMIUS_PRODUCT_SECRET_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
-FREEMIUS_PUBLIC_KEY=pk_xxxxxxxxxxxxxxxx
+FREEMIUS_PUBLIC_KEY=pk_71552ad3cbd7ba073324d17f79f9a
 FREEMIUS_API_URL=https://api.freemius.com
 FREEMIUS_CHECKOUT_URL=https://checkout.freemius.com
 FREEMIUS_SANDBOX=false
+
+# نطاق المطوّر — مطلوب لإنشاء/نشر أسعار الخطط تلقائيًا من لوحة الأدمن.
+# المصادقة الرسمية لنطاق المطوّر = Developer Secret-Key (مسار plugins/ — انظر §4.1).
+FREEMIUS_DEVELOPER_ID=40270
+FREEMIUS_DEVELOPER_PUBLIC_KEY=pk_xxxxxxxxxxxxxxxx
+FREEMIUS_DEVELOPER_SECRET_KEY=sk_xxxxxxxxxxxxxxxx
 ```
+
+> **القيم تحتوي رموزًا خاصة** (`(` `)` `%` `]` `&` `*` `#`): ضعها بين علامتَي اقتباس في ملف البيئة.
+> **مفاتيح Store (`STORE_SECRET_KEY` / `STORE_PUBLIC_KEY`) لا يستخدمها أي متغيّر في الكود** — لا تضبطها.
+
 
 - **FREEMIUS_API_TOKEN**: من `Dashboard → Settings → API & Keys → API Bearer Authorization Token`.
 - **FREEMIUS_PRODUCT_SECRET_KEY**: من `Settings → API & Keys → Secret Key` (يُستخدم للتحقق من توقيع الـWebhook).
 - **FREEMIUS_PUBLIC_KEY**: من نفس الصفحة (يُستخدم من الـJS SDK في الواجهة).
 - **FREEMIUS_PRODUCT_ID**: يظهر في نفس قسم `API & Keys`.
+- **FREEMIUS_DEVELOPER_ID / _PUBLIC_KEY / _SECRET_KEY**: من `Dashboard → My Profile → Keys`. **إلزامية فقط لإنشاء/نشر الخطط والأسعار** (انظر §4.1 و§4.2). رمز المنتج (Bearer) **قراءة فقط** لخطط/تسعيرات Freemius ولا يستطيع تغيير أو إنشاء أي سعر.
 
 > الأسرار تُقرأ **من البيئة فقط** ولا تُخزَّن في قاعدة البيانات ولا تُعاد عبر أي API. الواجهة تعرض فقط مؤشرات `*_set` (موجود/غير موجود).
 
@@ -98,6 +135,94 @@ FREEMIUS_PLAN_ENTERPRISE_YEARLY_ID=12350
 
 القيمة في لوحة الأدمن **تتجاوز** قيمة البيئة. الربط يُخزَّن داخل `subscription_plans.metadata` (لا أعمدة جديدة). **لا يستطيع المعلم** تغيير الأسعار أو المعرّفات — مسارات `admin/plans` محمية بـ`middleware('admin')` (super-admin) + Policy، وقيمة `currency` تُفرض من الخادم كـUSD.
 
+### 4.1 تغيير أسعار الاشتراك ونشرها على Freemius (المدير العام فقط)
+
+**القاعدة:** بعد الإعداد الأولي، تغيير أي سعر اشتراك يجب أن يعمل من لوحة الأدمن **دون تعديل ملفات أو إعادة نشر**، وأن ينعكس على **سعر الدفع الفعلي** في Freemius في الوقت نفسه.
+
+**لماذا نطاق المطوّر (Developer scope)؟** واجهة Freemius تتيح **قراءة** الخطط والتسعيرات برمز المنتج (Bearer)، لكنها **لا تسمح بإنشاء/كتابة خطة أو تسعير** إلا من نطاق المطوّر:
+
+```
+POST /v1/developers/{developer_id}/plugins/{product_id}/plans.json                                  # إنشاء خطة
+POST /v1/developers/{developer_id}/plugins/{product_id}/plans/{plan_id}/pricing.json               # إنشاء تسعير
+PUT  /v1/developers/{developer_id}/plugins/{product_id}/plans/{plan_id}/pricing/{pricing_id}.json  # تعديل سعر
+```
+
+> **طريقة المصادقة الرسمية لنطاق المطوّر = مصادقة المفتاح السري (Developer Secret-Key Authentication).**
+> - التوثيق الرسمي: رمز `Bearer` يدعم **نطاق المنتج فقط**؛ أما نطاق المطوّر فيتطلب **الترويسة الموقّعة** `Authorization: FS {developer_id}:{public_key}:{signature}` (حيث `signature = base64url(hmac_sha256_hex)` على `METHOD\nContent-MD5\nContent-Type\nDate\nresourcePath`).
+> - هذا هو ما تستخدمه **الـSDK الرسمي** (`freemius-php-sdk` و`freemius-node-sdk`): `developer.Api('/plugins/{id}.json', ...)` بمفاتيح `pk_`/`sk_` — أي أن بادئة مسار المطوّر هي **`plugins/`**.
+> - **تم التحقق عمليًا (فحص مباشر بلا أسرار):** الطلب الموقّع إلى `POST /v1/developers/40270/plugins/44761/plans.json` **يصل إلى المورد** ويعيد `401 Invalid Authorization header` عند توقيع خاطئ (أي المسار موجود ومقبول). في المقابل `POST /v1/developers/40270/products/44761/plans.json` يعيد `400 not_implemented` «Invalid request path» — أي مسار `products/` لنطاق المطوّر **غير مُفعّل فعليًا** على الـAPI الحيّ (رغم وروده في OpenAPI النظري).
+>
+> ⚠️ **لا تستخدم رمز FSA (`POST /v1/developers/{id}/login.json`) ولا مسار `products/`**: وردا في OpenAPI لكنهما **غير مُوجَّهين** على الـAPI الحيّ (يردّان `400 not_implemented`). المسار العامل الوحيد هو **`plugins/` + مصادقة المفتاح السري**.
+
+لذلك يلزم ضبط مفاتيح نطاق المطوّر من نوع **المفتاح العام + المفتاح السري** (§3) لتمكين الإنشاء/النشر التلقائي. رمز المنتج وحده **لا يستطيع أبدًا** إنشاء خطة أو تغيير سعر.
+
+#### آلية «حفظ ونشر السعر» (Save & publish)
+
+من `Admin → Settings → Plans → (اختر خطة) → الأسعار والدفع (USD)`:
+
+1. أدخل **السعر الشهري** و/أو **السعر السنوي** ثم اضغط **«حفظ ونشر السعر»** (تظهر نافذة تأكيد قبل الإرسال).
+2. الخادم يوقّع الطلب بمفاتيح نطاق المطوّر ويرسله إلى Freemius (الحقول: `monthly_price` للشهري، `annual_price` للسنوي، مع `currency: usd`).
+3. بعد القبول، يعيد الخادم **قراءة السعر الفعلي** من Freemius ولا يعتمد السعر في الموقع **إلا إذا طابق السعر المطلوب**.
+4. عند التأكيد: يُحدَّث سعر الخطة المعروض في الموقع، ويُسجَّل في `subscription_plans.metadata['freemius_prices']` (المبلغ، العملة، معرّف التسعير، وقت المزامنة، الفاعل) وفي سجل التدقيق `audit_logs` (**القيمة القديمة والجديدة والتاريخ والمستخدم**).
+
+#### حالات المزامنة (تظهر كشارة بجانب كل دورة)
+
+| الحالة | المعنى | هل يُغيَّر سعر الموقع؟ |
+| --- | --- | --- |
+| `synced` | السعر مُطابَق ومؤكد على Freemius | ✅ نعم |
+| `mismatch` | Freemius يُبلّغ سعرًا مختلفًا عن المطلوب | ❌ لا |
+| `not_linked` | الخطة غير مربوطة بـFreemius (Plan/Pricing ID) | ❌ لا |
+| `ambiguous` | أكثر من تسعير في Freemius بدون ربط Pricing ID محدد | ❌ لا |
+| `unavailable` | تعذّر القراءة/الكتابة (شبكة أو رفض من Freemius) | ❌ لا |
+| `not_configured` | مفاتيح نطاق المطوّر غير مضبوطة على الخادم | ❌ لا |
+
+**في كل حالات الفشل:** يُعرض «فشل التزامن — لم يُغيَّر السعر» مع إمكانية إعادة المحاولة، **ولا يوجد نجاح وهمي إطلاقًا**. الحماية من التكرار/التزامن: قفل لكل خطة (Cache lock) — أي نشر متزامن ثانٍ يُرفض برسالة واضحة.
+
+#### السعر المعلّق (Pending) — عندما يتعذّر التطبيق الرسمي
+
+إذا تعذّر إرسال السعر أو التحقق منه (مفاتيح ناقصة، رفض من Freemius، انقطاع، عدم وجود ربط…)، فإن **السعر المطلوب لا يُهمَل ولا يُعرض**:
+
+- يُحفظ المبلغ المطلوب في `metadata['freemius_prices'][{cycle}]['pending']` (**المبلغ، العملة، السبب، وقت الطلب، الفاعل**) ويُسجَّل حدث تدقيق `subscription.plan_price_pending`.
+- **السعر المعروض للطالب يبقى سعر Freemius المؤكد** — السعر المعلّق **لا يُعرض أبدًا** للعميل.
+- يظهر المعلّق في لوحة الأدمن بجانب الدورة مع زر **«تطبيق المعلّق»**، الذي يعيد نفس المسار المتحقق (إرسال ← إعادة قراءة ← اعتماد **فقط** عند التطابق) ثم يُفرِغ المعلّق عند التأكيد.
+
+#### منع الدفع بسعر مختلف عن المعروض (Checkout guard)
+
+عند بدء أي عملية دفع، يتحقق الخادم أن **سعر الموقع المعروض = سعر الدفع الفعلي** في Freemius. إن اختلفا أو تعذّر التحقق، **يُحجب الدفع بالكامل** (fail-closed) وتُعاد رسالة «تعذّر التحقق من السعر». لا يستطيع المشتري الدفع بمبلغ مختلف عن المعروض.
+
+**دقة الربط (إلزامية):** لا يُعتبر السعر «مُزامنًا» إلا عند تطابق **المبلغ والعملة USD وPricing ID المحدد** معًا. وإذا كانت الخطة تحتوي **أكثر من تسعير (Pricing)** بدون ربط صريح، يُحجب الشراء بحالة `ambiguous` برسالة واضحة — لا يجري أبدًا اختيار تسعير عشوائي، ولا استبدال Pricing ID مفقود بأول تسعير آخر.
+
+**رابط الدفع:** يُرسَل رابط Hosted Checkout الرسمي مع `pricing_id` للـPricing المُتحقَّق منه و`billing_cycle=monthly|annual` حسب اختيار المستخدم (`currency=usd`)، وتُطبَّق نفس ضمانة التحقق قبل إصدار رابط الترقية.
+
+#### الاشتراكات القائمة (التجديدات)
+
+تغيير السعر في Freemius يسري على **المشتريات الجديدة فقط**. الاشتراكات الحالية تُجدَّد بسعرها الأصلي، ولا يُعاد كتابة أي مبلغ تاريخي دون موافقة صريحة.
+
+### 4.2 إنشاء الخطط وربطها آليًا (أمر التهيئة)
+
+بدل إنشاء الخطط يدويًا في لوحة Freemius، شغّل أمر التهيئة (Idempotent — آمن للتشغيل مرارًا بلا تكرار):
+
+```bash
+# عرض ما سيحدث دون أي تغيير (Dry-run — الوضع الافتراضي)
+php artisan freemius:provision-plans
+
+# التنفيذ الفعلي: إنشاء الخطط الناقصة + تسعير USD واحد لكل فئة، ثم ربط المعرّفات والتحقق
+php artisan freemius:provision-plans --apply
+
+# فئة واحدة فقط
+php artisan freemius:provision-plans --apply --tier=starter
+```
+
+ماذا يفعل الأمر:
+1. **يقرأ** الخطط الموجودة فعليًا من Freemius (`GET /v1/products/{id}/plans.json`) ولا يُنشئ نسخًا مكررة.
+2. يُنشئ **خطة واحدة لكل فئة** ناقصة (Starter / Professional / Elite).
+3. يُنشئ لكل خطة **تسعير USD واحدًا** يحمل `monthly_price` و`annual_price` معًا (49/490 · 99/990 · 199/1990).
+4. يقرأ **Plan ID** و**Pricing ID** الفعليين ويربطهما داخل `subscription_plans.metadata` (`freemius_plan_id`، `freemius_pricing_id`، ومفاتيح الدورة).
+5. **يتحقق** أن السعر والعملة (USD) مطابقان قبل الربط؛ وعند أي اختلاف يوقف الربط ويُبلّغ (لا نجاح وهمي).
+6. لو وُجد للخطة **أكثر من تسعير** بلا ربط صريح، يُعلّمها `ambiguous` و**لا يخمّن** أي تسعير.
+
+> عند رسالة «Developer write credentials: MISSING»: اضبط `FREEMIUS_DEVELOPER_ID` + `FREEMIUS_DEVELOPER_PUBLIC_KEY` + `FREEMIUS_DEVELOPER_SECRET_KEY` على الخادم (§3).
+
 ---
 
 ## 5. إعداد الـWebhook (إلزامي للتفعيل)
@@ -107,10 +232,13 @@ FREEMIUS_PLAN_ENTERPRISE_YEARLY_ID=12350
 1. اذهب إلى `Dashboard → Settings → Webhooks` وأضف الرابط:
 
    ```
-   https://api.<نطاقك>/api/v1/payments/freemius-webhook
+   https://fahimni.me/api/v1/payments/freemius-webhook
    ```
 
-   (عبر nginx في الإنتاج: `https://<نطاقك>/api/v1/payments/freemius-webhook`)
+   - **الإنتاج (متحقَّق حيًّا):** `https://fahimni.me/api/v1/payments/freemius-webhook` → يرد `401 {"message":"Invalid signature."}` على طلب بلا توقيع، أي أن المسار **يعمل**.
+   - **نفس المسار متاح أيضًا** عبر `https://api.fahimni.me/api/v1/payments/freemius-webhook`.
+   - **Staging:** `https://api-staging.fahimni.me/api/v1/payments/freemius-webhook`.
+   - لا تستخدم نطاقًا فرعيًا غير موجود (مثل `app.fahimni.me`).
 
 2. اختر الأحداث التالية **حصريًا**:
 

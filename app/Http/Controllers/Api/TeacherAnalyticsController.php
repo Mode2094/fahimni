@@ -3,25 +3,45 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Media\MediaCostService;
 use App\Models\ActivationCard;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\LessonProgress;
+use App\Models\Payment;
 use App\Models\User;
 use App\Plans\QuotaService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class TeacherAnalyticsController extends Controller
 {
+    /**
+     * Driver-agnostic "YYYY-MM-DD" expression for a timestamp column.
+     *
+     * The PostgreSQL-only `to_char()` used here previously made the analytics
+     * endpoint fatal on SQLite (the driver every test run uses), so the whole
+     * surface was silently untestable. Postgres output is unchanged.
+     */
+    private function dayExpression(string $column): string
+    {
+        return match (DB::connection()->getDriverName()) {
+            'sqlite' => "strftime('%Y-%m-%d', {$column})",
+            'mysql', 'mariadb' => "DATE_FORMAT({$column}, '%Y-%m-%d')",
+            default => "to_char({$column}, 'YYYY-MM-DD')",
+        };
+    }
+
     public function index(Request $request): JsonResponse
     {
         $this->authorizeView($request);
@@ -44,7 +64,7 @@ class TeacherAnalyticsController extends Controller
         return $pdf->download('analytics-report-'.now()->format('Y-m-d').'.pdf');
     }
 
-    public function reportExcel(Request $request): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    public function reportExcel(Request $request): BinaryFileResponse
     {
         app(QuotaService::class)->assertCan($request->current_tenant->id, 'reports');
         $this->authorizeView($request);
@@ -91,7 +111,7 @@ class TeacherAnalyticsController extends Controller
         $totalCourses = count($courseIds);
         $totalEnrollments = Enrollment::where('tenant_id', $tenantId)->count();
         $totalExams = Exam::where('tenant_id', $tenantId)->count();
-        $totalAttempts = ExamAttempt::where('tenant_id', $tenantId)->count();
+        $totalAttempts = ExamAttempt::where('tenant_id', $tenantId)->excludePractice()->count();
 
         $submitted = ExamAttempt::where('tenant_id', $tenantId)->where('status', 'submitted');
         $avgScore = round((float) $submitted->avg('percentage'), 2);
@@ -109,13 +129,13 @@ class TeacherAnalyticsController extends Controller
         $paidBase = fn ($query) => $query->where('status', 'completed');
 
         $totalRevenue = round((float) $paidBase(
-            \App\Models\Payment::withoutTenant()->where('tenant_id', $tenantId)
+            Payment::withoutTenant()->where('tenant_id', $tenantId)
         )->sum('amount'), 2);
 
         $days = min(max($request->integer('days', 30), 1), 90);
         $since = now()->subDays($days - 1)->startOfDay();
         $periodRevenue = round((float) $paidBase(
-            \App\Models\Payment::withoutTenant()->where('tenant_id', $tenantId)->where('paid_at', '>=', $since)
+            Payment::withoutTenant()->where('tenant_id', $tenantId)->where('paid_at', '>=', $since)
         )->sum('amount'), 2);
 
         // الربح الحقيقي = الإيراد − تكلفة البنية الفعلية (من Ledger) إن كانت متوفرة.
@@ -123,7 +143,7 @@ class TeacherAnalyticsController extends Controller
         $periodProfit = 0.0;
         try {
             // تكلفة البنية الفعلية للشهر من محرك الوسائط (بني/كلاودفلير).
-            $costService = app(\App\Media\MediaCostService::class);
+            $costService = app(MediaCostService::class);
             $monthCost = (float) ($costService->tenantCost($tenantId)['total'] ?? 0);
             $profit = round($totalRevenue - $monthCost, 2);
             $periodProfit = $profit;
@@ -206,30 +226,31 @@ class TeacherAnalyticsController extends Controller
 
         Enrollment::where('tenant_id', $tenantId)
             ->where('enrolled_at', '>=', $since)
-            ->selectRaw("to_char(enrolled_at, 'YYYY-MM-DD') as d, count(*) as c")
+            ->selectRaw($this->dayExpression('enrolled_at').' as d, count(*) as c')
             ->groupBy('d')
             ->get()
             ->each(fn ($r) => $dates[$r->d]['enrollments'] = (int) $r->c);
 
-        \App\Models\Payment::withoutTenant()
+        Payment::withoutTenant()
             ->where('tenant_id', $tenantId)
             ->where('status', 'completed')
             ->where('paid_at', '>=', $since)
-            ->selectRaw("to_char(paid_at, 'YYYY-MM-DD') as d, sum(amount) as revenue")
+            ->selectRaw($this->dayExpression('paid_at').' as d, sum(amount) as revenue')
             ->groupBy('d')
             ->get()
             ->each(fn ($r) => $dates[$r->d]['revenue'] = round((float) $r->revenue, 2));
 
         ExamAttempt::where('tenant_id', $tenantId)
+            ->excludePractice()
             ->where('submitted_at', '>=', $since)
-            ->selectRaw("to_char(submitted_at, 'YYYY-MM-DD') as d, count(*) as c")
+            ->selectRaw($this->dayExpression('submitted_at').' as d, count(*) as c')
             ->groupBy('d')
             ->get()
             ->each(fn ($r) => $dates[$r->d]['attempts'] = (int) $r->c);
 
         LessonProgress::where('tenant_id', $tenantId)
             ->where('updated_at', '>=', $since)
-            ->selectRaw("to_char(updated_at, 'YYYY-MM-DD') as d, sum(watch_time_seconds) as s")
+            ->selectRaw($this->dayExpression('updated_at').' as d, sum(watch_time_seconds) as s')
             ->groupBy('d')
             ->get()
             ->each(fn ($r) => $dates[$r->d]['watch_seconds'] = (int) $r->s);
@@ -316,6 +337,7 @@ class TeacherAnalyticsController extends Controller
         $studentIds = Enrollment::where('tenant_id', $tenantId)->distinct('user_id')->pluck('user_id');
 
         $studentAgg = ExamAttempt::where('tenant_id', $tenantId)
+            ->excludePractice()
             ->whereIn('user_id', $studentIds)
             ->selectRaw('user_id, count(*) as attempts, avg(percentage) as avg_score, sum(case when passed then 1 else 0 end) as passed')
             ->groupBy('user_id')

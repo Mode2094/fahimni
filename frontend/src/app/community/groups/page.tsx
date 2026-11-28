@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select } from '@/components/ui/select';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Users, Plus, Loader2, Lock, Search, UserPlus, Check, Clock, MessagesSquare, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { communityApi } from '@/services/community';
@@ -61,14 +62,14 @@ export default function GroupsPage() {
       }
       setShowForm(false);
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setSaving(false);
   };
 
   const remove = async (g: CommunityGroup) => {
-    if (!confirm(t('حذف هذه المجموعة نهائياً؟', 'Delete this group permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه المجموعة نهائياً؟', 'Delete this group permanently?') }))) return;
     setBusy(g.id);
-    try { await communityApi.deleteGroup(g.id); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (e: any) { toast.error(e.message || 'Failed'); }
+    try { await communityApi.deleteGroup(g.id); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setBusy(null);
   };
 
@@ -83,7 +84,7 @@ export default function GroupsPage() {
         toast.success(t('تم الانضمام', 'Joined'));
       }
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setBusy(null);
   };
 
@@ -92,9 +93,14 @@ export default function GroupsPage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">{t('المجموعات', 'Groups')}</h1>
-          <p className="text-gray-500 mt-1">{t('انضم لمجموعات زملائك حسب الاهتمامات والمواد', 'Join classmates groups by subject and interest')}</p>
+        <div className="flex items-center gap-3">
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10">
+            <Users className="h-6 w-6 text-teal-600" />
+          </span>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">{t('المجموعات', 'Groups')}</h1>
+            <p className="text-muted-foreground mt-1">{t('انضم لمجموعات زملائك حسب الاهتمامات والمواد', 'Join classmates groups by subject and interest')}</p>
+          </div>
         </div>
         {isTeacher && <Button onClick={openAdd} className="gap-2 rounded-full"><Plus className="h-4 w-4" /> {t('مجموعة جديدة', 'New group')}</Button>}
       </div>
@@ -104,6 +110,7 @@ export default function GroupsPage() {
           <div className="relative max-w-md">
             <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input value={search} onChange={(e) => { setSearch(e.target.value); }} placeholder={t('ابحث عن مجموعة...', 'Search groups...')}
+              aria-label={t('بحث', 'Search')}
               className="h-10 ps-9"
               onKeyDown={(e) => { if (e.key === 'Enter') load(); }} />
           </div>

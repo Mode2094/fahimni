@@ -1,17 +1,17 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
   title: 'إنشاء كورسات أونلاين وبيعها — دروس مسجلة بأرباح متكررة',
   description:
-    'أنشئ كورساتك المسجلة مرة واحدة وبعها مراراً: منشئ كورسات، فيديو وملفات، تحديد سعرك، وبوابات دفع تصلك مباشرة — منصة إنشاء وبيع الدورات أونلاين للمعلمين.',
+    'أنشئ كورساتك المسجلة مرة واحدة وبعها مراراً: منشئ كورسات، فيديو وملفات، تحديد سعرك، وتحصيل أرباحك عبر بوابتك المربوطة — منصة إنشاء وبيع الدورات أونلاين للمعلمين.',
   alternates: { canonical: '/create-online-courses' },
   openGraph: {
     title: 'إنشاء كورسات أونلاين وبيعها — دروس مسجلة',
-    description: 'أنشئ كورسك المسجل مرة واحدة، بعْه مراراً، واجمع أرباحك مباشرة عبر بوابات الدفع.',
+    description: 'أنشئ كورسك المسجل مرة واحدة، بعْه مراراً، واجمع أرباحك عبر بوابة الدفع المربوطة بحسابك.',
     type: 'website',
     siteName: SITE_NAME,
     url: absoluteUrl('/create-online-courses'),
@@ -25,7 +25,7 @@ const STEPS: [string, string][] = [
   ['سجّل واحصل على منصتك', 'حسابك يمنحك منصة تعليمية جاهزة تبدأ منها فوراً، بدون خبرة تقنية.'],
   ['ابنِ هيكل الكورس', 'أقسام، دروس، فيديو وملفات — رتب المحتوى بالطريقة التي يفهمها طلابك.'],
   ['حدد السعر وانشر', 'سعر كل كورس بيدك. اختر بيعه مباشرة أو عبر بطاقات تسجيل برمز QR.'],
-  ['اجمع أرباحك مباشرة', 'بوابات دفع مربوطة بحسابك (مدى، باي بال وغيرها) وفواتير تلقائية لكل عملية دفع.'],
+  ['اجمع أرباحك مباشرة', 'اربط بوابة الدفع الخاصة بك (باي بال، أو بطاقات) لاستقبال أرباح دوراتك، مع فواتير تلقائية لكل عملية دفع.'],
 ];
 
 const BENEFITS: [string, string][] = [
@@ -92,7 +92,7 @@ export default function CreateOnlineCoursesPage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="ابدأ بدرس واحد اليوم"
           text="سجّل حسابك، ارفع درساً واحداً، وشارك رابطه مع طالب. ستلمس بنفسك كيف تعمل حلقة إنشاء وبيع الكورسات كاملة."
           primaryLabel="أنشئ حسابك مجاناً"
@@ -122,7 +122,7 @@ export default function CreateOnlineCoursesPage() {
 
         <Faq title="أسئلة شائعة عن إنشاء الكورسات" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="كورسك القادم يبدأ الآن"
           text="كل درس مسجل ترفعه اليوم يعمل لصالحك غداً. أنشئ منصتك وابدأ أول كورس دون أي تكلفة مسبقة."
           primaryLabel="ابدأ مجاناً"

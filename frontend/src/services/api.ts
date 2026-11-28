@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { getDeviceId } from '@/lib/device';
-import { clearStoredUser, ensureCsrfCookie } from '@/lib/auth-client';
+import { clearStoredUser, ensureCsrfCookie, getStoredTenantId } from '@/lib/auth-client';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -21,7 +21,7 @@ api.interceptors.request.use(async (config) => {
     if (UNSAFE_METHODS.has((config.method || 'get').toLowerCase())) {
       await ensureCsrfCookie();
     }
-    const tid = localStorage.getItem('tenant_id');
+    const tid = getStoredTenantId();
     if (tid) config.headers['X-Tenant-Id'] = tid;
     config.headers['X-Device-Id'] = getDeviceId();
   }

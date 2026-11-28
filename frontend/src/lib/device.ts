@@ -1,10 +1,69 @@
+const DEVICE_COOKIE = 'lms_device_id';
+const DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+
+function readDeviceCookie(): string {
+  if (typeof document === 'undefined') return '';
+  const row = document.cookie.split('; ').find((entry) => entry.startsWith(DEVICE_COOKIE + '='));
+  if (!row) return '';
+  const raw = row.slice(DEVICE_COOKIE.length + 1);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function writeDeviceCookie(id: string): void {
+  if (typeof document === 'undefined') return;
+  // Only rewrite when the value actually changes — this runs before every
+  // same-origin API call, so pointless writes would be wasteful.
+  if (readDeviceCookie() === id) return;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${DEVICE_COOKIE}=${encodeURIComponent(id)}; Max-Age=${DEVICE_COOKIE_MAX_AGE}; Path=/; SameSite=Lax${secure}`;
+}
+
+/** A fresh, high-entropy device id. `crypto` is unavailable in some embedded
+ *  webviews, so fall back to getRandomValues and finally to Math.random. */
+function newDeviceId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `dev-${crypto.randomUUID()}`;
+    }
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      return `dev-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+    }
+  } catch {
+    /* fall through to the legacy generator below */
+  }
+  return `dev-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+}
+
+/**
+ * The stable per-browser device id used for device-binding / login policy.
+ *
+ * Stored in localStorage AND mirrored to a first-party cookie: clearing site
+ * data (or a private-mode tab) alone no longer mints a brand-new device, which
+ * is the cheapest way someone used to dodge a device limit. This is a friction
+ * raiser, not an identity guarantee — the value still originates client-side.
+ */
 export function getDeviceId(): string {
   if (typeof window === 'undefined') return '';
-  let id = localStorage.getItem('lms_device_id');
-  if (!id) {
-    id = `dev-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-    localStorage.setItem('lms_device_id', id);
+  let id = '';
+  try {
+    id = localStorage.getItem('lms_device_id') || '';
+  } catch {
+    /* storage may be blocked (third-party/private mode) */
   }
+  if (!id) id = readDeviceCookie();
+  if (!id) id = newDeviceId();
+  try {
+    localStorage.setItem('lms_device_id', id);
+  } catch {
+    /* ignore — the cookie mirror still carries the id */
+  }
+  writeDeviceCookie(id);
   return id;
 }
 
@@ -72,6 +131,26 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
  */
 let patched = false;
 
+/**
+ * Parse `XMLHttpRequest.getAllResponseHeaders()` safely.
+ *
+ * `line.split(': ')` (the previous approach) splits on EVERY `': '`, so any
+ * header whose value itself contains `': '` produced a 3-element tuple and
+ * `new Headers(...)` threw `TypeError: Failed to construct 'Headers': Invalid
+ * value`. Split only on the first colon and drop malformed lines.
+ */
+export function parseRawHeaders(raw: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i <= 0) continue;
+    const name = line.slice(0, i).trim();
+    const value = line.slice(i + 1).trim();
+    if (name) out.push([name, value]);
+  }
+  return out;
+}
+
 function fetchViaXhr(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -91,10 +170,16 @@ function fetchViaXhr(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     }
 
     xhr.onload = () => {
+      let headers: Headers;
+      try {
+        headers = new Headers(parseRawHeaders(xhr.getAllResponseHeaders()));
+      } catch {
+        headers = new Headers();
+      }
       resolve(new Response(xhr.response, {
         status: xhr.status,
         statusText: xhr.statusText,
-        headers: new Headers(xhr.getAllResponseHeaders().split(/\r?\n/).filter(Boolean).map((line) => line.split(': ')) as any),
+        headers,
       }));
     };
     xhr.onerror = () => reject(new Error('Failed to fetch'));

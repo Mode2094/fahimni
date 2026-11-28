@@ -88,6 +88,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Unit tests
+        # Node test runner (BFF origin, CSP, manifest) + vitest component tests.
+        run: npm run test:unit
+
       - name: Build
         env:
           # Public, non-secret placeholders — enough to compile the app.
@@ -95,14 +99,55 @@ jobs:
           NEXT_PUBLIC_PLATFORM_DOMAIN: app.example.com
         run: npm run build
 
+  e2e-sandbox:
+    # The interactive-HTML question sandbox can only be verified in a real
+    # browser: CSP enforcement, the `sandbox` iframe attribute, opaque origins
+    # and postMessage all live in Chromium. This job loads the real sandbox
+    # document from `next start` and drives the whole protocol.
+    name: Playwright (interactive-question sandbox)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: /api/v1
+          NEXT_PUBLIC_PLATFORM_DOMAIN: app.example.com
+        run: npm run build
+
+      - name: Run sandbox browser tests
+        run: npm run test:e2e
+
   deploy-assets:
-    name: Deploy assets (shellcheck + compose + Caddy merge)
+    name: Deploy assets (shellcheck + compose + Caddy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Bash syntax
         run: bash -n deploy/scripts/*.sh deploy/tests/*.sh docker/migrate.sh
+
+      - name: Security headers stay consistent (no media/payment lockout)
+        # Multiple Permissions-Policy headers are intersected by the browser, so
+        # a stricter edge value silently disables live camera/microphone and
+        # Freemius checkout; also pins the X-Powered-By stripping.
+        run: deploy/tests/security-headers-test.sh
 
       - name: ShellCheck
         run: |
@@ -113,6 +158,71 @@ jobs:
       - name: Migrate script fails loudly (no '|| true' swallow)
         # migrate / plans:sync / seed / count-probe: every failure must abort.
         run: deploy/tests/migrate-script-test.sh
+
+      - name: Brand rollout reloads nginx (no 502 after redeploy)
+        # Recreating app/frontend leaves nginx on the old container IPs -> 502.
+        # Pins the reload, the readiness gate, the failure diagnostics, the
+        # rollback behaviour AND the gated DB steps (preflight/approved
+        # migration/cards.export permission) with a stubbed Docker.
+        run: deploy/tests/brand-rollout-nginx-test.sh
+
+      - name: Host deploy script matches the approved Git version
+        # The rollout runs as root on the host; prove the staged copy cannot
+        # drift from the reviewed file (SHA256 gate against a git ref).
+        run: deploy/tests/verify-deploy-script-test.sh
+
+      - name: Deploy tags images with the code it built
+        # A stale env IMAGE_TAG used to win, so new images were retagged with an
+        # old commit and tag-based rollback silently lost its target. Guards the
+        # tag derivation, the --image-tag override and the env persist.
+        run: deploy/tests/deploy-image-tag-test.sh
+
+      - name: A restore drill refuses a stale backup
+        # The isolated restore must prove a RECENT backup exists before it can
+        # justify FAHIMNI_DB_BACKUP_VERIFIED=1; the freshness gate fails closed.
+        run: deploy/tests/backup-freshness-test.sh
+
+      - name: Restore drill waits out the PostgreSQL init race
+        # The postgres entrypoint's TEMP server makes pg_isready succeed before
+        # the real server exists, so a drill that trusts it alone runs
+        # pg_restore into a shutting-down server. Hermetic boot-race regression
+        # plus (when Docker is available) a real pg_dump -> real restore E2E.
+        run: deploy/tests/restore-drill-boot-race-test.sh
+
+      - name: The single go-live runner cannot skip the backup gate
+        # End-to-end (hermetic): the deploy runs only AFTER a successful
+        # isolated restore; FAHIMNI_DB_BACKUP_VERIFIED=1 is set only there;
+        # a mismatch on the host-script hash aborts; an unstable service rolls
+        # back with an nginx reload; no destructive command is present.
+        run: deploy/tests/fahimni-golive-test.sh
+
+      - name: Launch smoke test covers the critical journeys
+        # Every launch journey is listed; account/provider ones stay explicitly
+        # BLOCKED rather than silently skipped or auto-passed.
+        run: deploy/tests/launch-smoke-list-test.sh
+
+      - name: Fresh install script is standalone, safe and idempotent
+        # Static guards (self-contained, refuses non-root, contains no
+        # destructive DB/volume command) plus a hermetic end-to-end run against
+        # stubbed Docker/git proving a second run reuses the release and env
+        # file and never rotates the database password.
+        run: deploy/tests/fresh-install-test.sh
+
+      - name: Standalone Caddy edge validates and joins only the proxy network
+        # Proves the fresh-install TLS edge is well-formed and independent: the
+        # configures only Caddy's own compose file, publishes 80/443, joins the
+        # external proxy network (never a database/Redis network) and runs in its
+        # OWN compose project (fahimni-edge), distinct from the app stack.
+        run: |
+          edge_name="$(docker compose -f deploy/caddy/docker-compose.caddy.yml \
+            --env-file deploy/caddy/caddy.env.example config --format json | jq -r .name)"
+          test "$edge_name" = "fahimni-edge" || { echo "edge project is '$edge_name', want fahimni-edge"; exit 1; }
+          docker compose -f deploy/caddy/docker-compose.caddy.yml \
+            --env-file deploy/caddy/caddy.env.example config --quiet
+          docker run --rm \
+            -v "$PWD/deploy/caddy/fahimni-standalone.caddy:/etc/caddy/Caddyfile:ro" \
+            -e ACME_EMAIL=ci@example.com \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
 
       - name: Redis maxmemory stays below the container cap
         # Guards against maxmemory >= MEM_REDIS (Redis OOM-killed before evicting).
@@ -131,14 +241,18 @@ jobs:
           cp deploy/env/production.env.example .env
           docker compose --env-file deploy/env/production.env.example config --quiet
 
-      - name: Caddy merge validates against a LooksLoop-shaped base
-        # Proves the additive Fahimni vhosts merge with LooksLoop's global block,
-        # :443 on-demand catch-all and :80 redirect without collision, and that
-        # the duplicate-host guard fires.
-        run: deploy/tests/caddy-merge-validate.sh
+  compose-isolation:
+    name: Caddy edge is a separate compose project (real Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Caddy reconcile detects a recreated LooksLoop container
-        # Real Docker: recreates the fake LooksLoop Caddy container (network-detach
-        # and container-id paths) and reloads its own Caddyfile (live-config path),
-        # proving --reconcile re-applies even when the Caddyfile bytes are unchanged.
-        run: deploy/tests/caddy-reconcile-recreate.sh
+      - name: Prove the app and the edge can never remove each other
+        # P0 regression: the app stack (project `fahimni`) and the standalone
+        # Caddy edge (project `fahimni-edge`) both run `up --remove-orphans`.
+        # Resolves both shipped composes and, with REAL Docker, starts the app
+        # data tier, writes data, brings the edge up, then re-runs each
+        # `--remove-orphans` and restarts — asserting no container is removed or
+        # recreated and the data survives. Includes a negative control proving a
+        # SHARED project would indeed remove the other file's container.
+        run: deploy/tests/caddy-project-isolation-test.sh

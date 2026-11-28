@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { use } from 'react';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
@@ -15,21 +15,30 @@ import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Video, FileText, Lock, Unlock, ChevronDown, ChevronUp, Loader2,
-  Pencil, Layers, BookOpen, ClipboardList, HelpCircle, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
-  Upload, FileAudio, FileVideo, FileImage, FileArchive, File, Search, ClipboardCheck, CalendarClock, Star, MessageSquare, Send,
-  UploadCloud, Radio } from 'lucide-react';
+  Pencil, Layers, BookOpen, ClipboardList, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
+  Upload, FileAudio, FileVideo, FileImage, FileArchive, File, ClipboardCheck, CalendarClock, Star, MessageSquare, Send,
+  UploadCloud, Radio, ExternalLink, Link2, Copy, Info, Users, Film } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { QuestionBuilder, type QuestionDraft } from '@/components/exam/question-builder';
-import { getDeviceId } from '@/lib/device';
+import { ExamEditor } from '@/components/exam/exam-editor';
+import VideoUploadQueue from '@/components/media/video-upload-queue';
+import VideoLibraryPicker from '@/components/media/video-library-picker';
+import CourseGroupsManager from '@/components/course/course-groups';
+import { DuplicateDialog, type DuplicateKind } from '@/components/content/duplicate-dialog';
+import { uploadVideoDirect } from '@/lib/tus-upload';
+import { stableIdempotencyKey } from '@/lib/video-upload-queue';
+import { moveLessonBy, moveLessonTo } from '@/lib/lesson-order';
+import { buildLearnUrl } from '@/lib/course-preview';
+import { useUnsavedChangesWarning } from '@/lib/use-unsaved-changes';
+import { getApiErrorMessage } from '@/services/api';
+import { plural, formatDuration } from '@/lib/ar-format';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson' };
-const EMPTY_EXAM = { title: '', description: '', duration_minutes: '30', pass_mark_percent: '50', max_attempts: '3', random_questions_count: '', shuffle_questions: true, anti_cheat_enabled: true, is_published: false };
-const EMPTY_QUESTION: QuestionDraft = { question_text: '', question_type: 'multiple_choice', points: '1', exam_id: '', section_id: '', options: [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }, { option_text: '', is_correct: false }], image_url: '', pairs: [], items: [], answers: [''], keywords: '' };
+const EMPTY_LESSON = { title: '', is_free_preview: false, kind: 'lesson', exercise_exam_id: '', exercise_position: 'after_video' };
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -46,6 +55,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dragLesson, setDragLesson] = useState<string | null>(null);
   const [dragOverLesson, setDragOverLesson] = useState<string | null>(null);
+  const [orderSaving, setOrderSaving] = useState(false);
   const [lesContents, setLesContents] = useState<any[]>([]);
   const [lesContentsLoading, setLesContentsLoading] = useState(false);
   const [contentType, setContentType] = useState<'video' | 'text' | ''>('');
@@ -58,8 +68,14 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [videoUploadProgress, setVideoUploadProgress] = useState(0);
   const [videoUploadError, setVideoUploadError] = useState('');
   const [videoUploadName, setVideoUploadName] = useState('');
+  const [videoQueueOpen, setVideoQueueOpen] = useState(false);
+  const [videoLibraryOpen, setVideoLibraryOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const pointerDragRef = useRef<{ lessonId: string; sectionId: string } | null>(null);
+
+  const [dup, setDup] = useState<{ kind: DuplicateKind; id: string; title: string } | null>(null);
 
   const [secOpen, setSecOpen] = useState(false);
   const [secTarget, setSecTarget] = useState<any>(null);
@@ -68,14 +84,6 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [lesTarget, setLesTarget] = useState<any>(null);
   const [lesSection, setLesSection] = useState('');
   const [les, setLes] = useState<any>({ ...EMPTY_LESSON });
-  const [examOpen, setExamOpen] = useState(false);
-  const [examTarget, setExamTarget] = useState<any>(null);
-  const [exam, setExam] = useState<any>({ ...EMPTY_EXAM });
-  const [qOpen, setQOpen] = useState(false);
-  const [qTarget, setQTarget] = useState<any>(null);
-  const [q, setQ] = useState<any>({ ...EMPTY_QUESTION });
-  const [examFilter, setExamFilter] = useState('');
-  const [sectionFilter, setSectionFilter] = useState('');
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState<{ lessons: any[]; sections: any[] }>({ lessons: [], sections: [] });
   const [searching, setSearching] = useState(false);
@@ -94,6 +102,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [gradingId, setGradingId] = useState<string | null>(null);
   const [commentVals, setCommentVals] = useState<Record<string, string>>({});
   const [commentingId, setCommentingId] = useState<string | null>(null);
+
+  // Any open editor dialog/panel means in-progress work that a reload would
+  // drop — warn before the tab closes while the teacher is mid-edit.
+  const editingInProgress = secOpen || lesOpen || assignOpen || contentType !== '' || videoQueueOpen;
+  useUnsavedChangesWarning(editingInProgress);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -155,11 +168,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(secTarget ? t('تم تحديث القسم', 'Section updated') : t('تم إضافة القسم', 'Section added'));
       setSecOpen(false); setSecTarget(null); setSecTitle(''); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ القسم', 'Could not save the section'))); }
   };
   const removeSection = async (sid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا القسم؟ سيتم حذف جميع دروسه ومحتواها.', 'Delete this section? All its lessons and content will be removed.'))) return;
-    try { const res = await fetch(`${API}/sections/${sid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch { toast.error('Failed'); }
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا القسم؟ سيتم حذف جميع دروسه ومحتواها.', 'Delete this section? All its lessons and content will be removed.') }))) return;
+    try { const res = await fetch(`${API}/sections/${sid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف القسم', 'Could not delete the section'))); }
   };
   const moveSection = async (s: any, dir: number) => {
     const idx = sections.findIndex((x) => x.id === s.id);
@@ -169,14 +182,18 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       await fetch(`${API}/sections/${s.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: other.sort_order }) });
       await fetch(`${API}/sections/${other.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: s.sort_order }) });
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر نقل القسم', 'Could not move the section'))); }
   };
 
   // ─── Lessons ───────────────────────────────────
   const openLesAdd = (sid: string) => { setLesTarget(null); setLesSection(sid); setLes({ ...EMPTY_LESSON }); setLesOpen(true); };
   const openLesEdit = (l: any) => {
     setLesTarget(l); setLesSection(l.section_id);
-    setLes({ title: l.title || '', is_free_preview: !!l.is_free_preview, kind: 'lesson' });
+    setLes({
+      title: l.title || '', is_free_preview: !!l.is_free_preview, kind: 'lesson',
+      exercise_exam_id: l.metadata?.exercise_exam_id || '',
+      exercise_position: l.metadata?.exercise_position || 'after_video',
+    });
     setLesOpen(true);
     resetContentForm();
     loadLesContents(l.id);
@@ -184,66 +201,159 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const saveLesson = async () => {
     if (!les.title.trim()) { toast.error(t('أدخل عنوان الدرس', 'Enter lesson title')); return; }
     try {
-      const body = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview, sort_order: lesTarget ? lesTarget.sort_order : undefined };
+      const body: any = { section_id: lesSection, title: les.title, is_free_preview: les.is_free_preview };
+      // Only a video lesson can carry an attached exercise; the id is the SAME
+      // exam engine used everywhere else, so no separate grading system exists.
+      if (lesTarget && isVideoLesson(lesTarget)) {
+        body.metadata = {
+          exercise_exam_id: les.exercise_exam_id || null,
+          exercise_position: les.exercise_position || 'after_video',
+        };
+      }
       const res = await fetch(`${API}/lessons${lesTarget ? `/${lesTarget.id}` : ''}`, { method: lesTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
       toast.success(lesTarget ? t('تم تحديث الدرس', 'Lesson updated') : t('تم إضافة الدرس', 'Lesson added'));
       setLesOpen(false); setLesTarget(null); setLes({ ...EMPTY_LESSON }); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الدرس', 'Could not save the lesson'))); }
   };
   const removeLesson = async (lid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الدرس؟', 'Delete this lesson?'))) return;
-    try { const res = await fetch(`${API}/lessons/${lid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch { toast.error('Failed'); }
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا الدرس؟', 'Delete this lesson?') }))) return;
+    try { const res = await fetch(`${API}/lessons/${lid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الدرس', 'Could not delete the lesson'))); }
   };
   const moveLesson = async (l: any, dir: number) => {
     const sec = sections.find((s) => s.id === l.section_id);
-    const list = sec?.lessons || [];
-    const idx = list.findIndex((x: any) => x.id === l.id);
-    const other = list[idx + dir];
-    if (!other) return;
-    try {
-      await fetch(`${API}/lessons/${l.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: other.sort_order }) });
-      await fetch(`${API}/lessons/${other.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ sort_order: l.sort_order }) });
-      load();
-    } catch { toast.error('Failed'); }
+    if (!sec || orderSaving) return;
+
+    const expectedIds = (sec.lessons || []).map((lesson: any) => lesson.id);
+    const ids = moveLessonBy(expectedIds, l.id, dir < 0 ? -1 : 1);
+    if (ids) await saveLessonOrder(sec.id, ids, expectedIds);
   };
-  const reorderLessons = async (sectionId: string, lessonIds: string[]) => {
+
+  const saveLessonOrder = async (sectionId: string, lessonIds: string[], expectedIds: string[]) => {
+    const previous = sections;
+    const current = sections.find((section) => section.id === sectionId)?.lessons || [];
+    if (lessonIds.length !== current.length || lessonIds.every((id, index) => id === current[index]?.id)) return;
+
+    const sortOrder = new Map(lessonIds.map((lessonId, index) => [lessonId, index + 1]));
+    const optimistic = sections.map((section) => section.id === sectionId
+      ? {
+        ...section,
+        lessons: lessonIds
+          .map((lessonId) => section.lessons.find((lesson: any) => lesson.id === lessonId))
+          .filter(Boolean)
+          .map((lesson: any) => ({ ...lesson, sort_order: sortOrder.get(lesson.id) })),
+      }
+      : section);
+    setSections(optimistic);
+    setOrderSaving(true);
+
     try {
-      const res = await fetch(`${API}/lessons/reorder`, { method: 'POST', headers: headers(), body: JSON.stringify({ section_id: sectionId, lesson_ids: lessonIds }) });
-      if (!res.ok) throw new Error();
+      const res = await fetch(`${API}/lessons/reorder`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ section_id: sectionId, lesson_ids: lessonIds, expected_lesson_ids: expectedIds }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.status === 409) {
+          throw new Error(t('تغيّر ترتيب الدروس في تبويب آخر — جارٍ تحميل الترتيب الحالي.', 'Lesson order changed elsewhere — reloading the latest order.'));
+        }
+        throw new Error(data?.message || t('فشل حفظ الترتيب', 'Failed to save order'));
+      }
       toast.success(t('تم حفظ ترتيب الدروس', 'Lesson order saved'));
-    } catch { toast.error(t('فشل حفظ الترتيب', 'Failed to save order')); load(); }
+    } catch (error: any) {
+      setSections(previous);
+      toast.error(error?.message || t('فشل حفظ الترتيب — أُعيد الترتيب السابق', 'Could not save order — the previous order was restored'));
+      void load();
+    } finally {
+      setOrderSaving(false);
+    }
   };
-  const onLessonDragStart = (e: DragEvent, l: any) => {
-    setDragLesson(l.id);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', l.id);
+
+  const moveExam = async (e: any, dir: number) => {
+    if (orderSaving) return;
+    const expectedIds = exams.filter((x: any) => x.section_id === e.section_id).map((x: any) => x.id);
+    const ids = moveLessonBy(expectedIds, e.id, dir < 0 ? -1 : 1);
+    if (ids) await saveExamOrder(e.section_id, ids, expectedIds);
   };
-  const onLessonDragOver = (e: DragEvent, target: any) => {
-    e.preventDefault();
-    if (dragLesson && dragLesson !== target.id) setDragOverLesson(target.id);
+
+  const saveExamOrder = async (sectionId: string, examIds: string[], expectedIds: string[]) => {
+    const previous = exams;
+    const current = exams.filter((x: any) => x.section_id === sectionId);
+    if (examIds.length !== current.length || examIds.every((id, index) => id === current[index]?.id)) return;
+
+    const sortOrder = new Map(examIds.map((examId, index) => [examId, index + 1]));
+    const optimistic = exams
+      .map((x: any) => (x.section_id === sectionId ? { ...x, sort_order: sortOrder.get(x.id) } : x))
+      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    setExams(optimistic);
+    setOrderSaving(true);
+
+    try {
+      const res = await fetch(`${API}/exams/reorder`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ course_id: id, section_id: sectionId, exam_ids: examIds, expected_exam_ids: expectedIds }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.status === 409) {
+          throw new Error(t('تغيّر ترتيب الاختبارات في تبويب آخر — جارٍ تحميل الترتيب الحالي.', 'Exam order changed elsewhere — reloading the latest order.'));
+        }
+        throw new Error(data?.message || t('فشل حفظ الترتيب', 'Failed to save order'));
+      }
+      toast.success(t('تم حفظ ترتيب الاختبارات', 'Exam order saved'));
+    } catch (error: any) {
+      setExams(previous);
+      toast.error(error?.message || t('فشل حفظ الترتيب — أُعيد الترتيب السابق', 'Could not save order — the previous order was restored'));
+      void load();
+    } finally {
+      setOrderSaving(false);
+    }
   };
-  const onLessonDrop = async (e: DragEvent, target: any) => {
-    e.preventDefault();
-    const fromId = dragLesson;
+  const finishPointerDrag = async (clientX: number, clientY: number) => {
+    const active = pointerDragRef.current;
+    if (!active) return;
+    pointerDragRef.current = null;
+
+    const target = document.elementFromPoint?.(clientX, clientY)?.closest<HTMLElement>('[data-lesson-row]');
+    const targetId = target?.dataset.sectionId === active.sectionId ? target.dataset.lessonRow : null;
     setDragLesson(null);
     setDragOverLesson(null);
-    if (!fromId || fromId === target.id) return;
-    const next = sections.map((s) => {
-      if (s.id !== target.section_id) return s;
-      const list = s.lessons || [];
-      const from = list.findIndex((x: any) => x.id === fromId);
-      const to = list.findIndex((x: any) => x.id === target.id);
-      if (from === -1 || to === -1) return s;
-      const arr = [...list];
-      const [moved] = arr.splice(from, 1);
-      arr.splice(to, 0, moved);
-      return { ...s, lessons: arr };
-    });
-    const sec = next.find((s: any) => s.id === target.section_id);
-    const ids = (sec?.lessons || []).map((x: any) => x.id);
-    setSections(next);
-    if (ids.length) await reorderLessons(target.section_id, ids);
+
+    const section = sections.find((item) => item.id === active.sectionId);
+    const expectedIds = (section?.lessons || []).map((lesson: any) => lesson.id);
+    const ids = section && targetId
+      ? moveLessonTo(expectedIds, active.lessonId, targetId)
+      : null;
+    if (ids) await saveLessonOrder(active.sectionId, ids, expectedIds);
+  };
+
+  const onPointerDragStart = (event: ReactPointerEvent<HTMLButtonElement>, lesson: any) => {
+    if (orderSaving || pointerDragRef.current || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    pointerDragRef.current = { lessonId: lesson.id, sectionId: lesson.section_id };
+    setDragLesson(lesson.id);
+    setDragOverLesson(lesson.id);
+  };
+  const onPointerDragMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = pointerDragRef.current;
+    if (!active) return;
+
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-lesson-row]');
+    if (target?.dataset.sectionId === active.sectionId) {
+      setDragOverLesson(target.dataset.lessonRow || null);
+    }
+  };
+  const onLessonPointerEnter = (event: ReactPointerEvent<HTMLDivElement>, lesson: any) => {
+    const active = pointerDragRef.current;
+    if (active && active.sectionId === lesson.section_id) {
+      setDragOverLesson(lesson.id);
+    }
+  };
+  const clearLessonDrag = () => {
+    pointerDragRef.current = null;
+    setDragLesson(null);
+    setDragOverLesson(null);
   };
 
   // ─── Lesson content (video / PDF / audio / text / files) ─────
@@ -278,78 +388,102 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const body: any = { content_type: contentType, title: les.title, sort_order: lesContents.length + 1, content_data };
       if (!contentTarget) body.lesson_id = lesTarget.id;
       const res = await fetch(`${API}/lesson-contents${contentTarget ? `/${contentTarget.id}` : ''}`, { method: contentTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ المحتوى', 'Could not save the content')); return; }
       toast.success(contentTarget ? t('تم تحديث المحتوى', 'Content updated') : t('تمت إضافة المحتوى', 'Content added'));
       resetContentForm();
       loadLesContents(lesTarget.id);
-    } catch { toast.error('Failed'); } finally { setContentSaving(false); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ المحتوى', 'Could not save the content'))); } finally { setContentSaving(false); }
   };
   const removeContent = async (cid: string) => {
-    if (!window.confirm(t('هل تريد حذف هذا المحتوى؟', 'Delete this content?'))) return;
+    if (!(await confirmDialog({ description: t('هل تريد حذف هذا المحتوى؟', 'Delete this content?') }))) return;
     try {
       const res = await fetch(`${API}/lesson-contents/${cid}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم حذف المحتوى', 'Content removed'));
       loadLesContents(lesTarget.id);
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف المحتوى', 'Could not delete the content'))); }
   };
   const [liveBusy, setLiveBusy] = useState(false);
-  const createLiveForLesson = async () => {
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [liveTitle, setLiveTitle] = useState('');
+  const [liveMeetUrl, setLiveMeetUrl] = useState('');
+  const [liveError, setLiveError] = useState('');
+
+  const MEET_RE = /^https:\/\/meet\.google\.com\/[a-z0-9-]+(\/)?$/i;
+
+  const openLiveForLesson = () => {
+    if (!lesSection) { toast.error(t('اختر وحدة أولاً', 'Pick a unit first')); return; }
+    setLiveTitle(les.title || lesTarget?.title || t('بث مباشر', 'Live'));
+    setLiveMeetUrl('');
+    setLiveError('');
+    setLiveOpen(true);
+  };
+
+  const saveLiveSession = async () => {
     if (liveBusy) return;
+    if (!MEET_RE.test(liveMeetUrl.trim())) {
+      setLiveError(t('رابط Google Meet غير صحيح — يجب أن يبدأ بـ https://meet.google.com/', 'Invalid Google Meet link — must start with https://meet.google.com/'));
+      return;
+    }
     setLiveBusy(true);
     try {
       let lessonId = lesTarget?.id;
-      let lessonTitle = lesTarget?.title || les.title || t('بث مباشر', 'Live');
+      const lessonTitle = liveTitle.trim() || les.title || t('بث مباشر', 'Live');
 
       // من "درس جديد": أنشئ الدرس أولاً (إن لم يكن محفوظاً بعد)
       if (!lessonId) {
-        if (!lesSection) { toast.error(t('اختر وحدة أولاً', 'Pick a unit first')); return; }
         const lr = await fetch(`${API}/lessons`, {
           method: 'POST',
           headers: headers(),
           body: JSON.stringify({ section_id: lesSection, title: lessonTitle, is_free_preview: les.is_free_preview }),
         });
         const ld = await lr.json().catch(() => null);
-        if (!lr.ok) { toast.error(ld?.message || 'Failed'); return; }
+        if (!lr.ok) { toast.error(ld?.message || t('تعذر إنشاء الدرس', 'Could not create the lesson')); return; }
         lessonId = ld.lesson?.id || ld.id;
-        if (!lessonId) { toast.error('Failed'); return; }
+        if (!lessonId) { toast.error(t('تعذر إنشاء الدرس', 'Could not create the lesson')); return; }
         toast.success(t('تم إنشاء الدرس', 'Lesson created'));
-      }
-
-      const meetingUrl = window.prompt(t('ألصق رابط Google Meet الخاص بك (https://meet.google.com/...)', 'Paste your Google Meet link (https://meet.google.com/...)'));
-      if (!meetingUrl || !/^https:\/\/meet\.google\.com\/[a-z0-9-]+(\/)?$/i.test(meetingUrl.trim())) {
-        toast.error(t('رابط Google Meet غير صحيح', 'Invalid Google Meet link'));
-        return;
       }
 
       const res = await fetch(`${API}/teacher/live-sessions`, {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ title: `${lessonTitle}`, lesson_id: lessonId, provider: 'google_meet', meeting_url: meetingUrl.trim(), record_enabled: true }),
+        body: JSON.stringify({ title: lessonTitle, lesson_id: lessonId, provider: 'google_meet', meeting_url: liveMeetUrl.trim(), record_enabled: true }),
       });
       const d = await res.json().catch(() => null);
-      if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
-      toast.success(t('تم إنشاء البث المباشر داخل الدرس', 'Live session created inside the lesson'));
+      if (!res.ok) { toast.error(d?.message || t('تعذر إنشاء حصة البث', 'Could not create the live session')); return; }
+      toast.success(t('تم إنشاء حصة البث المباشر داخل الدرس', 'Live session created inside the lesson'));
+      setLiveOpen(false);
       setLesOpen(false); setLesTarget(null); setLes({ ...EMPTY_LESSON });
       load();
-    } catch { toast.error('Failed'); } finally { setLiveBusy(false); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إنشاء حصة البث', 'Could not create the live session'))); } finally { setLiveBusy(false); }
   };
   const onVideoSelected = async (e: any) => {
     const file = e.target.files?.[0];
     if (!file || videoUploading) return;
-    // مفتاح عملية واحد لكل ملف: كل الطلبات (تذكرة + رفع + retry)
-    // تحمل نفس المفتاح → حتى لو تكرر الطلب لن يتكرر الفيديو في Bunny.
-    const uploadKey = crypto.randomUUID();
+    // مفتاح حتمي مشتق من الملف نفسه: نفس الملف = نفس المفتاح → لا تكرار
+    // ولا احتساب مساحة مرتين، وإن أعيد الاختيار يمكن استئناف الرفع.
+    const currentVideo = lesContents.find((content: any) => content.content_type === 'video');
+    const uploadKey = `${stableIdempotencyKey(file)}-${lesTarget.id}-${currentVideo?.id || 'new'}`;
+    const tid = localStorage.getItem('tenant_id') || '';
     setVideoUploading(true);
     setVideoUploadProgress(0);
     setVideoUploadError('');
     setVideoUploadName(file.name);
     try {
-      // 1) تذكرة رفع مباشر من Media Engine (تحقق الخطة + حجز المساحة).
-      const res = await fetch(`${API}/videos/upload-ticket`, {
+      // 1) تذكرة رفع مباشر قابل للاستئناف (TUS) — تحقق الخطة + حجز المساحة
+      //    + توقيع على السيرفر (مفتاح Bunny لا يخرج للمتصفح أبداً).
+      const res = await fetch(`${API}/teacher/media/resumable-ticket`, {
         method: 'POST',
-        headers: { ...headers(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lesson_id: lesTarget.id, file_size: file.size, title: file.name.replace(/\.[^.]+$/, ''), original_filename: file.name, mime_type: file.type || 'video/mp4', idempotency_key: uploadKey }),
+        headers: headers(),
+        body: JSON.stringify({
+          lesson_id: lesTarget.id,
+          replace_content_id: currentVideo?.id || null,
+          file_size: file.size,
+          title: file.name.replace(/\.[^.]+$/, ''),
+          original_filename: file.name,
+          mime_type: file.type || 'video/mp4',
+          idempotency_key: uploadKey,
+        }),
       });
       const d = await res.json().catch(() => null);
       if (!res.ok) {
@@ -358,36 +492,43 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         return;
       }
 
-      // 2) رفع الملف عبر خادمنا (مفتاح Bunny لا يخرج للمتصفح أبداً) —
-      //    شريط التقدم كامل عبر XHR.
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('lesson_id', lesTarget.id);
-      fd.append('title', file.name.replace(/\.[^.]+$/, ''));
-      fd.append('asset_id', d?.upload?.asset_id || '');
-      fd.append('idempotency_key', uploadKey);
+      const upload = d?.upload || {};
+
+      // 2) رفع الملف مباشرة إلى Bunny من المتصفح — الفيديو لا يمر عبر خادمنا.
       await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API}/videos/upload`);
-        const hdrs: Record<string, string> = { ...headers(), 'X-Device-Id': getDeviceId() };
-        Object.entries(hdrs).forEach(([k, v]) => { if (k.toLowerCase() !== 'content-type') xhr.setRequestHeader(k, v); });
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setVideoUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else {
-            let msg = `HTTP ${xhr.status}`;
-            try { const j = JSON.parse(xhr.responseText); if (j?.message) msg = j.message; } catch { /* */ }
-            reject(new Error(`HTTP ${xhr.status}${msg ? `: ${msg}` : ''}`));
-          }
-        };
-        xhr.onerror = () => reject(new Error('network'));
-        xhr.send(fd);
+        uploadVideoDirect(
+          file,
+          {
+            endpoint: upload.endpoint,
+            signature: upload.signature,
+            expires: upload.expires,
+            library_id: upload.library_id,
+            video_guid: upload.video_guid,
+          },
+          {
+            onProgress: (p) => setVideoUploadProgress(p),
+            onSuccess: () => resolve(),
+            onError: (m) => reject(new Error(m || 'upload failed')),
+          },
+          { resume: Boolean(upload.reused) },
+        ).catch(reject);
       });
 
+      // 3) ربط الأصل بالدرس. الفيديو يبقى «قيد المعالجة» حتى يؤكد المزوّد.
+      const cr = await fetch(`${API}/teacher/media/resumable-complete`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ asset_id: upload.asset_id, lesson_id: lesTarget.id }),
+      });
+      const completion = await cr.json().catch(() => null);
+      if (!cr.ok) {
+        throw new Error(completion?.message || t('فشل إتمام الرفع', 'Failed to complete upload'));
+      }
+
       setVideoUploadProgress(100);
-      toast.success(t('تم رفع الفيديو بنجاح — قيد المعالجة الآن', 'Video uploaded — processing now'));
+      toast.success(currentVideo
+        ? t('جُهِّز الفيديو الجديد للمعالجة؛ سيبقى الفيديو الحالي يعمل حتى يكتمل الاستبدال.', 'The new video is processing; the current video stays active until replacement is ready.')
+        : t('تم رفع الفيديو بنجاح — قيد المعالجة الآن', 'Video uploaded — processing now'));
       resetContentForm();
       loadLesContents(lesTarget.id);
     } catch (err: any) {
@@ -416,10 +557,10 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       fd.append('lesson_id', lesTarget.id);
       const res = await fetch(`${API}/upload`, { method: 'POST', headers: { 'X-Tenant-Id': localStorage.getItem('tenant_id') || '', Accept: 'application/json' }, body: fd });
       const d = await res.json().catch(() => null);
-      if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d?.message || t('تعذر رفع الملف', 'Could not upload the file')); return; }
       toast.success(t('تم رفع الملف', 'File uploaded'));
       loadLesContents(lesTarget.id);
-    } catch { toast.error('Failed'); } finally { setUploading(false); e.target.value = ''; }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر رفع الملف', 'Could not upload the file'))); } finally { setUploading(false); e.target.value = ''; }
   };
   const formatBytes = (b: number) => {
     if (!b) return '';
@@ -450,9 +591,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     if (['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext)) return t('فيديو', 'Video');
     return t('ملف', 'File');
   };
+  const hasVideoContent = lesContents.some((content: any) => content.content_type === 'video');
 
   // ─── Exams ─────────────────────────────────────
-  const openExamAdd = () => { setExamTarget(null); setExam({ ...EMPTY_EXAM }); setExamOpen(true); };
   const openExamFromSection = async (sid: string) => {
     try {
       const res = await fetch(`${API}/exams`, {
@@ -461,119 +602,16 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({ course_id: id, section_id: sid, title: t('اختبار الوحدة', 'Unit exam'), duration_minutes: 30, pass_mark_percent: 50, max_attempts: 3, shuffle_questions: true, is_published: false }),
       });
       const d = await res.json();
-      if (!res.ok) { toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d?.message || t('تعذر إنشاء الاختبار', 'Could not create the exam')); return; }
       toast.success(t('تم إنشاء الاختبار — أضف أسئلته', 'Exam created — add its questions'));
       load();
       setViewerExam(d.exam || d);
-    } catch { toast.error('Failed'); }
-  };
-  const openExamEdit = (e: any) => {
-    setExamTarget(e);
-    setExam({
-      title: e.title || '', description: e.description || '',
-      duration_minutes: String(e.duration_minutes ?? '30'), pass_mark_percent: String(e.pass_mark_percent ?? '50'),
-      max_attempts: String(e.max_attempts ?? '3'), shuffle_questions: !!e.shuffle_questions, is_published: !!e.is_published,
-    });
-  };
-  const saveExam = async () => {
-    if (!exam.title.trim()) { toast.error(t('أدخل اسم الاختبار', 'Enter exam title')); return; }
-    try {
-      const body = {
-        course_id: id, section_id: exam.section_id || undefined, title: exam.title, description: exam.description,
-        duration_minutes: Number(exam.duration_minutes) || 0, pass_mark_percent: Number(exam.pass_mark_percent) || 0,
-        max_attempts: Number(exam.max_attempts) || 0, shuffle_questions: exam.shuffle_questions,
-        is_published: exam.is_published,
-      };
-      const res = await fetch(`${API}/exams${examTarget ? `/${examTarget.id}` : ''}`, { method: examTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) throw new Error();
-      toast.success(examTarget ? t('تم تحديث الاختبار', 'Exam updated') : t('تم إنشاء الاختبار — أضف أسئلته من تبويب بنك الأسئلة', 'Exam created — add its questions from the question bank tab'));
-      setExamOpen(false); setExamTarget(null); setExam({ ...EMPTY_EXAM }); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إنشاء الاختبار', 'Could not create the exam'))); }
   };
   const removeExam = async (eid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الاختبار؟', 'Delete this exam?'))) return;
-    try { const res = await fetch(`${API}/exams/${eid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch { toast.error('Failed'); }
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا الاختبار؟', 'Delete this exam?') }))) return;
+    try { const res = await fetch(`${API}/exams/${eid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الاختبار', 'Could not delete the exam'))); }
   };
-  const toggleExamPublish = async (e: any) => {
-    try {
-      const res = await fetch(`${API}/exams/${e.id}/${e.is_published ? 'unpublish' : 'publish'}`, { method: 'POST', headers: headers() });
-      if (!res.ok) throw new Error();
-      toast.success(e.is_published ? t('تم الإيقاف', 'Unpublished') : t('تم النشر', 'Published'));
-      load();
-    } catch { toast.error('Failed'); }
-  };
-  const manageExamQuestions = (e: any) => { setExamFilter(e.id); setTab('questions'); };
-
-  // ─── Questions ─────────────────────────────────
-  const openQAdd = (sectionId = '') => { setQTarget(null); setQ({ ...EMPTY_QUESTION, exam_id: examFilter, section_id: sectionId }); setQOpen(true); };
-  const openQEdit = (qq: any) => {
-    setQTarget(qq);
-    setQ({
-      question_text: qq.question_text || '', question_type: qq.question_type || 'multiple_choice', points: String(qq.points ?? '1'),
-      exam_id: examFilter, section_id: qq.section_id || '',
-      options: (qq.options && qq.options.length ? qq.options : [{ option_text: '', is_correct: true }, { option_text: '', is_correct: false }]).map((o: any) => ({ option_text: o.option_text || '', is_correct: !!o.is_correct })),
-      image_url: qq.metadata?.image_url || '',
-      pairs: (qq.metadata?.pairs || []).map((p: any) => ({ left: p.left || '', right: p.right || '' })),
-      items: (qq.metadata?.items || []).map((i: any) => typeof i === 'string' ? i : i.text || ''),
-      answers: (qq.metadata?.answers || ['']).map((a: any) => String(a)),
-      keywords: (qq.metadata?.keywords || []).join(', '),
-    });
-    setQOpen(true);
-  };
-  const setCorrect = (idx: number) => { const opts = q.options.map((o: any, i: number) => ({ ...o, is_correct: i === idx })); setQ({ ...q, options: opts }); };
-  const saveQuestion = async () => {
-    if (!q.question_text.trim()) { toast.error(t('أدخل نص السؤال', 'Enter question text')); return; }
-    try {
-      const meta: any = {};
-      if (q.image_url) meta.image_url = q.image_url;
-      if (q.question_type === 'drag_drop' || q.question_type === 'matching') meta.pairs = q.pairs.filter((p: any) => p.left.trim() && p.right.trim());
-      if (q.question_type === 'ordering') meta.items = q.items.filter((i: any) => String(i).trim());
-      if (q.question_type === 'fill_blank') meta.answers = q.answers.filter((a: any) => String(a).trim());
-      if (q.question_type === 'writing') meta.keywords = q.keywords.split(',').map((k: string) => k.trim()).filter(Boolean);
-
-      const payload: any = { question_text: q.question_text, question_type: q.question_type, points: Number(q.points) || 1, course_id: id, section_id: q.section_id || null, metadata: meta };
-      if (q.question_type === 'multiple_choice') payload.options = q.options.filter((o: any) => o.option_text.trim());
-      if (q.question_type === 'true_false') payload.options = [{ option_text: 'True', is_correct: true }, { option_text: 'False', is_correct: false }];
-      const res = await fetch(`${API}/questions${qTarget ? `/${qTarget.id}` : ''}`, { method: qTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(payload) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
-      const qid = qTarget?.id || (await res.json().catch(() => null))?.question?.id;
-      if (q.question_type === 'multiple_choice') await syncOptions(qid, payload.options);
-      if (q.exam_id) await attachToExam(qid, q.exam_id);
-      toast.success(qTarget ? t('تم تحديث السؤال', 'Question updated') : t('تم إضافة السؤال', 'Question added'));
-      setQOpen(false); setQTarget(null); setQ({ ...EMPTY_QUESTION, exam_id: examFilter }); load();
-    } catch { toast.error('Failed'); }
-  };
-  const syncOptions = async (qid: string, options: any[]) => {
-    if (!qid || qTarget) return;
-    for (const o of options) {
-      await fetch(`${API}/questions/${qid}/options`, { method: 'POST', headers: headers(), body: JSON.stringify({ option_text: o.option_text, is_correct: o.is_correct }) });
-    }
-  };
-  const attachToExam = async (qid: string, eid: string) => {
-    await fetch(`${API}/exams/${eid}/add-questions`, { method: 'POST', headers: headers(), body: JSON.stringify({ questions: [{ question_id: qid }] }) });
-  };
-  const removeQuestion = async (qqid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا السؤال؟', 'Delete this question?'))) return;
-    try {
-      const res = await fetch(`${API}/questions/${qqid}`, { method: 'DELETE', headers: headers() });
-      if (!res.ok) throw new Error();
-      toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
-  };
-  const detachQuestion = async (qqid: string) => {
-    if (!window.confirm(t('إزالة هذا السؤال من الاختبار؟', 'Remove this question from the exam?'))) return;
-    try {
-      const res = await fetch(`${API}/exams/${examFilter}/questions/${qqid}`, { method: 'DELETE', headers: headers() });
-      if (!res.ok) throw new Error();
-      toast.success(t('تمت إزالة السؤال من الاختبار', 'Removed from exam')); load();
-    } catch { toast.error('Failed'); }
-  };
-
-  const visibleQuestions = questions.filter((qq) => {
-    if (examFilter && !(qq.exams || []).some((e: any) => e.id === examFilter)) return false;
-    if (sectionFilter && qq.section_id !== sectionFilter) return false;
-    return true;
-  });
 
   // ─── Assignments ───────────────────────────────
   const EMPTY_ASSIGN = { title: '', description: '', section_id: '', points: '10', due_at: '', allow_late: false, is_published: false, file_url: '', file_name: '' };
@@ -594,10 +632,10 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const fd = new FormData();
       fd.append('file', file);
       const res = await fetch(`${API}/assignment-upload`, { method: 'POST', headers: { 'X-Tenant-Id': localStorage.getItem('tenant_id') || '' }, body: fd });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Upload failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر رفع ملف الواجب', 'Could not upload the assignment file')); return; }
       const d = await res.json();
       setAssign((a: any) => ({ ...a, file_url: d.url, file_name: d.name }));
-    } catch { toast.error('Upload failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر رفع ملف الواجب', 'Could not upload the assignment file'))); }
     setAssignUploading(false);
   };
   const saveAssign = async () => {
@@ -610,14 +648,14 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         file_url: assign.file_url || null, file_name: assign.file_name || null,
       };
       const res = await fetch(`${API}/assignments${assignTarget ? `/${assignTarget.id}` : ''}`, { method: assignTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ الواجب', 'Could not save the assignment')); return; }
       toast.success(assignTarget ? t('تم تحديث الواجب', 'Assignment updated') : t('تم إنشاء الواجب', 'Assignment created'));
       setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الواجب', 'Could not save the assignment'))); }
   };
   const removeAssign = async (aid: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الواجب وجميع تسليماته؟', 'Delete this assignment and all its submissions?'))) return;
-    try { const res = await fetch(`${API}/assignments/${aid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); if (viewSubm === aid) setViewSubm(null); load(); } catch { toast.error('Failed'); }
+    if (!(await confirmDialog({ description: t('هل أنت متأكد من حذف هذا الواجب وجميع تسليماته؟', 'Delete this assignment and all its submissions?') }))) return;
+    try { const res = await fetch(`${API}/assignments/${aid}`, { method: 'DELETE', headers: headers() }); if (!res.ok) throw new Error(); toast.success(t('تم الحذف', 'Deleted')); if (viewSubm === aid) setViewSubm(null); load(); } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الواجب', 'Could not delete the assignment'))); }
   };
   const toggleAssignPublish = async (a: any) => {
     try {
@@ -625,7 +663,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(a.is_published ? t('تم الإيقاف', 'Unpublished') : t('تم النشر', 'Published'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تغيير حالة نشر الواجب', 'Could not change the assignment publish state'))); }
   };
   const gradeSubmission = async (a: any, s: any) => {
     const grade = gradeVals[s.id];
@@ -636,7 +674,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error();
       toast.success(t('تم التصحيح', 'Graded'));
       setGradeVals((g) => ({ ...g, [s.id]: '' })); setGradeCmts((g) => ({ ...g, [s.id]: '' })); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الدرجة', 'Could not save the grade'))); }
     setGradingId(null);
   };
   const addComment = async (s: any) => {
@@ -647,7 +685,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const res = await fetch(`${API}/submissions/${s.id}/comments`, { method: 'POST', headers: headers(), body: JSON.stringify({ comment: text }) });
       if (!res.ok) throw new Error();
       setCommentVals((c) => ({ ...c, [s.id]: '' })); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إضافة التعليق', 'Could not add the comment'))); }
     setCommentingId(null);
   };
   const fmtDue = (iso: string | null) => {
@@ -679,45 +717,55 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     } catch { /* */ }
   };
   const isLiveLesson = (l: any) => (l.contents || []).some((c: any) => c.content_type === 'live');
+  const isVideoLesson = (l: any) => l.lesson_type === 'video' || (l.contents || []).some((c: any) => c.content_type === 'video');
 
   // ─── محرر الاختبار المفتوح (إعدادات + أسئلة كيان واحد) ───
   const [viewerExam, setViewerExam] = useState<any>(null);
-  const [examInnerTab, setExamInnerTab] = useState<'questions' | 'settings'>('questions');
-  const [bankOpen, setBankOpen] = useState(false);
-  const [bankForExam, setBankForExam] = useState<string>('');
 
   const sectionExams = (sid: string) => exams.filter((e) => e.section_id === sid);
   const sectionAssigns = (sid: string) => assignments.filter((a) => a.section_id === sid);
-  const examQuestions = (eid: string) => questions.filter((qq) => qq.exam_id === eid);
+  // A question's exam links come back as `exams[]` (the exam_questions pivot),
+  // not an `exam_id` column — reading `exams` is what actually shows the
+  // questions attached to an exam.
+  const examQuestions = (eid: string) => questions.filter((qq) => (qq.exams || []).some((e: any) => e.id === eid));
 
-  const openExamViewer = (e: any) => { setViewerExam(e); setExamInnerTab('questions'); };
-  const openBank = (examId = '') => { setBankForExam(examId); setBankOpen(true); };
-
-  const addQuestionToExam = async (qq: any) => {
-    if (!bankForExam) return;
-    await attachToExam(qq.id, bankForExam);
-    toast.success(t('أُضيف السؤال للاختبار', 'Question added to exam'));
-    load();
-  };
-
-  const qTypeIcon = (t: string) =>
-    t === 'multiple_choice' ? '☑️' : t === 'true_false' ? '✅' : t === 'drag_drop' ? '🧲' : t === 'matching' ? '🔗' : t === 'ordering' ? '🔢' : t === 'fill_blank' ? '✍️' : t === 'written' ? '📝' : '📎';
+  const openExamViewer = (e: any) => setViewerExam(e);
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div
+      className="space-y-6 max-w-6xl mx-auto"
+      onPointerMove={onPointerDragMove}
+      onPointerUp={(event) => void finishPointerDrag(event.clientX, event.clientY)}
+      onPointerCancel={clearLessonDrag}
+    >
+      {/* The whole course content is hidden while an exam is being edited, so
+          the exam editor takes over the content area while the main sidebar
+          stays visible and usable. */}
+      <div className={viewerExam ? 'hidden' : 'space-y-6'}>
       {/* ─── رأس الكورس ─────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <a href="/courses" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}{t('رجوع للكورسات', 'Back to courses')}</a>
+          <a href="/teacher/courses" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}{t('رجوع للكورسات', 'Back to courses')}</a>
           <h1 className="text-2xl sm:text-3xl font-bold mt-2">{course?.title || t('إدارة الكورس', 'Course Builder')}</h1>
           {course?.description && <p className="text-gray-500 text-sm mt-1 max-w-xl">{course.description}</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <a href={`/course/${id}/learn`} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full"><Eye className="h-4 w-4" />{t('معاينة', 'Preview')}</Button></a>
+          <Button variant="outline" className="gap-2 rounded-full" onClick={() => setVideoQueueOpen(true)} title={t('رفع عدة ملفات فيديو مرة واحدة', 'Upload several video files at once')}>
+            <UploadCloud className="h-4 w-4" />{t('رفع فيديوهات متعددة', 'Upload multiple videos')}
+          </Button>
+          <Button variant="outline" className="gap-2 rounded-full" onClick={() => setGroupsOpen(true)} title={t('مجموعات الطلاب داخل الكورس', 'In-course student groups')}>
+            <Users className="h-4 w-4" />{t('مجموعات الطلاب', 'Student groups')}
+          </Button>
+          {course && (
+            <Button variant="outline" className="gap-2 rounded-full" onClick={() => setDup({ kind: 'course', id, title: course.title || '' })} title={t('إنشاء نسخة مسودة من الكورس كاملاً', 'Create a draft copy of the whole course')}>
+              <Copy className="h-4 w-4" />{t('إنشاء نسخة', 'Duplicate course')}
+            </Button>
+          )}
+          <a href={buildLearnUrl(id, { preview: true })} target="_blank" rel="noreferrer"><Button variant="outline" className="gap-2 rounded-full" title={t('اعرض الكورس والدروس كما يراها الطالب (بما فيها المسودات)', 'View the course and lessons exactly as a student sees them (drafts included)')}><Eye className="h-4 w-4" />{t('معاينة كطالب', 'Preview as student')}</Button></a>
           {course && (
             <Button variant={course.is_published ? 'outline' : 'default'} className="gap-2 rounded-full" onClick={() => {
               fetch(`${API}/courses/${id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ is_published: !course.is_published }) })
-                .then((r) => r.json()).then(() => { load(); toast.success(course.is_published ? t('أُلغي النشر', 'Unpublished') : t('نُشر الكورس', 'Published')); }).catch(() => toast.error('Failed'));
+                .then((r) => r.json()).then(() => { load(); toast.success(course.is_published ? t('أُلغي النشر', 'Unpublished') : t('نُشر الكورس', 'Published')); }).catch(() => toast.error(t('تعذر تغيير حالة نشر الكورس', 'Could not change the course publish state')));
             }}>
               <CheckCircle2 className="h-4 w-4" />{course.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')}
             </Button>
@@ -746,6 +794,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           action={<Button onClick={openSecAdd} className="gap-2 rounded-full"><Plus className="h-4 w-4" />{t('إضافة وحدة', 'Add unit')}</Button>} />
       ) : (
         <div className="space-y-6">
+          {orderSaving && <p className="sr-only" role="status">{t('جار حفظ ترتيب الدروس', 'Saving lesson order')}</p>}
           {sections.map((s, si) => {
             const secLessons = s.lessons || [];
             const secEx = sectionExams(s.id);
@@ -769,9 +818,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Button size="sm" variant="ghost" onClick={() => openSecEdit(s)} className="gap-1 rounded-full text-xs"><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, -1)} disabled={si === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, 1)} disabled={si === sections.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeSection(s.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, -1)} disabled={si === 0} aria-label={t('تحريك الوحدة لأعلى', 'Move unit up')} title={t('تحريك الوحدة لأعلى', 'Move unit up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveSection(s, 1)} disabled={si === sections.length - 1} aria-label={t('تحريك الوحدة لأسفل', 'Move unit down')} title={t('تحريك الوحدة لأسفل', 'Move unit down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeSection(s.id)} aria-label={t('حذف الوحدة', 'Delete unit')} title={t('حذف الوحدة', 'Delete unit')}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                   </div>
 
@@ -788,9 +837,31 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       // ── بطاقة البث المباشر ──
                       if (isLive) {
                         return (
-                          <div key={l.id} className="rounded-xl border border-rose-200 bg-rose-50/50 p-4 space-y-3">
+                          <div
+                            key={l.id}
+                            data-lesson-row={l.id}
+                            data-section-id={l.section_id}
+                            onPointerEnter={(e) => onLessonPointerEnter(e, l)}
+                            className={cn(
+                              'rounded-xl border p-4 space-y-3 transition-colors',
+                              dragLesson === l.id && 'opacity-50',
+                              dragOverLesson === l.id && dragLesson !== l.id ? 'border-teal-400 ring-1 ring-teal-200' : 'border-rose-200',
+                              'bg-rose-50/50',
+                            )}
+                          >
                             <div className="flex items-center gap-3">
-                              <GripVertical className="h-4 w-4 text-rose-300 shrink-0" />
+                              <button
+                                type="button"
+                                data-lesson-drag-handle={l.id}
+                                onPointerDown={(e) => onPointerDragStart(e, l)}
+                                onPointerCancel={clearLessonDrag}
+                                disabled={orderSaving}
+                                className="touch-none cursor-grab rounded p-1 text-rose-400 hover:bg-white/70 active:cursor-grabbing disabled:cursor-wait"
+                                aria-label={t(`اسحب لإعادة ترتيب ${l.title}`, `Drag to reorder ${l.title}`)}
+                                title={t('اسحب لإعادة ترتيب الدرس', 'Drag to reorder lesson')}
+                              >
+                                <GripVertical className="h-4 w-4 shrink-0" aria-hidden="true" />
+                              </button>
                               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-100 shrink-0"><Radio className="h-4 w-4 text-rose-600" /></span>
                               <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-sm truncate">{l.title}</p>
@@ -800,8 +871,13 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                                   ) : <span>{t('لم يحدد موعد بعد', 'No schedule set yet')}</span>}
                                 </p>
                               </div>
+                              <a href={buildLearnUrl(id, { preview: true, lessonId: l.id })} target="_blank" rel="noreferrer" aria-label={t('معاينة الحصة كطالب', 'Preview session as student')} title={t('معاينة الحصة كطالب', 'Preview session as student')}>
+                                <Button size="sm" variant="ghost" className="rounded-full text-xs text-rose-700"><Eye className="h-3.5 w-3.5" /></Button>
+                              </a>
                               <a href="/teacher/live"><Button size="sm" className="gap-1 rounded-full bg-rose-600 hover:bg-rose-700 text-white"><Radio className="h-3.5 w-3.5" />{t('إدارة الحصة', 'Manage session')}</Button></a>
-                              <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={orderSaving || li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={orderSaving || li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
                             <div className="flex items-center gap-2">
                               <Input type="datetime-local" className="h-9 w-auto text-xs" dir="ltr"
@@ -818,8 +894,31 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
                       // ── بطاقة الدرس العادي ──
                       return (
-                        <div key={l.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3 hover:bg-slate-50/60 transition">
-                          <GripVertical className="h-4 w-4 text-gray-300 shrink-0" />
+                        <div
+                          key={l.id}
+                          data-lesson-row={l.id}
+                          data-section-id={l.section_id}
+                          onPointerEnter={(e) => onLessonPointerEnter(e, l)}
+                          className={cn(
+                            'flex items-center gap-3 rounded-xl border p-3 transition',
+                            dragLesson === l.id && 'opacity-50',
+                            dragOverLesson === l.id && dragLesson !== l.id
+                              ? 'border-teal-400 bg-teal-50/60 ring-1 ring-teal-200'
+                              : 'border-slate-100 hover:bg-slate-50/60',
+                          )}
+                        >
+                          <button
+                            type="button"
+                            data-lesson-drag-handle={l.id}
+                            onPointerDown={(e) => onPointerDragStart(e, l)}
+                            onPointerCancel={clearLessonDrag}
+                            disabled={orderSaving}
+                            className="touch-none cursor-grab rounded p-1 text-gray-400 hover:bg-white active:cursor-grabbing disabled:cursor-wait"
+                            aria-label={t(`اسحب لإعادة ترتيب ${l.title}`, `Drag to reorder ${l.title}`)}
+                            title={t('اسحب لإعادة ترتيب الدرس', 'Drag to reorder lesson')}
+                          >
+                            <GripVertical className="h-4 w-4 shrink-0" aria-hidden="true" />
+                          </button>
                           <span className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${hasContent ? 'bg-teal-50' : 'bg-gray-100'}`}>
                             {hasContent ? <Video className="h-4 w-4 text-teal-600" /> : <FileText className="h-4 w-4 text-gray-400" />}
                           </span>
@@ -833,28 +932,34 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <Button size="sm" className="gap-1 rounded-full text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={() => openLesEdit(l)}>
                             {hasContent ? <><Pencil className="h-3.5 w-3.5" />{t('إدارة المحتوى', 'Manage content')}</> : <><Plus className="h-3.5 w-3.5" />{t('إضافة محتوى', 'Add content')}</>}
                           </Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={li === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={li === secLessons.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          <a href={buildLearnUrl(id, { preview: true, lessonId: l.id })} target="_blank" rel="noreferrer" aria-label={t('معاينة الدرس كطالب', 'Preview lesson as student')} title={t('معاينة الدرس كطالب', 'Preview lesson as student')}>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700"><Eye className="h-3.5 w-3.5" /></Button>
+                          </a>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => setDup({ kind: 'lesson', id: l.id, title: l.title })} aria-label={t('إنشاء نسخة من الدرس', 'Duplicate lesson')} title={t('إنشاء نسخة من الدرس', 'Duplicate lesson')}><Copy className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, -1)} disabled={orderSaving || li === 0} aria-label={t('تحريك الدرس لأعلى', 'Move lesson up')} title={t('تحريك الدرس لأعلى', 'Move lesson up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveLesson(l, 1)} disabled={orderSaving || li === secLessons.length - 1} aria-label={t('تحريك الدرس لأسفل', 'Move lesson down')} title={t('تحريك الدرس لأسفل', 'Move lesson down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeLesson(l.id)} aria-label={t('حذف الدرس', 'Delete lesson')} title={t('حذف الدرس', 'Delete lesson')}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       );
                     })}
 
                     {/* اختبارات الوحدة */}
                     <div className="space-y-3">
-                    {secEx.map((e: any) => (
+                    {secEx.map((e: any, ei: number) => (
                       <div key={e.id} className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/40 p-3 hover:bg-violet-50 transition">
-                        <GripVertical className="h-4 w-4 text-violet-300 shrink-0" />
                         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 shrink-0"><ClipboardList className="h-4 w-4 text-violet-600" /></span>
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-sm truncate">{e.title}</p>
                           <p className="text-[11px] text-gray-400">
-                            {examQuestions(e.id).length} {t('سؤال', 'questions')} · {e.duration_minutes} {t('دقيقة', 'min')} · {t('نجاح', 'pass')} {e.pass_mark_percent}%
+                            {plural.questions(examQuestions(e.id).length, locale)} · {formatDuration(e.duration_minutes, locale)} · {t('نجاح', 'pass')} {e.pass_mark_percent}%
                           </p>
                         </div>
                         <Badge className={e.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{e.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>
                         <div className="flex items-center gap-1">
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveExam(e, -1)} disabled={orderSaving || ei === 0} aria-label={t('تحريك الاختبار لأعلى', 'Move exam up')} title={t('تحريك الاختبار لأعلى', 'Move exam up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveExam(e, 1)} disabled={orderSaving || ei === secEx.length - 1} aria-label={t('تحريك الاختبار لأسفل', 'Move exam down')} title={t('تحريك الاختبار لأسفل', 'Move exam down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" className="gap-1 rounded-full bg-violet-600 hover:bg-violet-700 text-white" onClick={() => openExamViewer(e)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-violet-700" onClick={() => setDup({ kind: 'exam', id: e.id, title: e.title })} aria-label={t('إنشاء نسخة من الاختبار', 'Duplicate exam')} title={t('إنشاء نسخة من الاختبار', 'Duplicate exam')}><Copy className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeExam(e.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       </div>
@@ -862,18 +967,80 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
 
                     {/* واجبات الوحدة */}
-                    {secAs.map((a: any) => (
-                      <div key={a.id} className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/40 p-3 hover:bg-amber-50 transition">
-                        <GripVertical className="h-4 w-4 text-amber-300 shrink-0" />
-                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 shrink-0"><ClipboardCheck className="h-4 w-4 text-amber-600" /></span>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-sm truncate">{a.title}</p>
-                          <p className="text-[11px] text-gray-400">{a.points} {t('نقطة', 'pts')}{a.due_at ? ` · ${t('ينتهي', 'due')} ${new Date(a.due_at).toLocaleDateString()}` : ''}</p>
+                    {secAs.map((a: any) => {
+                      const subs: any[] = Array.isArray(a.submissions) ? a.submissions : [];
+                      const open = viewSubm === a.id;
+                      const statusLabel: Record<string, string> = {
+                        submitted: t('تم التسليم', 'Submitted'),
+                        late: t('متأخر', 'Late'),
+                        graded: t('مصحح', 'Graded'),
+                      };
+                      return (
+                        <div key={a.id} className="rounded-xl border border-amber-100 bg-amber-50/40 transition">
+                          <div className="flex items-center gap-3 p-3 hover:bg-amber-50">
+                            <GripVertical className="h-4 w-4 text-amber-300 shrink-0" />
+                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 shrink-0"><ClipboardCheck className="h-4 w-4 text-amber-600" /></span>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-sm truncate">{a.title}</p>
+                              <p className="text-[11px] text-gray-400">{a.points} {t('نقطة', 'pts')}{a.due_at ? ` · ${t('ينتهي', 'due')} ${new Date(a.due_at).toLocaleDateString()}` : ''}</p>
+                            </div>
+                            <Badge className={a.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{a.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>
+                            <Button size="sm" variant="ghost" className="gap-1 rounded-full text-xs text-amber-700" aria-expanded={open} aria-controls={`assign-subs-${a.id}`} onClick={() => setViewSubm(open ? null : a.id)}>
+                              <Users className="h-3.5 w-3.5" />{t('التسليمات', 'Submissions')}
+                              <span className="ms-1 rounded-full bg-amber-200/70 px-1.5 text-[10px] font-semibold">{subs.length}</span>
+                            </Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => openAssignEdit(a)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => toggleAssignPublish(a)} aria-label={a.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')} title={a.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')}>
+                              {a.is_published ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeAssign(a.id)} aria-label={t('حذف الواجب', 'Delete assignment')}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
+                          {open && (
+                            <div id={`assign-subs-${a.id}`} className="border-t border-amber-100 bg-white/60 p-3 space-y-3">
+                              {subs.length === 0 ? (
+                                <p className="text-sm text-gray-400 text-center py-3">{t('لا توجد تسليمات بعد', 'No submissions yet')}</p>
+                              ) : subs.map((s: any) => (
+                                <div key={s.id} className="rounded-lg border border-gray-100 bg-white p-3 space-y-2">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <p className="text-sm font-medium">{s.student?.name || '—'} <span className="text-gray-400 font-normal">({s.student?.email || ''})</span></p>
+                                    <Badge className={s.status === 'graded' ? 'bg-green-50 text-green-600 border-0' : s.status === 'late' ? 'bg-amber-50 text-amber-600 border-0' : 'bg-blue-50 text-blue-600 border-0'}>{statusLabel[s.status] || s.status}</Badge>
+                                  </div>
+                                  {s.submission_text && <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">{s.submission_text}</p>}
+                                  {s.file_url && (
+                                    <a href={s.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-teal-700 underline">
+                                      <FileText className="h-3.5 w-3.5" />{s.file_name || t('الملف المرفق', 'Attached file')}
+                                    </a>
+                                  )}
+                                  {s.grade !== null && s.grade !== undefined && (
+                                    <p className="text-xs text-green-700">{t('الدرجة', 'Grade')}: <b>{s.grade}</b> / {a.points}{s.grade_comment ? ` — ${s.grade_comment}` : ''}</p>
+                                  )}
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Input type="number" value={gradeVals[s.id] ?? ''} onChange={(e) => setGradeVals((g) => ({ ...g, [s.id]: e.target.value }))} placeholder={t('الدرجة', 'Grade')} className="h-9 w-24" aria-label={t('الدرجة', 'Grade')} />
+                                    <Input value={gradeCmts[s.id] ?? ''} onChange={(e) => setGradeCmts((g) => ({ ...g, [s.id]: e.target.value }))} placeholder={t('ملاحظة التصحيح (اختياري)', 'Grade comment (optional)')} className="h-9 flex-1 min-w-[160px]" aria-label={t('ملاحظة التصحيح', 'Grade comment')} />
+                                    <Button size="sm" className="gap-1 rounded-full bg-teal-600 hover:bg-teal-700 text-white" disabled={gradingId === s.id} onClick={() => gradeSubmission(a, s)}>
+                                      {gradingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{t('حفظ التصحيح', 'Save grade')}
+                                    </Button>
+                                  </div>
+                                  {Array.isArray(s.comments) && s.comments.length > 0 && (
+                                    <div className="space-y-1 border-t border-gray-100 pt-2">
+                                      {s.comments.map((c: any) => (
+                                        <p key={c.id} className="text-xs text-gray-500"><b>{c.user_name || ''}</b>: {c.comment}</p>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-2">
+                                    <Input value={commentVals[s.id] ?? ''} onChange={(e) => setCommentVals((c) => ({ ...c, [s.id]: e.target.value }))} placeholder={t('أضف تعليقاً...', 'Add a comment...')} className="h-9 flex-1" aria-label={t('تعليق', 'Comment')} />
+                                    <Button size="sm" variant="outline" className="gap-1 rounded-full" disabled={commentingId === s.id} onClick={() => addComment(s)}>
+                                      {commentingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}{t('إرسال', 'Send')}
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <Button size="sm" variant="ghost" className="rounded-full text-xs text-teal-700" onClick={() => openAssignEdit(a)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
-                        <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => { if (window.confirm(t('حذف الواجب؟', 'Delete assignment?'))) { fetch(`${API}/assignments/${a.id}`, { method: 'DELETE', headers: headers() }).then(() => load()); } }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {totalItems === 0 && (
                       <p className="text-sm text-gray-400 text-center py-6">{t('هذه الوحدة فارغة — أضف أول محتوى', 'This unit is empty — add your first content')}</p>
@@ -893,119 +1060,18 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <Button variant="outline" onClick={openSecAdd} className="gap-2 rounded-full w-full border-dashed py-3"><Plus className="h-4 w-4" />{t('إضافة وحدة', 'Add unit')}</Button>
         </div>
       )}
+      </div>
 
-      {/* ─── محرر الاختبار (إعدادات + أسئلة) ───────── */}
-      <Dialog open={!!viewerExam} onOpenChange={(v) => { if (!v) setViewerExam(null); }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><ClipboardList className="h-5 w-5 text-violet-600" />{viewerExam?.title || t('محرر الاختبار', 'Exam editor')}</DialogTitle>
-          </DialogHeader>
-
-          {viewerExam && (
-            <div className="space-y-4">
-              {/* تبويبات داخلية */}
-              <div className="flex gap-1.5 rounded-full bg-slate-100 p-1.5 w-fit">
-                <button onClick={() => setExamInnerTab('questions')} className={`px-5 py-2 rounded-full text-sm font-bold transition ${examInnerTab === 'questions' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>{t('الأسئلة', 'Questions')} ({examQuestions(viewerExam.id).length})</button>
-                <button onClick={() => setExamInnerTab('settings')} className={`px-5 py-2 rounded-full text-sm font-bold transition ${examInnerTab === 'settings' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500'}`}>{t('الإعدادات', 'Settings')}</button>
-              </div>
-
-              {examInnerTab === 'questions' ? (
-                <div className="space-y-3">
-                  {examQuestions(viewerExam.id).length === 0 && (
-                    <p className="text-sm text-gray-400 text-center py-4">{t('لا أسئلة بعد — أضف سؤالاً أو استورد من البنك', 'No questions yet — add one or import from the bank')}</p>
-                  )}
-                  {examQuestions(viewerExam.id).map((qq, qi) => (
-                    <div key={qq.id} className="rounded-xl border border-slate-100 p-4 space-y-2 hover:bg-slate-50/50 transition">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-sm"><span className="text-gray-400 me-1.5">{qi + 1}.</span>{qq.question_text}</p>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => openQEdit(qq)}><Pencil className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeQuestion(qq.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                        <span>{qTypeIcon(qq.question_type)} {qq.question_type === 'multiple_choice' ? t('اختيار متعدد', 'MCQ') : qq.question_type === 'true_false' ? t('صح / خطأ', 'True/False') : qq.question_type}</span>
-                        <span>· {qq.points} {t('نقطة', 'pts')}</span>
-                      </div>
-                      {qq.options?.filter((o: any) => o.is_correct).map((o: any, oi: number) => (
-                        <p key={oi} className="text-xs text-green-600 font-medium">✓ {o.option_text}</p>
-                      ))}
-                    </div>
-                  ))}
-
-                  <div className="flex gap-2 flex-wrap">
-                    <Button className="gap-2 rounded-full bg-violet-600 hover:bg-violet-700 text-white" onClick={() => { setExamFilter(viewerExam.id); openQAdd(viewerExam.section_id || ''); }}>
-                      <Plus className="h-4 w-4" />{t('إضافة سؤال', 'Add question')}
-                    </Button>
-                    <Button variant="outline" className="gap-2 rounded-full" onClick={() => openBank(viewerExam.id)}>
-                      <HelpCircle className="h-4 w-4" />{t('استيراد من بنك الأسئلة', 'Import from bank')}
-                    </Button>
-                    <Button variant="outline" className="gap-2 rounded-full" onClick={() => toggleExamPublish(viewerExam)}>
-                      {viewerExam.is_published ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{viewerExam.is_published ? t('إلغاء النشر', 'Unpublish') : t('نشر', 'Publish')}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="space-y-2"><Label>{t('العنوان', 'Title')}</Label><Input value={viewerExam.title} onChange={(e) => setViewerExam({ ...viewerExam, title: e.target.value })} className="h-11" /></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label>{t('المدة (دقائق)', 'Duration (min)')}</Label><Input type="number" value={viewerExam.duration_minutes} onChange={(e) => setViewerExam({ ...viewerExam, duration_minutes: e.target.value })} className="h-11" /></div>
-                    <div className="space-y-2"><Label>{t('درجة النجاح %', 'Pass mark %')}</Label><Input type="number" value={viewerExam.pass_mark_percent} onChange={(e) => setViewerExam({ ...viewerExam, pass_mark_percent: e.target.value })} className="h-11" /></div>
-                    <div className="space-y-2"><Label>{t('عدد المحاولات', 'Max attempts')}</Label><Input type="number" value={viewerExam.max_attempts} onChange={(e) => setViewerExam({ ...viewerExam, max_attempts: e.target.value })} className="h-11" /></div>
-                    <div className="space-y-2"><Label>{t('الوصف', 'Description')}</Label><Textarea value={viewerExam.description || ''} onChange={(e) => setViewerExam({ ...viewerExam, description: e.target.value })} className="min-h-[40px]" /></div>
-                  </div>
-                  <div className="flex items-center gap-2 p-3 rounded-xl border">
-                    <Switch checked={viewerExam.shuffle_questions} onCheckedChange={(v) => setViewerExam({ ...viewerExam, shuffle_questions: v })} label={t('خلط الأسئلة', 'Shuffle questions')} />
-                  </div>
-                  <Button className="gap-2 rounded-full bg-violet-600 hover:bg-violet-700 text-white" onClick={async () => {
-                    await fetch(`${API}/exams/${viewerExam.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ title: viewerExam.title, description: viewerExam.description, duration_minutes: Number(viewerExam.duration_minutes), pass_mark_percent: Number(viewerExam.pass_mark_percent), max_attempts: Number(viewerExam.max_attempts), shuffle_questions: viewerExam.shuffle_questions, is_published: viewerExam.is_published }) });
-                    toast.success(t('تم الحفظ', 'Saved')); load();
-                  }}>
-                    <CheckCircle2 className="h-4 w-4" />{t('حفظ الإعدادات', 'Save settings')}
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ─── بنك الأسئلة ─────────────────────────── */}
-      <Dialog open={bankOpen} onOpenChange={setBankOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><HelpCircle className="h-5 w-5 text-teal-600" />{t('بنك الأسئلة', 'Question bank')}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} className="ps-9 h-10" placeholder={t('بحث في الأسئلة...', 'Search questions...')} />
-              </div>
-              <Button className="gap-2 rounded-full" onClick={() => { setExamFilter(''); openQAdd(); }}><Plus className="h-4 w-4" />{t('سؤال جديد', 'New question')}</Button>
-            </div>
-            {questions.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">{t('لا أسئلة في البنك بعد', 'No questions in the bank yet')}</p>
-            ) : (
-              <div className="space-y-2">
-                {questions.filter((qq) => !searchQ || qq.question_text.toLowerCase().includes(searchQ.toLowerCase())).map((qq) => {
-                  const used = examQuestions(bankForExam).some((x: any) => x.id === qq.id);
-                  return (
-                    <div key={qq.id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                      <span>{qTypeIcon(qq.question_type)}</span>
-                      <p className="flex-1 text-sm font-medium truncate">{qq.question_text}</p>
-                      {bankForExam ? (
-                        used ? <Badge className="bg-green-50 text-green-600 border-0">{t('مضاف', 'Added')}</Badge> :
-                        <Button size="sm" className="gap-1 rounded-full bg-teal-600 hover:bg-teal-700 text-white" onClick={() => addQuestionToExam(qq)}><Plus className="h-3.5 w-3.5" />{t('إضافة للاختبار', 'Add to exam')}</Button>
-                      ) : (
-                        <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => openQEdit(qq)}><Pencil className="h-3.5 w-3.5" /></Button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* ─── محرر الاختبار الموحّد — داخل مساحة محتوى الكورس (بلا تغطية الشاشة) ───────── */}
+      {viewerExam && (
+        <ExamEditor
+          exam={viewerExam}
+          sections={sections.map((s) => ({ id: s.id, title: s.title }))}
+          questions={questions}
+          onClose={() => setViewerExam(null)}
+          onChanged={load}
+        />
+      )}
 
       {/* ─── حوار الوحدة ─────────────────────────── */}
       <Dialog open={secOpen} onOpenChange={setSecOpen}>
@@ -1017,7 +1083,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
       {/* ─── حوار الدرس ─────────────────────────── */}
       <Dialog open={lesOpen} onOpenChange={(v) => { setLesOpen(v); if (!v) { setLesTarget(null); setLesSection(''); setLes({ ...EMPTY_LESSON }); setLesContents([]); resetContentForm(); } }} className="max-w-2xl">
-        <DialogContent><DialogHeader><DialogTitle>{lesTarget ? t('تعديل الدرس', 'Edit lesson') : t('درس جديد', 'New lesson')}</DialogTitle></DialogHeader>
+        <DialogContent><DialogHeader><div className="flex items-center justify-between gap-3"><DialogTitle>{lesTarget ? t('تعديل الدرس', 'Edit lesson') : t('درس جديد', 'New lesson')}</DialogTitle>{lesTarget && <a href={buildLearnUrl(id, { preview: true, lessonId: lesTarget.id })} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:underline shrink-0"><Eye className="h-3.5 w-3.5" />{t('معاينة كطالب', 'Preview as student')}</a>}</div></DialogHeader>
           <div className="space-y-4">
             {!lesTarget && (
               <div className="space-y-2">
@@ -1031,7 +1097,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     className="rounded-xl border-2 border-gray-200 px-3 py-3 text-sm font-semibold text-gray-500 transition hover:border-violet-300">
                     <ClipboardList className="h-4 w-4 mx-auto mb-1" />{t('اختبار', 'Exam')}
                   </button>
-                  <button type="button" onClick={() => { setLesOpen(false); setLes({ ...EMPTY_LESSON }); setLesSection(lesSection); createLiveForLesson(); }}
+                  <button type="button" onClick={() => { openLiveForLesson(); setLesOpen(false); }}
                     className="rounded-xl border-2 border-gray-200 px-3 py-3 text-sm font-semibold text-gray-500 transition hover:border-teal-300">
                     <Radio className="h-4 w-4 mx-auto mb-1" />{t('بث مباشر', 'Live')}
                   </button>
@@ -1065,13 +1131,39 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     {(c.content_type === 'video' || c.content_type === 'text') && (
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-teal-700" onClick={() => openContentEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
                     )}
+                    {c.content_type === 'video' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1.5 rounded-full text-xs"
+                        onClick={() => videoInputRef.current?.click()}
+                        disabled={videoUploading}
+                        aria-label={t('استبدال الفيديو', 'Replace video')}
+                      >
+                        {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}
+                        {t('استبدال الفيديو', 'Replace video')}
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => removeContent(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                   </div>
                 ))}
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => videoInputRef.current?.click()} disabled={videoUploading}>
-                    {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}{t('رفع فيديو', 'Upload video')}
-                  </Button>
+                  {!hasVideoContent && (
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => videoInputRef.current?.click()} disabled={videoUploading}>
+                      {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}{t('رفع فيديو جديد', 'Upload a new video')}
+                    </Button>
+                  )}
+                  {!hasVideoContent && (
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => setVideoLibraryOpen(true)} disabled={videoUploading}>
+                      <Film className="h-3.5 w-3.5" />{t('اختيار فيديو موجود', 'Choose an existing video')}
+                    </Button>
+                  )}
+                  {hasVideoContent && (
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => setVideoLibraryOpen(true)}>
+                      <Film className="h-3.5 w-3.5" />{t('استبدال بفيديو موجود', 'Replace with an existing video')}
+                    </Button>
+                  )}
                   <input ref={videoInputRef} type="file" className="hidden" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" onChange={onVideoSelected} />
                   {videoUploading && (
                     <div className="flex w-full items-center gap-2">
@@ -1091,6 +1183,38 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
             ) : (
               <p className="text-xs text-gray-400 bg-slate-50 rounded-xl p-3">{t('احفظ الدرس أولاً ثم افتحه لإضافة المحتوى (فيديو، PDF، صوت، نص، ملفات)', 'Save the lesson first, then open it to add content (video, PDF, audio, text, files)')}</p>
             )}
+
+            {/* ربط تمرين بدرس الفيديو — نفس محرك الاختبارات بلا درجات مكررة */}
+            {lesTarget && isVideoLesson(lesTarget) && (
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="h-4 w-4 text-violet-600" />
+                  <p className="text-sm font-bold">{t('تمرين مرتبط بالدرس', 'Exercise attached to lesson')}</p>
+                </div>
+                <p className="text-[11px] text-gray-400">{t('اربط اختباراً ليتدرّب الطالب بعد مشاهدة الفيديو. يُستخدم نفس نظام المحاولات والتصحيح — بلا نظام درجات مكرر.', 'Attach an exam so the student practises after the video. The same attempt & grading engine is used — no duplicated scores.')}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t('الاختبار', 'Exam')}</Label>
+                    <select value={les.exercise_exam_id || ''} onChange={(e) => setLes({ ...les, exercise_exam_id: e.target.value })} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                      <option value="">{t('بدون تمرين', 'No exercise')}</option>
+                      {exams.map((e: any) => <option key={e.id} value={e.id}>{e.title}{e.is_published ? '' : ` (${t('مسودة', 'draft')})`}</option>)}
+                    </select>
+                  </div>
+                  {les.exercise_exam_id && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{t('الموضع', 'Position')}</Label>
+                      <select value={les.exercise_position} onChange={(e) => setLes({ ...les, exercise_position: e.target.value })} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                        <option value="after_video">{t('أسفل الفيديو مباشرة', 'Right below the video')}</option>
+                        <option value="after_content">{t('بعد كل محتوى الدرس', 'After all lesson content')}</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+                {les.exercise_exam_id && !exams.find((e: any) => e.id === les.exercise_exam_id)?.is_published && (
+                  <p className="text-[11px] text-amber-600">{t('الاختبار مسودة — لن يظهر للطالب حتى تنشره.', 'The exam is a draft — students will not see it until you publish it.')}</p>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setLesOpen(false); setLesTarget(null); setLesSection(''); setLes({ ...EMPTY_LESSON }); setLesContents([]); resetContentForm(); }}>{t('إلغاء', 'Cancel')}</Button>
@@ -1099,19 +1223,63 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         </DialogContent>
       </Dialog>
 
-      {/* ─── حوار السؤال ─────────────────────────── */}
-      <Dialog open={qOpen} onOpenChange={(v) => { setQOpen(v); if (!v) { setQTarget(null); setQ({ ...EMPTY_QUESTION, exam_id: examFilter }); } }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{qTarget ? t('تعديل السؤال', 'Edit question') : t('سؤال جديد', 'New question')}</DialogTitle></DialogHeader>
-          <QuestionBuilder
-            value={q}
-            onChange={setQ}
-            sections={sections.map((s) => ({ id: s.id, title: s.title }))}
-            exams={exams.map((e) => ({ id: e.id, title: e.title }))}
-          />
+      {/* ─── حوار البث المباشر (Google Meet) ─────────── */}
+      <Dialog open={liveOpen} onOpenChange={(v) => { setLiveOpen(v); if (!v) setLiveError(''); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Radio className="h-5 w-5 text-rose-600" />{t('حصة بث مباشر جديدة', 'New live session')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>{t('عنوان الحصة', 'Session title')}</Label>
+              <Input value={liveTitle} onChange={(e) => setLiveTitle(e.target.value)} className="h-11" placeholder={t('مثال: مراجعة الوحدة الأولى', 'e.g. Unit 1 review')} />
+            </div>
+
+            {/* خطوات إنشاء الاجتماع + زر يفتح Google Meet */}
+            <div className="rounded-2xl border border-teal-100 bg-teal-50/60 p-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white border border-teal-100"><Video className="h-4 w-4 text-teal-600" /></span>
+                <div className="text-sm">
+                  <p className="font-semibold text-teal-900">{t('كيف أحصل على رابط Google Meet؟', 'How do I get a Google Meet link?')}</p>
+                  <ol className="mt-1.5 space-y-1 text-[13px] text-teal-900/70 list-decimal ps-4">
+                    <li>{t('اضغط الزر أدناه لفتح Google Meet.', 'Click the button below to open Google Meet.')}</li>
+                    <li>{t('أنشئ اجتماعاً جديداً (New meeting).', 'Create a new meeting.')}</li>
+                    <li>{t('انسخ الرابط (Copy link) وألصقه في الحقل.', 'Copy the link and paste it in the field.')}</li>
+                  </ol>
+                </div>
+              </div>
+              <a href="https://meet.google.com/new" target="_blank" rel="noopener noreferrer"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 transition-colors">
+                <ExternalLink className="h-4 w-4" />{t('افتح Google Meet وأنشئ اجتماعاً', 'Open Google Meet & create a meeting')}
+              </a>
+            </div>
+
+            {/* حقل الرابط */}
+            <div className="space-y-2">
+              <Label>{t('رابط الاجتماع', 'Meeting link')}</Label>
+              <div className={`flex items-center rounded-xl border overflow-hidden bg-white ${liveError ? 'border-red-300' : liveMeetUrl && MEET_RE.test(liveMeetUrl.trim()) ? 'border-emerald-400' : 'border-slate-200'}`}>
+                <span className="px-3 h-11 flex items-center text-gray-400 border-e border-slate-200 bg-slate-50"><Link2 className="h-4 w-4" /></span>
+                <Input value={liveMeetUrl} onChange={(e) => { setLiveMeetUrl(e.target.value); setLiveError(''); }} dir="ltr" placeholder="https://meet.google.com/abc-defg-hij" className="h-11 border-0 rounded-none focus-visible:ring-0" />
+                {liveMeetUrl && (
+                  <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(liveMeetUrl); toast.success(t('تم نسخ الرابط', 'Link copied')); } catch { /* ignore */ } }} className="px-3 h-11 text-gray-400 hover:text-teal-600" aria-label={t('نسخ', 'Copy')}><Copy className="h-4 w-4" /></button>
+                )}
+              </div>
+              {liveError ? (
+                <p className="text-xs text-red-500 inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5" />{liveError}</p>
+              ) : liveMeetUrl && MEET_RE.test(liveMeetUrl.trim()) ? (
+                <p className="text-xs text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />{t('رابط صحيح', 'Valid link')}</p>
+              ) : (
+                <p className="text-xs text-gray-400 inline-flex items-center gap-1"><Info className="h-3.5 w-3.5" />{t('يجب أن يبدأ الرابط بـ https://meet.google.com/', 'The link must start with https://meet.google.com/')}</p>
+              )}
+            </div>
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setQOpen(false); setQTarget(null); setQ({ ...EMPTY_QUESTION, exam_id: examFilter }); }}>{t('إلغاء', 'Cancel')}</Button>
-            <Button onClick={saveQuestion}>{t('حفظ السؤال', 'Save question')}</Button>
+            <Button variant="outline" onClick={() => setLiveOpen(false)}>{t('إلغاء', 'Cancel')}</Button>
+            <Button onClick={saveLiveSession} disabled={liveBusy || !MEET_RE.test(liveMeetUrl.trim())} className="gap-2 bg-rose-600 hover:bg-rose-700 text-white">
+              {liveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}{t('إنشاء الحصة', 'Create session')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1132,13 +1300,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); }}>{t('إلغاء', 'Cancel')}</Button>
-            <Button onClick={async () => {
-              if (!assign.title.trim()) { toast.error(t('أدخل العنوان', 'Enter title')); return; }
-              const body = { ...assign, section_id: assignTarget ? assignTarget.section_id : lesSection || undefined };
-              const res = await fetch(`${API}/assignments${assignTarget ? `/${assignTarget.id}` : ''}`, { method: assignTarget ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-              if (!res.ok) { toast.error('Failed'); return; }
-              toast.success(t('تم الحفظ', 'Saved')); setAssignOpen(false); setAssignTarget(null); setAssign({ ...EMPTY_ASSIGN }); load();
-            }}>{t('حفظ', 'Save')}</Button>
+            {/* Delegates to saveAssign() so the request always carries course_id —
+                the previous inline copy omitted it and POST /assignments 422'd. */}
+            <Button onClick={saveAssign} disabled={assignUploading}>{t('حفظ', 'Save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1178,6 +1342,33 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
       )}
+
+      <VideoUploadQueue
+        open={videoQueueOpen}
+        onOpenChange={setVideoQueueOpen}
+        sections={sections.map((s: any) => ({ id: s.id, title: s.title }))}
+        lessons={sections.flatMap((s: any) => (s.lessons || []).map((l: any) => ({ id: l.id, title: l.title, section_id: s.id })))}
+        onUploaded={load}
+      />
+
+      <VideoLibraryPicker
+        open={videoLibraryOpen}
+        onOpenChange={setVideoLibraryOpen}
+        lessonId={lesTarget?.id || null}
+        onAttached={() => { if (lesTarget) loadLesContents(lesTarget.id); load(); }}
+      />
+
+      <CourseGroupsManager open={groupsOpen} onOpenChange={setGroupsOpen} courseId={id} />
+
+      {/* ─── حوار «إنشاء نسخة» (كورس/درس/اختبار) ─── */}
+      <DuplicateDialog
+        open={!!dup}
+        onOpenChange={(v) => { if (!v) setDup(null); }}
+        kind={dup?.kind || 'course'}
+        id={dup?.id || null}
+        originalTitle={dup?.title || ''}
+        onDuplicated={load}
+      />
     </div>
   );
 }

@@ -13,10 +13,10 @@
 #     The public TLS terminator (Caddy) is the only process bound to 80/443.
 #   • PostgreSQL and Redis publish no ports and live on an INTERNAL network
 #     (`fahimni-db`, no egress) — never on the shared proxy network.
-#   • The shared proxy network (`FAHIMNI_PROXY_NETWORK`, default
-#     `fahimni-proxy`) is external and carries ONLY nginx: it is the single
-#     bridge between this stack and the LooksLoop Caddy container. No database
-#     or Redis of either project is ever attached to it.
+#   • The proxy network (`FAHIMNI_PROXY_NETWORK`, default `fahimni-proxy`) is
+#     external and carries ONLY nginx: it is the single bridge between this
+#     stack and the standalone Fahimni Caddy edge (its own compose project,
+#     `fahimni-edge`). No database or Redis is ever attached to it.
 #
 # Reproducibility / runtime contract:
 #   • Third-party images are pinned to exact digests; app images are built
@@ -27,8 +27,9 @@
 #     at runtime (env_file). Nothing secret is baked into an image.
 #   • Schema changes happen in `migrate` only, never destructively.
 #
-# TLS: terminate at Caddy (deploy/caddy/fahimni.caddy). nginx also supports
-# direct TLS via docker/nginx/optional/https.conf if needed.
+# TLS: terminate at the standalone Fahimni Caddy edge
+# (deploy/caddy/fahimni-standalone.caddy). nginx also supports direct TLS via
+# docker/nginx/optional/https.conf if needed.
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -189,6 +190,9 @@ services:
         # cookie. nginx routes /api/ to PHP on the same origin.
         NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-/api/v1}"
         NEXT_PUBLIC_PLATFORM_DOMAIN: "${NEXT_PUBLIC_PLATFORM_DOMAIN:-fahimni.me}"
+        # FCM Web Push certificate public key (browser-visible). Leave empty to
+        # disable student web-push until the Firebase key is configured.
+        NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY: "${NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY:-}"
     image: fahimni-frontend:${IMAGE_TAG:-latest}
     security_opt:
       - no-new-privileges:true
@@ -236,9 +240,9 @@ services:
       - frontend
     networks:
       fahimni-net:
-      # Shared reverse-proxy network: the ONLY service attached to it, and the
-      # only bridge to the existing LooksLoop Caddy container. The alias must be
-      # unique per stack (production/staging must not collide on one name).
+      # Proxy network: the ONLY service attached to it, and the only bridge to
+      # the standalone Fahimni Caddy edge. The alias must be unique per stack
+      # (production/staging must not collide on one name).
       fahimni-proxy:
         aliases:
           - "${PROXY_ALIAS:?PROXY_ALIAS must be set in .env (unique per stack, e.g. fahimni-prod)}"
@@ -388,10 +392,10 @@ networks:
     name: ${COMPOSE_PROJECT_NAME:-fahimni}_db
     driver: bridge
     internal: true
-  # Shared reverse-proxy network with the existing LooksLoop Caddy container.
-  # Created once on the host by deploy/scripts/caddy-docker-integrate.sh
-  # (`docker network create $FAHIMNI_PROXY_NETWORK`); only nginx attaches to it.
-  # `external: true` means compose never creates or deletes it.
+  # Proxy network shared with the standalone Fahimni Caddy edge
+  # (deploy/caddy/docker-compose.caddy.yml, project `fahimni-edge`). Created
+  # once on the host (fresh-install.sh / `docker network create`); only nginx
+  # attaches to it. `external: true` means compose never creates or deletes it.
   fahimni-proxy:
     name: ${FAHIMNI_PROXY_NETWORK:-fahimni-proxy}
     external: true

@@ -24,6 +24,7 @@ class AssignmentResource extends JsonResource
             'tenant_id' => $this->tenant_id,
             'course_id' => $this->course_id,
             'section_id' => $this->section_id,
+            'lesson_id' => $this->lesson_id,
             'title' => $this->title,
             'description' => $this->description,
             'points' => $this->points,

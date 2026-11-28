@@ -8,10 +8,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ImagePlus, X, CheckCircle2, Plus, ArrowUp, ArrowDown, FunctionSquare, Atom, Trash2, Loader2 } from 'lucide-react';
 import { Latex } from '@/components/exam/latex';
+import { InteractiveHtmlEditor, type InteractiveHtmlDraft } from '@/components/exam/interactive-html-editor';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-export type QuestionDraft = {
+export type QuestionDraft = InteractiveHtmlDraft & {
   question_text: string;
   question_type: string;
   points: string;
@@ -23,6 +24,8 @@ export type QuestionDraft = {
   items: string[];
   answers: string[];
   keywords: string;
+  /** One or more skills (comma separated) the teacher links to this question. */
+  skills: string;
 };
 
 const QUESTION_TYPES = [
@@ -34,16 +37,20 @@ const QUESTION_TYPES = [
   { id: 'fill_blank', ar: 'املأ الفراغ', en: 'Fill the blank', icon: '✍️' },
   { id: 'writing', ar: 'إجابة كتابية', en: 'Written answer', icon: '📝' },
   { id: 'file_upload', ar: 'رفع ملف', en: 'File upload', icon: '📎' },
+  { id: 'interactive_html', ar: 'سؤال تفاعلي', en: 'Interactive (HTML)', icon: '🧪' },
+  { id: 'custom_html', ar: 'سؤال HTML', en: 'HTML question', icon: '🌐' },
 ];
 
 const MATH_SYMBOLS = ['α', 'β', 'γ', 'θ', 'λ', 'π', '√', '∑', '∫', '∞', '≈', '≠', '≤', '≥', '×', '÷', '±', '→', '←', '⇒', '⇔', 'Δ', '∂', '°', '′', '²', '³'];
 const CHEM_SYMBOLS = ['H₂O', 'CO₂', 'NaCl', 'O₂', 'N₂', 'H₂', '→', '⇌', '↑', '↓', 'Δ', '°C', '(aq)', '(s)', '(l)', '(g)', '⁻', '⁺', '₂', '₃', '₄', '+', 'e⁻'];
 
-export function QuestionBuilder({ value, onChange, sections, exams }: {
+export function QuestionBuilder({ value, onChange, sections, exams, lockExam = false }: {
   value: QuestionDraft;
   onChange: (d: QuestionDraft) => void;
   sections: { id: string; title: string }[];
   exams: { id: string; title: string }[];
+  /** When true the exam is fixed by the surrounding editor (no re-binding). */
+  lockExam?: boolean;
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -219,8 +226,8 @@ export function QuestionBuilder({ value, onChange, sections, exams }: {
           {value.items.map((it, i) => (
             <div key={i} className="flex items-center gap-2">
               <Input value={it} onChange={(e) => set({ items: value.items.map((x, j) => j === i ? e.target.value : x) })} className="h-10" placeholder={`${t('عنصر', 'Item')} ${i + 1}`} />
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i > 0) { [a[i], a[i - 1]] = [a[i - 1], a[i]]; set({ items: a }); } }} disabled={i === 0}><ArrowUp className="h-3.5 w-3.5" /></Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; set({ items: a }); } }} disabled={i === value.items.length - 1}><ArrowDown className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i > 0) { [a[i], a[i - 1]] = [a[i - 1], a[i]]; set({ items: a }); } }} disabled={i === 0} aria-label={t('تحريك العنصر لأعلى', 'Move item up')} title={t('تحريك العنصر لأعلى', 'Move item up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const a = [...value.items]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; set({ items: a }); } }} disabled={i === value.items.length - 1} aria-label={t('تحريك العنصر لأسفل', 'Move item down')} title={t('تحريك العنصر لأسفل', 'Move item down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
             </div>
           ))}
         </div>
@@ -253,27 +260,52 @@ export function QuestionBuilder({ value, onChange, sections, exams }: {
         </div>
       )}
 
+      {(value.question_type === 'interactive_html' || value.question_type === 'custom_html') && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-400">
+            {value.question_type === 'custom_html'
+              ? t('سؤال HTML: الصق مستند HTML كاملاً مع CSS وJavaScript، مع معاينة حية وحفظ وتصحيح.', 'HTML question: paste a full HTML document with CSS and JavaScript, with live preview, saving and grading.')
+              : t('سؤال تفاعلي: ابنِ عنصراً تفاعلياً داخل إطار معزول (كما كان).', 'Interactive question: build an interactive widget inside an isolated frame (unchanged).')}
+          </p>
+          <InteractiveHtmlEditor value={value} onChange={set} />
+        </div>
+      )}
+
       {/* Attachments */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className={lockExam ? 'space-y-2' : 'grid grid-cols-2 gap-4'}>
         <div className="space-y-2">
           <Label>{t('ربط بقسم', 'Attach to section')}</Label>
-          <select value={value.section_id} onChange={(e) => set({ section_id: e.target.value })} className="h-10 border border-gray-200 rounded-lg px-3 w-full text-sm bg-white">
+          <select value={value.section_id} onChange={(e) => set({ section_id: e.target.value })} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm">
             <option value="">{t('بدون قسم', 'No section')}</option>
             {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
           </select>
         </div>
-        <div className="space-y-2">
-          <Label>{t('ربط باختبار', 'Attach to exam')}</Label>
-          <select value={value.exam_id} onChange={(e) => set({ exam_id: e.target.value })} className="h-10 border border-gray-200 rounded-lg px-3 w-full text-sm bg-white">
-            <option value="">{t('بدون ربط', 'No exam')}</option>
-            {exams.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
-          </select>
-        </div>
+        {lockExam ? (
+          <p className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+            <CheckCircle2 className="h-3.5 w-3.5 text-violet-500" />
+            {t('سيُضاف هذا السؤال إلى الاختبار الحالي مباشرة', 'This question is added to the current exam')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <Label>{t('ربط باختبار', 'Attach to exam')}</Label>
+            <select value={value.exam_id} onChange={(e) => set({ exam_id: e.target.value })} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm">
+              <option value="">{t('بدون ربط', 'No exam')}</option>
+              {exams.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
-      <div className="space-y-2 max-w-[140px]">
-        <Label>{t('النقاط', 'Points')}</Label>
-        <Input type="number" value={value.points} onChange={(e) => set({ points: e.target.value })} className="h-10" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-2 max-w-[160px]">
+          <Label>{t('النقاط', 'Points')}</Label>
+          <Input type="number" value={value.points} onChange={(e) => set({ points: e.target.value })} className="h-10" />
+        </div>
+        <div className="space-y-2">
+          <Label>{t('المهارات (اختياري، مفصولة بفاصلة)', 'Skills (optional, comma separated)')}</Label>
+          <Input value={value.skills} onChange={(e) => set({ skills: e.target.value })} className="h-10" placeholder={t('مثال: الكثافة، قراءة الرسم البياني', 'e.g. Density, Graph reading')} />
+          <p className="text-[11px] text-gray-400">{t('تُبنى تقارير أداء الطلاب لكل مهارة من نتائج الأسئلة المرتبطة بها فعلياً.', 'Per-student skill reports are built from the real results of the linked questions.')}</p>
+        </div>
       </div>
     </div>
   );

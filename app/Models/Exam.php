@@ -7,6 +7,7 @@ use App\Traits\HasUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -14,10 +15,28 @@ class Exam extends Model
 {
     use BelongsToTenant, HasFactory, HasUuid, SoftDeletes;
 
+    /** Formal graded examination (default). */
+    public const MODE_GRADED = 'graded';
+
+    /** Ungraded interactive skill practice. */
+    public const MODE_PRACTICE = 'practice';
+
+    /**
+     * Anti-cheat threshold for a formal graded exam: reaching this many
+     * server-recorded violations auto-submits the attempt. Single source of
+     * truth — the client is told this number and never invents its own.
+     */
+    public const ANTI_CHEAT_VIOLATION_LIMIT = 3;
+
+    public function isPractice(): bool
+    {
+        return $this->assessment_mode === self::MODE_PRACTICE;
+    }
+
     protected $fillable = [
         'tenant_id', 'course_id', 'section_id', 'title', 'description',
         'duration_minutes', 'pass_mark_percent', 'max_attempts',
-        'random_questions_count', 'anti_cheat_enabled',
+        'random_questions_count', 'anti_cheat_enabled', 'assessment_mode',
         'shuffle_questions', 'shuffle_options',
         'show_result_immediately', 'show_correct_answers',
         'is_published', 'starts_at', 'ends_at', 'sort_order', 'metadata',
@@ -62,11 +81,36 @@ class Exam extends Model
     public function questions()
     {
         return $this->belongsToMany(Question::class, 'exam_questions')
-            ->withPivot('sort_order', 'points_override');
+            ->withPivot('sort_order', 'points_override')
+            // The teacher-defined order lives on the pivot; keep it stable both
+            // for the builder and for a student's attempt payload.
+            ->orderBy('exam_questions.sort_order');
     }
 
     public function attempts(): HasMany
     {
         return $this->hasMany(ExamAttempt::class);
+    }
+
+    /**
+     * Groups this exam is restricted to. Empty = visible to everyone enrolled
+     * in the course.
+     */
+    public function groups(): BelongsToMany
+    {
+        return $this->belongsToMany(CourseGroup::class, 'course_group_exam', 'exam_id', 'course_group_id')
+            ->withTimestamps();
+    }
+
+    /**
+     * Visible to a student: either unrestricted (no group rows) or the student
+     * is a member of at least one of the restricting groups.
+     */
+    public function scopeVisibleToStudent($query, string $userId)
+    {
+        return $query->where(function ($q) use ($userId) {
+            $q->whereDoesntHave('groups')
+                ->orWhereHas('groups.members', fn ($m) => $m->where('users.id', $userId));
+        });
     }
 }

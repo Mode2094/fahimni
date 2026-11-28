@@ -18,12 +18,18 @@ Usage: restore-drill.sh --env production|staging [options]
   --env-file PATH   secret env file (default: <release>/.env)
   --file PATH       local backup file (.dump, .age, .enc)
   --from-remote     download the newest db-* archive from rclone
+  --allow-unencrypted  accept a plain (unencrypted) .dump for an explicit
+                       --file ONLY. It is a per-invocation acknowledgement and
+                       is never read from --env-file, so a value there cannot
+                       veto it. Refused for --from-remote.
+  --max-age-hours N fail if the chosen backup is older than N hours (0 = off)
   --keep            keep the disposable container for inspection
   --yes             skip the confirmation prompt
 
 Decryption uses BACKUP_AGE_IDENTITY (for .age) or
-BACKUP_ENCRYPTION_PASSPHRASE_FILE (for .enc). Plain .dump files require
-BACKUP_ALLOW_UNENCRYPTED=1.
+BACKUP_ENCRYPTION_PASSPHRASE_FILE (for .enc). A plain .dump is only accepted
+with the explicit --allow-unencrypted flag (or BACKUP_ALLOW_UNENCRYPTED=1 in
+the environment).
 EOF
 }
 
@@ -31,24 +37,36 @@ env_name=""
 env_file=""
 file=""
 from_remote=0
+max_age_hours=""
 keep=0
 yes=0
+# A per-invocation acknowledgement for a plain .dump. Deliberately its own
+# variable: it is set only by the CLI flag and is NOT re-read from the env
+# file, so `BACKUP_ALLOW_UNENCRYPTED=0` in production.env can never veto it.
+allow_unencrypted=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --env)         env_name="${2:-}"; shift 2 ;;
-    --env-file)    env_file="${2:-}"; shift 2 ;;
-    --file)        file="${2:-}"; shift 2 ;;
-    --from-remote) from_remote=1; shift ;;
-    --keep)        keep=1; shift ;;
-    --yes)         yes=1; shift ;;
-    -h|--help)     usage; exit 0 ;;
+    --env)           env_name="${2:-}"; shift 2 ;;
+    --env-file)      env_file="${2:-}"; shift 2 ;;
+    --file)          file="${2:-}"; shift 2 ;;
+    --from-remote)   from_remote=1; shift ;;
+    --allow-unencrypted) allow_unencrypted=1; shift ;;
+    --max-age-hours) max_age_hours="${2:-}"; shift 2 ;;
+    --keep)          keep=1; shift ;;
+    --yes)           yes=1; shift ;;
+    -h|--help)       usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
 
 [[ -n "$env_name" ]] || { usage; exit 1; }
 validate_env_name "$env_name"
+# Scope the acknowledgement to an explicit local file: it must never be used to
+# bless an off-site (remote) archive.
+if [[ "$allow_unencrypted" -eq 1 && -z "$file" ]]; then
+  die "--allow-unencrypted is only valid with --file (never for the off-site remote)"
+fi
 require_cmd docker
 
 env_file="${env_file:-$REPO_DIR/.env}"
@@ -94,6 +112,12 @@ else
   die "pass --file PATH or --from-remote"
 fi
 
+# Fail closed before decrypting/restoring when the chosen archive is not recent.
+# This is the evidence gate behind FAHIMNI_DB_BACKUP_VERIFIED=1: a drill that
+# restores a stale archive proves the *procedure*, not that a fresh backup of
+# today's production exists.
+assert_backup_fresh "$file" "${max_age_hours:-}"
+
 dump="$tmp/restore.dump"
 case "$file" in
   *.age)
@@ -111,8 +135,15 @@ case "$file" in
       || die "OpenSSL decryption failed"
     ;;
   *.dump)
-    [[ "${BACKUP_ALLOW_UNENCRYPTED:-0}" == "1" ]] \
-      || die "refusing a plain .dump without BACKUP_ALLOW_UNENCRYPTED=1"
+    # Accept a plain archive only when THIS invocation explicitly asked for it
+    # (--allow-unencrypted) or the environment was explicitly set to 1. The
+    # CLI flag is checked first and survived load_env_file, so a 0 in the env
+    # file cannot cancel it.
+    if [[ "$allow_unencrypted" -eq 1 || "${BACKUP_ALLOW_UNENCRYPTED:-0}" == "1" ]]; then
+      :
+    else
+      die "refusing a plain .dump without --allow-unencrypted (or BACKUP_ALLOW_UNENCRYPTED=1)"
+    fi
     cp -p "$file" "$dump"
     ;;
   *)
@@ -143,15 +174,37 @@ docker run -d --rm --name "$container" --network none \
   -e POSTGRES_DB=restore_drill \
   "$image" >/dev/null
 
+# Wait for the DISPOSABLE server, not the temporary one the entrypoint starts
+# during initdb. The official image brings up a TEMP server (which also logs
+# "database system is ready to accept connections"), runs init, stops it, and
+# only then starts the real server. `pg_isready` can therefore succeed during
+# that temp window, and pg_restore then dies with
+#   FATAL:  the database system is shutting down
+# so `pg_isready` ALONE is not a readiness signal. Gate on evidence that init
+# has finished — the entrypoint's "PostgreSQL init process complete" marker, or
+# a SECOND "ready to accept connections" line — AND require restore_drill to
+# answer a real query before we touch it.
 ready=0
-for _ in $(seq 1 60); do
-  if docker exec "$container" pg_isready -U postgres -d restore_drill >/dev/null 2>&1; then
+for _ in $(seq 1 120); do
+  if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
+    docker logs --tail 50 "$container" >&2 2>/dev/null || true
+    die "the disposable PostgreSQL container exited before it finished initialising"
+  fi
+  logs="$(docker logs "$container" 2>/dev/null || true)"
+  starts="$(printf '%s\n' "$logs" | grep -c 'database system is ready to accept connections' || true)"
+  init_done=0
+  case "$logs" in *'PostgreSQL init process complete'*) init_done=1 ;; esac
+  if [ "${starts:-0}" -ge 2 ]; then init_done=1; fi
+  if [ "$init_done" -eq 1 ] \
+     && docker exec "$container" pg_isready -U postgres -d restore_drill >/dev/null 2>&1 \
+     && docker exec "$container" psql -U postgres -d restore_drill -tAc 'SELECT 1' >/dev/null 2>&1; then
     ready=1
     break
   fi
   sleep 1
 done
-[[ "$ready" -eq 1 ]] || die "disposable PostgreSQL did not become ready"
+[[ "$ready" -eq 1 ]] || die "the disposable PostgreSQL did not finish initialising and become ready"
+log "disposable PostgreSQL initialised; restore_drill is accepting connections"
 
 log "restoring archive"
 docker exec -i "$container" pg_restore \

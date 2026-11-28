@@ -81,7 +81,7 @@ export default function AdminInvoicesPage() {
     };
   }, [invoices]);
 
-  const currencyOf = (inv: any) => inv.original_currency || 'JOD';
+  const currencyOf = (inv: any) => inv.original_currency || 'USD';
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -99,9 +99,9 @@ export default function AdminInvoicesPage() {
       {/* ─── ملخص سريع ─────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: t('إجمالي الفواتير', 'Total invoices'), value: String(stats.total), sub: curr(stats.totalAmount, 'JOD'), icon: Receipt, color: '#0d9488' },
-          { label: t('المدفوعة', 'Paid'), value: String(stats.paidCount), sub: curr(stats.paidAmount, 'JOD'), icon: CheckCircle2, color: '#059669' },
-          { label: t('معلقة / متأخرة', 'Pending / Overdue'), value: String(stats.pendingCount), sub: curr(stats.pendingAmount, 'JOD'), icon: Clock, color: '#d97706' },
+          { label: t('إجمالي الفواتير', 'Total invoices'), value: String(stats.total), sub: curr(stats.totalAmount, 'USD'), icon: Receipt, color: '#0d9488' },
+          { label: t('المدفوعة', 'Paid'), value: String(stats.paidCount), sub: curr(stats.paidAmount, 'USD'), icon: CheckCircle2, color: '#059669' },
+          { label: t('معلقة / متأخرة', 'Pending / Overdue'), value: String(stats.pendingCount), sub: curr(stats.pendingAmount, 'USD'), icon: Clock, color: '#d97706' },
           { label: t('ملغية', 'Cancelled'), value: String(stats.cancelledCount), sub: '—', icon: XCircle, color: '#64748b' },
         ].map((s, i) => (
           <Card key={i} className="border-0 shadow-sm card-hover"><CardContent className="p-5">
@@ -220,9 +220,9 @@ export default function AdminInvoicesPage() {
 
             {/* المبالغ */}
             <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4">
-              <div><p className="text-[11px] text-gray-500">{t('المبلغ', 'Amount')}</p><p className="font-bold">{curr(Number(selected.amount) || 0, currencyOf(selected))}</p></div>
-              <div><p className="text-[11px] text-gray-500">{t('الضريبة', 'Tax')}</p><p className="font-bold">{curr(Number(selected.tax_amount) || 0, currencyOf(selected))}</p></div>
-              <div><p className="text-[11px] text-gray-500">{t('الإجمالي', 'Total')}</p><p className="font-bold text-teal-700">{curr(Number(selected.total_amount) || 0, currencyOf(selected))}</p></div>
+              <div className="min-w-0"><p className="text-[11px] text-gray-500">{t('المبلغ', 'Amount')}</p><p className="font-bold break-words">{curr(Number(selected.amount) || 0, currencyOf(selected))}</p></div>
+              <div className="min-w-0"><p className="text-[11px] text-gray-500">{t('الضريبة', 'Tax')}</p><p className="font-bold break-words">{curr(Number(selected.tax_amount) || 0, currencyOf(selected))}</p></div>
+              <div className="min-w-0"><p className="text-[11px] text-gray-500">{t('الإجمالي', 'Total')}</p><p className="font-bold text-teal-700 break-words">{curr(Number(selected.total_amount) || 0, currencyOf(selected))}</p></div>
             </div>
 
             {/* المؤسسة والاشتراك */}
@@ -256,7 +256,7 @@ export default function AdminInvoicesPage() {
                     </div>
                     <div className="flex items-center gap-1.5 pt-1 text-xs text-gray-400">
                       <CalendarDays className="h-3.5 w-3.5" />
-                      {t('تاريخ الاستحقاق', 'Due')}: {date(selected.due_date)} · {currencyLabel(selected.original_currency || 'JOD', locale === 'ar')}
+                      {t('تاريخ الاستحقاق', 'Due')}: {date(selected.due_date)} · {currencyLabel(selected.original_currency || 'USD', locale === 'ar')}
                     </div>
                   </>
                 ) : (

@@ -17,6 +17,7 @@ class TenantSubscriptionResource extends JsonResource
             'billing_cycle' => $this->billing_cycle,
             'starts_at' => $this->starts_at,
             'ends_at' => $this->ends_at,
+            'admin_ends_at' => $this->admin_ends_at,
             'trial_ends_at' => $this->trial_ends_at,
             'cancelled_at' => $this->cancelled_at,
             'auto_renew' => $this->auto_renew,

@@ -5,7 +5,7 @@
 #   cd /opt/fahimni/production/releases/<sha>
 #   sudo -u fahimni ./deploy/scripts/deploy.sh --env production
 #
-# The script never edits Caddy, DNS or LooksLoop. It builds images tagged with
+# The script never edits Caddy or DNS. It builds images tagged with
 # the git commit, starts the stack, waits for health, runs local smoke checks,
 # and only then switches the "current" symlink.
 set -Eeuo pipefail
@@ -20,6 +20,7 @@ Usage: deploy.sh --env production|staging [options]
 
   --env NAME          target stack (required)
   --env-file PATH     secret env file (default: <release>/.env)
+  --image-tag TAG     tag the built images as TAG (default: the git commit)
   --skip-build        reuse images already built for this IMAGE_TAG
   --allow-dirty       deploy a dirty worktree (not recommended)
   --wait SECONDS      health wait budget (default: 180)
@@ -29,6 +30,7 @@ EOF
 
 env_name="production"
 env_file=""
+image_tag=""
 skip_build=0
 allow_dirty=0
 wait_seconds=180
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)         env_name="${2:-}"; shift 2 ;;
     --env-file)    env_file="${2:-}"; shift 2 ;;
+    --image-tag)   image_tag="${2:-}"; shift 2 ;;
     --skip-build)  skip_build=1; shift ;;
     --allow-dirty) allow_dirty=1; shift ;;
     --wait)        wait_seconds="${2:-}"; shift 2 ;;
@@ -68,9 +71,9 @@ load_env_file "$env_file"
 [[ -n "${PROXY_ALIAS:-}" && "${PROXY_ALIAS}" != CHANGE_ME* ]] \
   || die "PROXY_ALIAS is not set (unique nginx alias on the shared proxy network)"
 
-# External networks are never created by compose. The shared reverse-proxy
-# network must exist before `compose up`, but is created (not deleted) here so a
-# re-deploy or a rollback never removes the bridge to the LooksLoop Caddy.
+# External networks are never created by compose. The proxy network must exist
+# before `compose up`, but is created (not deleted) here so a re-deploy or a
+# rollback never removes the bridge to the Caddy edge.
 proxy_net="${FAHIMNI_PROXY_NETWORK:-fahimni-proxy}"
 if ! docker network inspect "$proxy_net" >/dev/null 2>&1; then
   log "creating shared reverse-proxy network: $proxy_net"
@@ -95,12 +98,15 @@ if [[ "$allow_dirty" -ne 1 ]]; then
     || die "worktree is dirty; commit/stash first or pass --allow-dirty"
 fi
 
+# The image tag must track the code actually built. fresh-install.sh pins
+# IMAGE_TAG to the install sha in the env file, but nothing advanced it on a
+# plain re-deploy, so the pin went stale: brand-new images were retagged with
+# an old commit and tag-based rollback silently pointed at them. Trust the git
+# commit by default; --image-tag is the explicit override.
 sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
-if [[ -z "${IMAGE_TAG:-}" || "${IMAGE_TAG}" == CHANGE_ME* ]]; then
-  tag="$sha"
-else
-  tag="$IMAGE_TAG"
-  [[ "$tag" == "$sha" ]] || warn "IMAGE_TAG ($tag) differs from HEAD ($sha); image tag wins"
+tag="${image_tag:-$sha}"
+if [[ -z "$image_tag" && -n "${IMAGE_TAG:-}" && "${IMAGE_TAG}" != CHANGE_ME* && "${IMAGE_TAG}" != "$tag" ]]; then
+  warn "ignoring stale env IMAGE_TAG ($IMAGE_TAG); tagging by git commit ($tag)"
 fi
 [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || die "unsafe IMAGE_TAG: $tag"
 export IMAGE_TAG="$tag"
@@ -131,6 +137,7 @@ restore_previous() {
   docker image inspect "fahimni-app:${previous_tag}" >/dev/null 2>&1 || return 0
   warn "attempting automatic restore of image tag $previous_tag"
   ( cd "$REPO_DIR" && IMAGE_TAG="$previous_tag" docker compose up -d --remove-orphans ) || true
+  reload_nginx
   "$SCRIPT_DIR/healthcheck.sh" --env "$env_name" --env-file "$env_file" --wait 60 || true
 }
 
@@ -138,6 +145,70 @@ fail_with_restore() {
   local message="$1"
   restore_previous
   die "$message"
+}
+
+# Keep the env file's IMAGE_TAG truthful after a successful deploy. fresh-install
+# and the brand/golive rollouts all read it back, so a stale pin left here
+# misleads them (and any operator) about which build is running.
+# Resolve a (possibly symlinked) path to its real target. Portable across GNU
+# and BSD `readlink` (which lacks `-f`), unlike a bare `readlink -f`.
+resolve_env_file() {
+  local p="$1" n
+  while [ -L "$p" ]; do
+    n="$(readlink "$p" 2>/dev/null)" || break
+    case "$n" in
+      /*) p="$n" ;;
+      *)  p="$(dirname "$p")/$n" ;;
+    esac
+  done
+  printf '%s' "$p"
+}
+
+persist_image_tag() {
+  local file="$1" value="$2" target mode tmp
+  # `.env` is normally a SYMLINK to the real secret file (/etc/fahimni/…). Write
+  # the REAL file, never the link: `mv` onto a symlink replaces it with a copy,
+  # silently breaking the single-source-of-truth link (and the `-ef` check that
+  # guards the next deploy).
+  target="$(resolve_env_file "$file")"
+  [[ -n "$target" ]] || target="$file"
+  [[ -w "$target" ]] || { warn "cannot persist IMAGE_TAG to $target (not writable)"; return 0; }
+  mode="$(stat -Lc '%a' "$target" 2>/dev/null || stat -Lf '%Lp' "$target")"
+  tmp="$(mktemp "${target}.XXXXXX")" || { warn "could not create a temp file for $target"; return 0; }
+  if awk -v v="$value" '
+        /^IMAGE_TAG=/ { print "IMAGE_TAG=" v; seen=1; next }
+        { print }
+        END { if (!seen) print "IMAGE_TAG=" v }
+      ' "$target" > "$tmp"; then
+    chmod "$mode" "$tmp" 2>/dev/null || true
+    # GNU coreutils only; harmless no-op elsewhere.
+    chown --reference="$target" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$target"
+  else
+    warn "could not rewrite $target; leaving IMAGE_TAG as-is"
+    rm -f "$tmp"
+  fi
+}
+
+# nginx caches the addresses of app:9000 and frontend:3000 when it loads its
+# config (docker/nginx/default.conf). Recreating app/frontend hands them NEW
+# addresses, so a running nginx keeps proxying to the DEAD ones until it
+# re-reads its config — the "502 after a redeploy" regression that takes the
+# whole UI/API down. Validate, then reload (re-read + re-resolve) BEFORE the
+# health check so a perfectly healthy deploy is never reported as failed and
+# never triggers a pointless rollback. A container restart is the fallback.
+reload_nginx() {
+  if ! compose exec -T nginx nginx -t >/dev/null 2>&1; then
+    warn "nginx -t failed after deploy — restarting nginx to re-resolve upstreams"
+    compose restart nginx >/dev/null 2>&1 || warn "could not restart nginx"
+    return 0
+  fi
+  if compose exec -T nginx nginx -s reload >/dev/null 2>&1; then
+    log "nginx config reloaded — app/frontend upstream addresses re-resolved"
+  else
+    warn "nginx -s reload failed — restarting nginx"
+    compose restart nginx >/dev/null 2>&1 || warn "could not restart nginx"
+  fi
 }
 
 log "validating compose configuration"
@@ -157,6 +228,9 @@ log "starting stack (migrations run in the one-shot migrate service)"
 compose up -d --remove-orphans \
   || fail_with_restore "docker compose up failed"
 
+# Re-resolve the recreated upstream container addresses before health checking.
+reload_nginx
+
 log "waiting for health (budget ${wait_seconds}s)"
 "$SCRIPT_DIR/healthcheck.sh" --env "$env_name" --env-file "$env_file" --wait "$wait_seconds" \
   || fail_with_restore "health checks failed"
@@ -173,6 +247,7 @@ fi
 
 printf '%s\n' "$tag" > "$root/.deployed-tag.new"
 mv "$root/.deployed-tag.new" "$root/.deployed-tag"
+persist_image_tag "$env_file" "$tag"
 ln -sfn "$REPO_DIR" "$root/current"
 
 log "deployed $tag"

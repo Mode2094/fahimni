@@ -3,15 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Assignment;
+use App\Models\AssignmentSubmission;
 use App\Models\Booking;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\ExamAttempt;
-use App\Models\Payment;
 use App\Models\Tenant;
-use App\Models\TenantSubscription;
 use App\Models\User;
+use App\Services\AdminNotificationService;
+use App\Services\SuperAdminStatisticsService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +21,11 @@ use Illuminate\Http\Request;
 class DashboardController extends Controller
 {
     use AuthorizesTenantAccess;
+
+    public function __construct(
+        private readonly AdminNotificationService $adminNotifications,
+        private readonly SuperAdminStatisticsService $superAdminStatistics,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -38,49 +45,72 @@ class DashboardController extends Controller
         }
 
         return $this->isTenantStaff($request, $tenantId)
-            ? $this->teacherDashboard($tenantId, $user)
+            ? $this->teacherDashboard($tenantId, $user, (string) $pivot->role)
             : $this->studentDashboard($tenantId, $user);
     }
 
     private function superAdminDashboard(): JsonResponse
     {
-        return response()->json([
-            'total_tenants' => Tenant::count(),
-            'total_users' => User::count(),
-            'total_students' => Enrollment::distinct('user_id')->count('user_id'),
-            'total_courses' => Course::count(),
-            'active_subscriptions' => TenantSubscription::whereIn('status', ['active', 'trialing'])->count(),
-            'total_revenue' => Payment::where('status', 'completed')->sum('amount'),
-            'recent_payments' => Payment::with('subscription')
-                ->orderByDesc('created_at')
-                ->take(10)
-                ->get()
-                ->map(fn ($p) => [
-                    'id' => $p->id,
-                    'amount' => $p->amount,
-                    'currency' => $p->currency,
-                    'status' => $p->status,
-                    'created_at' => $p->created_at,
-                ]),
-        ]);
+        $snapshot = $this->superAdminStatistics->snapshot();
+        $metrics = $snapshot['subscription_metrics'];
+        $financials = $metrics['financials'];
+        $grossByCurrency = $financials['gross_collected_by_currency'];
+
+        // Keep the old scalar for older clients only when it has one known
+        // currency. Never sum unlike currencies into a misleading total.
+        $legacyRevenue = is_array($grossByCurrency) && count($grossByCurrency) === 1
+            ? (float) reset($grossByCurrency)
+            : null;
+        $legacyCurrency = is_array($grossByCurrency) && count($grossByCurrency) === 1
+            ? (string) array_key_first($grossByCurrency)
+            : null;
+
+        return response()->json(array_merge($snapshot['overview'], [
+            // Backward-compatible aliases now use explicit billing semantics.
+            'active_subscriptions' => $metrics['paid_subscribers'],
+            'total_revenue' => $legacyRevenue,
+            'total_revenue_currency' => $legacyCurrency,
+            'total_revenue_by_currency' => $grossByCurrency,
+            'subscription_metrics' => $metrics,
+            // Provider transactions are represented by the financial summary;
+            // do not expose the separate student-to-teacher payments here.
+            'recent_payments' => [],
+        ]));
     }
 
-    private function teacherDashboard(string $tenantId, $user): JsonResponse
+    private function teacherDashboard(string $tenantId, User $user, string $tenantRole): JsonResponse
     {
-        $activeBookings = Booking::where('tenant_id', $tenantId)
-            ->where('teacher_id', $user->id)
+        $bookings = Booking::where('tenant_id', $tenantId);
+
+        // Match the teacher booking screen: individual team teachers see their
+        // own requests, while owners/admins see the whole workspace.
+        if ($tenantRole === 'teacher') {
+            $bookings->where('teacher_id', $user->id);
+        }
+
+        $activeBookings = (clone $bookings)
             ->whereIn('status', [Booking::STATUS_PENDING, Booking::STATUS_CONFIRMED])
             ->where('ends_at', '>', now());
+        $pendingAssignmentSubmissions = AssignmentSubmission::byTenant($tenantId)
+            ->whereIn('status', ['submitted', 'late'])
+            ->whereHas('assignment')
+            ->count();
+        $pendingExamReviews = ExamAttempt::byTenant($tenantId)
+            ->where('status', 'submitted')
+            ->where('needs_review', true)
+            ->count();
 
         return response()->json([
             'total_courses' => Course::byTenant($tenantId)->count(),
             'total_students' => Enrollment::byTenant($tenantId)->count(),
             'total_exams' => Exam::byTenant($tenantId)->count(),
             'total_attempts' => ExamAttempt::byTenant($tenantId)->count(),
+            'pending_assignment_submissions' => $pendingAssignmentSubmissions,
+            'pending_exam_reviews' => $pendingExamReviews,
+            'unread_admin_notifications' => $this->adminNotifications->teacherUnreadCount($user),
             'pending_bookings' => (clone $activeBookings)->where('status', Booking::STATUS_PENDING)->count(),
             'upcoming_bookings' => (clone $activeBookings)->count(),
-            'recent_bookings' => Booking::where('tenant_id', $tenantId)
-                ->where('teacher_id', $user->id)
+            'recent_bookings' => (clone $bookings)
                 ->with('student')
                 ->orderByDesc('starts_at')
                 ->take(5)
@@ -97,6 +127,74 @@ class DashboardController extends Controller
 
     private function studentDashboard(string $tenantId, $user): JsonResponse
     {
+        $now = now();
+        // The task window is anchored to the tenant's LOCAL day, not the
+        // server's UTC day: a task due late tonight in the tenant's timezone
+        // must never be dropped just because UTC has already rolled over.
+        // `$now` stays an absolute instant (correct for "overdue"), while the
+        // window end covers the rest of the tenant's today plus 7 days.
+        $timezone = Tenant::whereKey($tenantId)->value('timezone') ?: config('app.timezone');
+        $taskWindowEnd = $now->copy()->setTimezone($timezone)->endOfDay()->addDays(7);
+        $courseIds = Enrollment::byTenant($tenantId)
+            ->where('user_id', $user->id)
+            ->effective()
+            ->pluck('course_id');
+
+        $dueAssignments = collect();
+        $upcomingExams = collect();
+
+        if ($courseIds->isNotEmpty()) {
+            $dueAssignments = Assignment::byTenant($tenantId)
+                ->whereIn('course_id', $courseIds)
+                ->where('is_published', true)
+                ->whereNotNull('due_at')
+                ->where(function ($query) use ($now, $taskWindowEnd) {
+                    $query->whereBetween('due_at', [$now, $taskWindowEnd])
+                        ->orWhere(function ($overdue) use ($now) {
+                            $overdue->where('due_at', '<', $now)
+                                ->where('allow_late', true);
+                        });
+                })
+                ->whereDoesntHave('submissions', fn ($query) => $query
+                    ->where('user_id', $user->id)
+                    ->whereIn('status', ['submitted', 'late', 'graded']))
+                ->with('course:id,title')
+                ->orderBy('due_at')
+                ->limit(5)
+                ->get(['id', 'course_id', 'title', 'due_at', 'allow_late'])
+                ->map(fn (Assignment $assignment) => [
+                    'id' => $assignment->id,
+                    'course_id' => $assignment->course_id,
+                    'course_title' => $assignment->course?->title,
+                    'title' => $assignment->title,
+                    'due_at' => $assignment->due_at?->toIso8601String(),
+                    'allow_late' => (bool) $assignment->allow_late,
+                    'is_overdue' => $assignment->due_at?->lt($now) ?? false,
+                ])
+                ->values();
+
+            $upcomingExams = Exam::byTenant($tenantId)
+                ->whereIn('course_id', $courseIds)
+                ->where('is_published', true)
+                ->visibleToStudent($user->id)
+                ->whereNotNull('ends_at')
+                ->whereBetween('ends_at', [$now, $taskWindowEnd])
+                ->where(fn ($query) => $query->whereNull('starts_at')->orWhere('starts_at', '<=', $taskWindowEnd))
+                ->with('course:id,title')
+                ->orderBy('ends_at')
+                ->limit(5)
+                ->get(['id', 'course_id', 'title', 'starts_at', 'ends_at'])
+                ->map(fn (Exam $exam) => [
+                    'id' => $exam->id,
+                    'course_id' => $exam->course_id,
+                    'course_title' => $exam->course?->title,
+                    'title' => $exam->title,
+                    'starts_at' => $exam->starts_at?->toIso8601String(),
+                    'ends_at' => $exam->ends_at?->toIso8601String(),
+                ])
+                ->values();
+        }
+
         return response()->json([
             'enrolled_courses' => Enrollment::byTenant($tenantId)
                 ->where('user_id', $user->id)
@@ -108,6 +206,10 @@ class DashboardController extends Controller
             'upcoming_exams' => Exam::byTenant($tenantId)
                 ->where('is_published', true)
                 ->count(),
+            'learning_tasks' => [
+                'due_assignments' => $dueAssignments,
+                'upcoming_exams' => $upcomingExams,
+            ],
         ]);
     }
 }

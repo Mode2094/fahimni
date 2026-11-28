@@ -153,7 +153,7 @@ export default function PageBuilder({ onSaved }: { onSaved?: () => void }) {
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(t('تم حفظ الصفحة — شاهدها الآن', 'Page saved — view it now'));
       onSaved?.();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setSaving(false);
   };
 
@@ -168,7 +168,7 @@ export default function PageBuilder({ onSaved }: { onSaved?: () => void }) {
       if (!res.ok) throw new Error();
       const d = await res.json();
       updateData(selected, { url: d.url });
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -319,7 +319,7 @@ export default function PageBuilder({ onSaved }: { onSaved?: () => void }) {
       <div className="flex items-center gap-2">
         {url ? <img src={url} className="h-12 w-20 rounded-lg border object-cover" alt="" /> : <div className="flex h-12 w-20 items-center justify-center rounded-lg bg-gray-100 border-2 border-dashed"><ImageIcon className="h-5 w-5 text-gray-300" /></div>}
         <Button variant="outline" size="sm" onClick={onUpload} disabled={uploading} className="gap-1.5 rounded-full text-xs">{uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}{t('رفع', 'Upload')}</Button>
-        {url && <Button variant="ghost" size="sm" className="text-red-400" onClick={onClear}><X className="h-3.5 w-3.5" /></Button>}
+        {url && <Button variant="ghost" size="sm" className="text-red-400" onClick={onClear} aria-label={t('إزالة الصورة', 'Remove image')} title={t('إزالة الصورة', 'Remove image')}><X className="h-3.5 w-3.5" /></Button>}
       </div>
     </div>
   );

@@ -13,16 +13,19 @@ use App\Models\ActivationCard;
 use App\Models\CardRedemption;
 use App\Models\Course;
 use App\Models\Enrollment;
+use App\Models\TenantUser;
 use App\Plans\QuotaService;
+use App\Services\EnrollmentService;
 use App\Services\StudentGamificationService;
+use App\Services\StudentSeatService;
 use App\Support\AuditLogger;
 use App\Support\CardExcelParser;
 use App\Support\DevicePolicy;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Uid\UuidV7;
 
 class ActivationCardController extends Controller
@@ -65,6 +68,12 @@ class ActivationCardController extends Controller
         $count = $request->integer('count');
         $batchId = $request->input('batch_id', (string) UuidV7::generate());
 
+        // Optional access window granted to the student on redemption.
+        $metadata = $request->input('metadata', []);
+        if ($request->filled('access_days')) {
+            $metadata['access_days'] = (int) $request->input('access_days');
+        }
+
         $cards = [];
         for ($i = 0; $i < $count; $i++) {
             $cards[] = [
@@ -75,7 +84,7 @@ class ActivationCardController extends Controller
                 'code' => strtoupper(substr(bin2hex(random_bytes(12)), 0, 24)),
                 'status' => 'generated',
                 'expires_at' => $request->input('expires_at'),
-                'metadata' => json_encode($request->input('metadata', [])),
+                'metadata' => json_encode($metadata),
                 'created_at' => now(),
                 'updated_at' => now(),
             ];
@@ -97,28 +106,59 @@ class ActivationCardController extends Controller
         $user = $request->user();
         $tenantId = $request->header('X-Tenant-Id');
 
-        $this->authorize('redeem', ActivationCard::class);
+        // Codes are stored uppercase; normalise so a lowercase paste from the
+        // dashboard works exactly like the /card/{code} page.
+        $code = strtoupper(trim((string) $request->code));
 
-        $card = ActivationCard::where('code', $request->code)
-            ->where('status', 'generated')
-            ->first();
+        // Resolve the card WITHOUT a status filter so cancelled/expired cards
+        // get an honest message. Tenant isolation happens before any mutation
+        // (the global scope already filters by the current tenant, and the
+        // explicit check below keeps it defence-in-depth).
+        $card = ActivationCard::where('code', $code)->first();
 
         if (! $card) {
-            return response()->json(['message' => 'Invalid or already used card code.'], 404);
+            return response()->json(['message' => 'Invalid card code.'], 404);
         }
 
-        if ($card->expires_at && now()->gt($card->expires_at)) {
-            $card->update(['status' => 'expired']);
+        $this->authorize('redeem', $card);
 
-            return response()->json(['message' => 'Card has expired.'], 410);
+        // Staff must never redeem a card: it would silently enroll the teacher
+        // as a student in a course of their own workspace.
+        if ($this->isActiveStaff($user, (string) $tenantId)) {
+            return response()->json(['message' => 'Staff accounts cannot redeem activation cards.'], 403);
         }
 
         if ($card->tenant_id !== $tenantId) {
             return response()->json(['message' => 'Card does not belong to this tenant.'], 403);
         }
 
-        $exists = Enrollment::where('course_id', $card->course_id)
+        if ($card->status === 'cancelled') {
+            return response()->json(['message' => 'This card has been cancelled.'], 410);
+        }
+
+        if ($card->status === 'redeemed') {
+            // 404 is the long-standing contract for "not redeemable" (the
+            // /card/{code} page and the dashboard both rely on it).
+            return response()->json(['message' => 'This card has already been used.'], 404);
+        }
+
+        if ($card->status === 'expired'
+            || ($card->expires_at && now()->gt($card->expires_at))) {
+            if ($card->status !== 'expired') {
+                $card->update(['status' => 'expired']);
+            }
+
+            return response()->json(['message' => 'Card has expired.'], 410);
+        }
+
+        // Only a currently-effective enrollment blocks a new redemption; an
+        // archived term's history must not stop a student re-joining the
+        // course next term.
+        $exists = Enrollment::withoutTenant()
+            ->where('tenant_id', $tenantId)
+            ->where('course_id', $card->course_id)
             ->where('user_id', $user->id)
+            ->effective()
             ->exists();
 
         if ($exists) {
@@ -131,6 +171,11 @@ class ActivationCardController extends Controller
         // both enroll with the same card.
         try {
             $redemption = DB::transaction(function () use ($card, $user, $request, $tenantId) {
+                // Canonical lock order everywhere: tenant seat mutex first,
+                // then the card row. Prevents two concurrent redemptions from
+                // overshooting the tenant's student limit.
+                app(StudentSeatService::class)->lockTenant((string) $tenantId);
+
                 $locked = ActivationCard::whereKey($card->id)
                     ->lockForUpdate()
                     ->first();
@@ -145,28 +190,57 @@ class ActivationCardController extends Controller
                     return 'expired';
                 }
 
-                // The (course_id, user_id) unique constraint may fire when
-                // two different cards for the same course are redeemed
-                // concurrently — map it to a clean 409, never a 500.
-                try {
-                    $enrollment = Enrollment::create([
-                        'id' => UuidV7::generate(),
-                        'tenant_id' => $tenantId,
-                        'course_id' => $locked->course_id,
-                        'user_id' => $user->id,
-                        'status' => 'active',
-                        'enrolled_at' => now(),
-                        'source' => 'card',
-                        'metadata' => ['card_code' => $locked->code, 'card_id' => $locked->id],
-                    ]);
-                } catch (QueryException $e) {
-                    if ($e->getCode() === '23505' || str_contains($e->getMessage(), 'UNIQUE constraint')) {
-                        throw new HttpResponseException(
-                            response()->json(['message' => 'You are already enrolled in this course.'], 409)
-                        );
-                    }
-                    throw $e;
+                $course = Course::find($locked->course_id);
+
+                if (! $course) {
+                    throw new HttpResponseException(
+                        response()->json(['message' => 'Course not found.'], 404)
+                    );
                 }
+
+                // A valid teacher-issued card can establish the student's first
+                // membership in this tenant. Existing inactive/non-student
+                // memberships are deliberately not reactivated.
+                $membership = TenantUser::withoutTenant()
+                    ->where('tenant_id', $tenantId)
+                    ->where('user_id', $user->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $membership) {
+                    TenantUser::withoutTenant()->create([
+                        'tenant_id' => $tenantId,
+                        'user_id' => $user->id,
+                        'role' => 'student',
+                        'status' => 'active',
+                        'joined_at' => now(),
+                        'metadata' => [],
+                    ]);
+                } elseif ($membership->status !== 'active' || $membership->role !== 'student') {
+                    throw new HttpResponseException(
+                        response()->json(['message' => 'This account cannot redeem a student card in this teacher workspace.'], 403)
+                    );
+                }
+
+                // Seat limit, duplicate protection and per-course cap are all
+                // enforced here (tenant row already locked above).
+                //
+                // Access window: a card may grant a fixed number of days. When
+                // set, the enrollment itself carries `expires_at`, so the
+                // `effective()` scope revokes access (and frees the seat) the
+                // moment it lapses — no scheduler needed. A card without
+                // `access_days` keeps the legacy lifetime behaviour.
+                $accessDays = (int) (($locked->metadata ?? [])['access_days'] ?? 0);
+
+                $enrollment = app(EnrollmentService::class)->enroll($course, $user, [
+                    'source' => 'card',
+                    'expires_at' => $accessDays > 0 ? now()->addDays($accessDays) : null,
+                    'metadata' => [
+                        'card_code' => $locked->code,
+                        'card_id' => $locked->id,
+                        'access_days' => $accessDays > 0 ? $accessDays : null,
+                    ],
+                ]);
 
                 $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id');
                 if ($deviceId) {
@@ -206,6 +280,10 @@ class ActivationCardController extends Controller
             return response()->json(['message' => 'Card has expired.'], 410);
         }
 
+        if ($request->hasSession()) {
+            $request->session()->put('current_tenant_id', $tenantId);
+        }
+
         app(StudentGamificationService::class)->logActivity(
             $user,
             $tenantId,
@@ -241,6 +319,65 @@ class ActivationCardController extends Controller
         ]);
     }
 
+    /**
+     * إبطال بطاقة فعّالة: يسحب الوصول الذي منحته البطاقة فوراً.
+     *
+     * A redeemed card can still be revoked (refund, cheat, mistaken issue).
+     * Revoking archives the enrollment the card created — access stops and the
+     * seat is freed — while the card and its redemption history are kept for
+     * audit. Only a redeemed card can be revoked; a generated one is cancelled.
+     */
+    public function revoke(Request $request, string $id): JsonResponse
+    {
+        $card = ActivationCard::findOrFail($id);
+
+        $this->authorize('create', ActivationCard::class);
+
+        if ($card->status !== 'redeemed') {
+            return response()->json(['message' => 'Only a redeemed card can be revoked. Cancel a generated card instead.'], 422);
+        }
+
+        $archived = DB::transaction(function () use ($request, $card) {
+            $redemption = CardRedemption::where('card_id', $card->id)->latest('redeemed_at')->first();
+
+            $archivedEnrollment = false;
+
+            if ($redemption?->enrollment_id) {
+                $enrollment = Enrollment::withoutTenant()->find($redemption->enrollment_id);
+
+                if ($enrollment && $enrollment->isEffective()) {
+                    app(EnrollmentService::class)->archive($enrollment);
+                    $archivedEnrollment = true;
+                }
+            }
+
+            $card->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'metadata' => array_merge($card->metadata ?? [], [
+                    'revoked_at' => now()->toIso8601String(),
+                    'revoked_by' => $request->user()?->id,
+                ]),
+            ]);
+
+            return $archivedEnrollment;
+        });
+
+        AuditLogger::log($request, 'card.revoked', 'card', $card->id, [
+            'code' => $card->code,
+            'course_id' => $card->course_id,
+            'enrollment_archived' => $archived,
+        ]);
+
+        return response()->json([
+            'message' => $archived
+                ? 'Card revoked and the granted access removed.'
+                : 'Card revoked. Its enrollment was already inactive.',
+            'enrollment_archived' => $archived,
+            'card' => new ActivationCardResource($card->fresh()),
+        ]);
+    }
+
     public function import(ImportCardsRequest $request): JsonResponse
     {
         $this->authorize('create', ActivationCard::class);
@@ -272,6 +409,12 @@ class ActivationCardController extends Controller
         $duplicatesInFile = count($raw) - $normalized->uniqueStrict()->count();
 
         $now = now();
+        $metadata = $request->input('metadata', []);
+        if ($request->filled('access_days')) {
+            $metadata['access_days'] = (int) $request->input('access_days');
+        }
+        $metadata['source'] = 'import';
+
         $rows = [];
         foreach ($normalized as $code) {
             if ($existing->has($code)) {
@@ -285,7 +428,7 @@ class ActivationCardController extends Controller
                 'code' => $code,
                 'status' => 'generated',
                 'expires_at' => $request->input('expires_at'),
-                'metadata' => json_encode(array_merge($request->input('metadata', []), ['source' => 'import'])),
+                'metadata' => json_encode($metadata),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
@@ -310,6 +453,50 @@ class ActivationCardController extends Controller
             ],
             'cards' => ActivationCardResource::collection($created),
         ], 201);
+    }
+
+    /**
+     * Export the (optionally filtered) cards as CSV for the teacher. Columns
+     * mirror the import format plus the lifecycle columns so an export can be
+     * audited or re-imported. Streamed + chunked so a large batch does not
+     * exhaust memory.
+     */
+    public function export(Request $request): StreamedResponse
+    {
+        $this->authorize('viewAny', ActivationCard::class);
+
+        $query = ActivationCard::with('course')
+            ->when($request->filled('course_id'), fn ($q) => $q->where('course_id', $request->course_id))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
+            ->when($request->filled('batch_id'), fn ($q) => $q->where('batch_id', $request->batch_id))
+            ->orderByDesc('created_at');
+
+        $filename = 'activation-cards-'.now()->format('Ymd-His').'.csv';
+
+        return response()->streamDownload(function () use ($query) {
+            $out = fopen('php://output', 'w');
+
+            // UTF-8 BOM so Excel renders Arabic course titles correctly.
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, ['code', 'status', 'course', 'batch_id', 'student_id', 'expires_at', 'used_at', 'created_at']);
+
+            $query->chunk(500, function ($cards) use ($out) {
+                foreach ($cards as $card) {
+                    fputcsv($out, [
+                        $card->code,
+                        $card->status,
+                        $card->course?->title,
+                        $card->batch_id,
+                        $card->student_id,
+                        optional($card->expires_at)->toIso8601String(),
+                        optional($card->used_at)->toIso8601String(),
+                        optional($card->created_at)->toIso8601String(),
+                    ]);
+                }
+            });
+
+            fclose($out);
+        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     public function importTemplate(): JsonResponse
@@ -380,5 +567,30 @@ class ActivationCardController extends Controller
             'generated' => $cards->where('status', 'generated')->count(),
             'cards' => ActivationCardResource::collection($cards),
         ]);
+    }
+
+    /**
+     * True when the caller is a workspace staff member (teacher/owner/admin)
+     * or the platform super-admin — such accounts must not redeem cards.
+     */
+    private function isActiveStaff($user, string $tenantId): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->is_super_admin) {
+            return true;
+        }
+
+        if ($tenantId === '') {
+            return false;
+        }
+
+        return $user->tenantPivots()
+            ->where('tenant_id', $tenantId)
+            ->whereIn('role', ['teacher', 'owner', 'admin'])
+            ->where('status', 'active')
+            ->exists();
     }
 }

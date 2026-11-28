@@ -17,9 +17,13 @@ ENV PATH="/app/node_modules/.bin:$PATH"
 # Never bake secrets here: only NEXT_PUBLIC_* variables (browser-visible).
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_PLATFORM_DOMAIN
+# FCM Web Push certificate public key (browser-visible, not a secret).
+# Empty = the student-push toggle reports "not configured" and stays off.
+ARG NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY
 ARG ALLOW_LOCAL_ORIGINS=0
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_PLATFORM_DOMAIN=$NEXT_PUBLIC_PLATFORM_DOMAIN \
+    NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY=$NEXT_PUBLIC_WEBPUSH_PUBLIC_KEY \
     ALLOW_LOCAL_ORIGINS=$ALLOW_LOCAL_ORIGINS \
     NODE_ENV=production
 

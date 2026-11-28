@@ -1,8 +1,14 @@
 <?php
 
+use App\Http\Controllers\Api\AcademicTermController;
 use App\Http\Controllers\Api\ActivationCardController;
+use App\Http\Controllers\Api\Admin\AdminSupportController;
+use App\Http\Controllers\Api\Admin\ManualSubscriptionController;
+use App\Http\Controllers\Api\Admin\TeacherDomainController as AdminTeacherDomainController;
+use App\Http\Controllers\Api\Admin\ViewAsController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AdminLiveProviderController;
+use App\Http\Controllers\Api\AdminTeacherNotificationController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\Api\AssignmentController;
@@ -12,6 +18,7 @@ use App\Http\Controllers\Api\Auth\GoogleAuthController;
 use App\Http\Controllers\Api\Auth\MobileAuthController;
 use App\Http\Controllers\Api\BackupController;
 use App\Http\Controllers\Api\BiController;
+use App\Http\Controllers\Api\BundleController;
 use App\Http\Controllers\Api\CommunityCommentController;
 use App\Http\Controllers\Api\CommunityController;
 use App\Http\Controllers\Api\CommunityGroupController;
@@ -20,6 +27,7 @@ use App\Http\Controllers\Api\CommunityThreadController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\ConversationMessageController;
 use App\Http\Controllers\Api\CourseController;
+use App\Http\Controllers\Api\CourseGroupController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\EnrollmentController;
 use App\Http\Controllers\Api\ExamAttemptController;
@@ -32,7 +40,9 @@ use App\Http\Controllers\Api\FreemiusWebhookController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\LessonContentController;
 use App\Http\Controllers\Api\LessonController;
+use App\Http\Controllers\Api\LessonNoteController;
 use App\Http\Controllers\Api\LessonProgressController;
+use App\Http\Controllers\Api\LessonQuestionController;
 use App\Http\Controllers\Api\LiveSessionController;
 use App\Http\Controllers\Api\MediaAdminController;
 use App\Http\Controllers\Api\MediaAssetController;
@@ -42,6 +52,7 @@ use App\Http\Controllers\Api\MonitoringController;
 use App\Http\Controllers\Api\MonitoringIngestController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\NotificationPreferenceController;
+use App\Http\Controllers\Api\OnboardingController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PaymentInitiateController;
 use App\Http\Controllers\Api\PlanFeatureController;
@@ -61,6 +72,7 @@ use App\Http\Controllers\Api\StudentAttemptController;
 use App\Http\Controllers\Api\StudentCertificateController;
 use App\Http\Controllers\Api\StudentProfileController;
 use App\Http\Controllers\Api\SubscriptionPlanController;
+use App\Http\Controllers\Api\TeacherAdminNotificationController;
 use App\Http\Controllers\Api\TeacherAnalyticsController;
 use App\Http\Controllers\Api\TeacherAvailabilityController;
 use App\Http\Controllers\Api\TeacherBlogController;
@@ -68,17 +80,20 @@ use App\Http\Controllers\Api\TeacherBookingController;
 use App\Http\Controllers\Api\TeacherDeviceController;
 use App\Http\Controllers\Api\TeacherDomainController;
 use App\Http\Controllers\Api\TeacherFilePolicyController;
+use App\Http\Controllers\Api\TeacherLeaderboardController;
 use App\Http\Controllers\Api\TeacherPlanController;
 use App\Http\Controllers\Api\TeacherServiceController;
 use App\Http\Controllers\Api\TeacherSiteController;
 use App\Http\Controllers\Api\TeacherStaffController;
 use App\Http\Controllers\Api\TeacherStudentAppController;
+use App\Http\Controllers\Api\TeacherStudentFollowUpController;
 use App\Http\Controllers\Api\TeacherVideoSecurityController;
 use App\Http\Controllers\Api\TenantController;
 use App\Http\Controllers\Api\TenantSettingController;
 use App\Http\Controllers\Api\TenantSubscriptionController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\UserPreferenceController;
 use App\Http\Controllers\Api\VideoStreamController;
 use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
@@ -99,6 +114,9 @@ Route::prefix('v1')->group(function () {
         // ─── تسجيل الدخول عبر Google (معلم/طالب/أدمن) ───
         // الـcallback انتقل إلى routes/web.php ليعمل بجلسة الويب (HttpOnly).
         Route::get('google/redirect', [GoogleAuthController::class, 'redirect']);
+        // Cross-host handoff redemption — called by a teacher domain's BFF
+        // (stateful) to exchange a single-use ticket for a host-only session.
+        Route::post('google/redeem', [GoogleAuthController::class, 'redeem'])->middleware('throttle:login');
         Route::post('forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:forgot-password');
         Route::post('reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:reset-password');
         Route::post('captcha', [SecurityController::class, 'captcha'])->middleware('throttle:captcha');
@@ -128,6 +146,7 @@ Route::prefix('v1')->group(function () {
             Route::get('courses', [MobileAppController::class, 'courses']);
             Route::get('courses/{course}', [MobileAppController::class, 'course']);
             Route::get('lessons/{lesson}', [MobileAppController::class, 'lesson']);
+            Route::post('video-position', [MobileAppController::class, 'saveVideoPosition'])->middleware('throttle:position');
             Route::get('announcements', [MobileAppController::class, 'announcements']);
         });
     });
@@ -150,6 +169,9 @@ Route::prefix('v1')->group(function () {
         Route::prefix('auth')->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);
+            // Complete a teacher account (Google sign-up / legacy) with the
+            // mandatory name + phone. Reachable WITHOUT the profile gate.
+            Route::post('complete-profile', [AuthController::class, 'completeProfile'])->middleware('throttle:login');
             Route::post('2fa/setup', [SecurityController::class, 'twoFactorSetup']);
             Route::post('2fa/enable', [SecurityController::class, 'twoFactorEnable']);
             Route::post('2fa/disable', [SecurityController::class, 'twoFactorDisable']);
@@ -157,24 +179,61 @@ Route::prefix('v1')->group(function () {
             Route::post('email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:email-verification');
         });
 
-        Route::prefix('user')->group(function () {
+        // ─── Admin: read-only View-As (معاينة حساب كقراءة فقط) ──
+        // `start` re-checks super-admin in the controller; `stop` only needs an
+        // active view-as marker so the admin can always exit. All three are
+        // whitelisted for writes so exit works while read-only mode is on.
+        Route::prefix('admin/view-as')->group(function () {
+            Route::get('/', [ViewAsController::class, 'show'])->name('admin.view-as.show');
+            Route::post('{user}', [ViewAsController::class, 'start'])->name('admin.view-as.start');
+            Route::delete('/', [ViewAsController::class, 'stop'])->name('admin.view-as.stop');
+        });
+
+        // ─── Admin: write-enabled support session (Admin Impersonation) ──
+        // `begin` mints a one-time token; `activate` consumes it in the new tab;
+        // `stop` restores the admin and is whitelisted while a session is
+        // active. All re-check super-admin server-side in the controller.
+        Route::prefix('admin/support')->group(function () {
+            Route::post('{teacher}/begin', [AdminSupportController::class, 'begin'])->name('admin.support.begin');
+            Route::post('activate', [AdminSupportController::class, 'activate'])->name('admin.support.activate');
+            Route::get('/', [AdminSupportController::class, 'show'])->name('admin.support.show');
+            Route::delete('/', [AdminSupportController::class, 'stop'])->name('admin.support.stop');
+        });
+
+        // `profile` blocks a teacher whose mandatory phone is still missing from
+        // editing an account around the completion step (students / super admins
+        // are unaffected). The completion endpoint itself stays outside.
+        Route::prefix('user')->middleware('profile')->group(function () {
             Route::put('profile', [UserController::class, 'updateProfile']);
             Route::put('password', [UserController::class, 'updatePassword']);
         });
 
         // Protected video playback (auth only — students may not have tenant context)
         Route::get('videos/{video}/playback', [VideoStreamController::class, 'playback'])->middleware('throttle:playback');
+        // حفظ موضع المشاهدة للاستكمال بين الأجهزة (نفس سلسلة الوصول؛ لا يمسّ
+        // احتساب الدقائق ولا جلسات التشغيل المحمية).
+        Route::post('videos/{video}/position', [VideoStreamController::class, 'savePosition'])->middleware('throttle:position');
 
         // ─── Student Profile & Gamification (auth only) ──
         Route::prefix('student')->group(function () {
             Route::get('profile', [StudentProfileController::class, 'profile']);
             Route::get('stats', [StudentProfileController::class, 'stats']);
+            Route::get('streak', [StudentProfileController::class, 'streak']);
             Route::get('leaderboard', [StudentProfileController::class, 'leaderboard']);
             Route::get('achievements', [StudentProfileController::class, 'achievements']);
             Route::get('points', [StudentProfileController::class, 'points']);
             Route::get('activity', [StudentProfileController::class, 'activity']);
             Route::get('favorites', [StudentProfileController::class, 'favorites']);
             Route::post('favorites/{course}', [StudentProfileController::class, 'toggleFavorite']);
+
+            // ─── ملاحظات الطالب والعلامات المرجعية (خاصة بصاحبها) ──
+            // لا مشاركة افتراضية: لا يقرأ/يعدّل ملاحظات الطالب إلا هو. كل كتابة
+            // تتحقّق من ملكية الدرس وصلاحية الوصول (تسجيل/فتح تدريجي/مجموعة).
+            Route::get('notes', [LessonNoteController::class, 'index'])->middleware('throttle:notes-read');
+            Route::get('notes/summary', [LessonNoteController::class, 'summary'])->middleware('throttle:notes-read');
+            Route::post('notes', [LessonNoteController::class, 'store'])->middleware('throttle:notes-write');
+            Route::put('notes/{note}', [LessonNoteController::class, 'update'])->middleware('throttle:notes-write');
+            Route::delete('notes/{note}', [LessonNoteController::class, 'destroy'])->middleware('throttle:notes-write');
         });
 
         Route::prefix('tenants')->group(function () {
@@ -184,7 +243,7 @@ Route::prefix('v1')->group(function () {
             Route::post('switch', [TenantController::class, 'switch']);
         });
 
-        Route::middleware(['tenant', 'device', 'subscription'])->group(function () {
+        Route::middleware(['tenant', 'device', 'subscription', 'profile'])->group(function () {
             Route::get('audit-logs', [SecurityController::class, 'auditLogs'])->middleware('role:teacher,owner,admin,permission:analytics.view');
 
             Route::get('dashboard', [DashboardController::class, 'index']);
@@ -198,6 +257,16 @@ Route::prefix('v1')->group(function () {
             Route::delete('courses/{course}', [CourseController::class, 'destroy']);
             Route::post('courses/{course}/publish', [CourseController::class, 'publish']);
             Route::post('courses/{course}/unpublish', [CourseController::class, 'unpublish']);
+            Route::post('courses/{course}/duplicate', [CourseController::class, 'duplicate']);
+
+            // ─── Course bundles (حزم الكورسات) ────────────────────────
+            // A bundle groups existing courses; it never copies content.
+            Route::get('bundles', [BundleController::class, 'index']);
+            Route::post('bundles', [BundleController::class, 'store']);
+            Route::get('bundles/{bundle}', [BundleController::class, 'show']);
+            Route::put('bundles/{bundle}', [BundleController::class, 'update']);
+            Route::delete('bundles/{bundle}', [BundleController::class, 'destroy']);
+            Route::post('bundles/{bundle}/enroll', [BundleController::class, 'enroll']);
 
             // Sections
             Route::get('sections', [SectionController::class, 'index']);
@@ -213,6 +282,19 @@ Route::prefix('v1')->group(function () {
             Route::get('lessons/{lesson}', [LessonController::class, 'show']);
             Route::put('lessons/{lesson}', [LessonController::class, 'update']);
             Route::delete('lessons/{lesson}', [LessonController::class, 'destroy']);
+            Route::post('lessons/{lesson}/duplicate', [LessonController::class, 'duplicate']);
+
+            // ─── Course groups (مجموعات الطلاب داخل الكورس) ───────────
+            // Separate from community/forum groups and from academic terms.
+            Route::get('courses/{course}/groups', [CourseGroupController::class, 'index']);
+            Route::post('courses/{course}/groups', [CourseGroupController::class, 'store']);
+            Route::get('course-groups/{group}', [CourseGroupController::class, 'show']);
+            Route::put('course-groups/{group}', [CourseGroupController::class, 'update']);
+            Route::delete('course-groups/{group}', [CourseGroupController::class, 'destroy']);
+            Route::put('course-groups/{group}/members', [CourseGroupController::class, 'syncMembers']);
+            Route::put('course-groups/{group}/lessons', [CourseGroupController::class, 'syncLessons']);
+            Route::put('course-groups/{group}/exams', [CourseGroupController::class, 'syncExams']);
+            Route::get('course-groups/{group}/results', [CourseGroupController::class, 'results']);
 
             // Lesson Contents
             Route::get('lessons/{lesson}/contents', [LessonContentController::class, 'index']);
@@ -220,6 +302,13 @@ Route::prefix('v1')->group(function () {
             Route::get('lesson-contents/{content}', [LessonContentController::class, 'show']);
             Route::put('lesson-contents/{content}', [LessonContentController::class, 'update']);
             Route::delete('lesson-contents/{content}', [LessonContentController::class, 'destroy']);
+
+            // ─── Lesson Q&A (أسئلة الطلاب داخل الدرس) ─────────────────
+            Route::get('lesson-questions', [LessonQuestionController::class, 'teacherIndex']);
+            Route::post('lesson-questions/{question}/answer', [LessonQuestionController::class, 'answer']);
+            Route::get('lessons/{lesson}/questions', [LessonQuestionController::class, 'index']);
+            Route::post('lessons/{lesson}/questions', [LessonQuestionController::class, 'store']);
+            Route::delete('lesson-questions/{question}', [LessonQuestionController::class, 'destroy']);
 
             // Enrollments
             Route::get('enrollments', [EnrollmentController::class, 'index']);
@@ -233,6 +322,24 @@ Route::prefix('v1')->group(function () {
             Route::put('enrollments/{enrollment}/progress/{lesson}', [LessonProgressController::class, 'update']);
             Route::post('enrollments/{enrollment}/progress/{lesson}/complete', [LessonProgressController::class, 'markCompleted']);
 
+            // ─── Academic Terms (الفصول الدراسية) ─────────
+            // Staff-only: teachers, owners and admins with the students
+            // permission manage terms and renew seats.
+            Route::middleware('role:teacher,owner,admin')->group(function () {
+                Route::get('terms', [AcademicTermController::class, 'index']);
+                Route::post('terms', [AcademicTermController::class, 'store']);
+                Route::get('terms/{term}', [AcademicTermController::class, 'show']);
+                Route::put('terms/{term}', [AcademicTermController::class, 'update']);
+                Route::delete('terms/{term}', [AcademicTermController::class, 'destroy']);
+                Route::post('terms/{term}/activate', [AcademicTermController::class, 'activate']);
+                Route::post('terms/{term}/students', [AcademicTermController::class, 'assignStudents']);
+                Route::get('terms/{term}/linkable-students', [AcademicTermController::class, 'linkableStudents']);
+                Route::post('terms/{term}/link-students', [AcademicTermController::class, 'linkStudents']);
+                Route::get('terms/{term}/end-preview', [AcademicTermController::class, 'endPreview']);
+                Route::post('terms/{term}/end', [AcademicTermController::class, 'end']);
+                Route::post('terms/{term}/promote', [AcademicTermController::class, 'promote']);
+            });
+
             // ─── Assignments ──────────────────────────────
             Route::get('assignments', [AssignmentController::class, 'index']);
             Route::post('assignments', [AssignmentController::class, 'store']);
@@ -242,6 +349,9 @@ Route::prefix('v1')->group(function () {
             Route::post('assignments/{assignment}/submit', [AssignmentController::class, 'submit']);
             Route::post('assignments/{assignment}/submissions/{submission}/grade', [AssignmentController::class, 'grade']);
             Route::post('submissions/{submission}/comments', [AssignmentController::class, 'comment']);
+            // Authorised private-file downloads (attachments + submission files).
+            Route::get('assignments/{assignment}/file', [AssignmentController::class, 'download'])->middleware('throttle:playback');
+            Route::get('submissions/{submission}/file', [AssignmentController::class, 'submissionFile'])->middleware('throttle:playback');
 
             // ─── Question Bank ───────────────────────────
             Route::get('questions', [QuestionController::class, 'index']);
@@ -257,13 +367,17 @@ Route::prefix('v1')->group(function () {
             Route::delete('questions/{question}/options/{option}', [QuestionOptionController::class, 'destroy']);
 
             // ─── Exams ───────────────────────────────────
+            Route::post('exams/reorder', [ExamController::class, 'reorder']);
             Route::get('exams', [ExamController::class, 'index']);
             Route::post('exams', [ExamController::class, 'store']);
             Route::get('exams/{exam}', [ExamController::class, 'show']);
             Route::put('exams/{exam}', [ExamController::class, 'update']);
             Route::delete('exams/{exam}', [ExamController::class, 'destroy']);
             Route::post('exams/{exam}/publish', [ExamController::class, 'publish']);
+            Route::post('exams/{exam}/duplicate', [ExamController::class, 'duplicate']);
             Route::post('exams/{exam}/add-questions', [ExamController::class, 'addQuestions']);
+            Route::post('exams/{exam}/draw-questions', [ExamController::class, 'drawQuestions']);
+            Route::post('exams/{exam}/questions/reorder', [ExamController::class, 'reorderQuestions']);
             Route::delete('exams/{exam}/questions/{question}', [ExamController::class, 'removeQuestion']);
 
             // Exam Sections
@@ -276,7 +390,18 @@ Route::prefix('v1')->group(function () {
             Route::get('exams/{exam}/attempts', [ExamAttemptController::class, 'index']);
             Route::get('exams/{exam}/questions', [ExamController::class, 'questions']);
             Route::post('exams/{exam}/attempt', [ExamAttemptController::class, 'start']);
+            // Teacher preview: same student payload, no attempt/score recorded.
+            Route::post('exams/{exam}/preview', [ExamAttemptController::class, 'preview']);
+            Route::post('exams/{exam}/preview/grade', [ExamAttemptController::class, 'previewGrade']);
             Route::post('exams/{exam}/attempts/{attempt}/submit', [ExamAttemptController::class, 'submit']);
+            // Ungraded practice completion — idempotent, no score/pass-fail.
+            Route::post('exams/{exam}/attempts/{attempt}/complete', [ExamAttemptController::class, 'complete']);
+            // Autosave: persist in-progress answers so a reload/reconnect can
+            // resume the same attempt without losing answers or a slot.
+            Route::post('exams/{exam}/attempts/{attempt}/autosave', [ExamAttemptController::class, 'autosave']);
+            // Anti-cheat violation report — the server holds the monotonic
+            // count and decides the threshold (graded exams only).
+            Route::post('exams/{exam}/attempts/{attempt}/violation', [ExamAttemptController::class, 'violation']);
             Route::post('exams/{exam}/attempts/{attempt}/grade', [ExamAttemptController::class, 'grade'])->middleware('role:teacher,owner,admin,permission:exams.manage');
             Route::get('exam-attempts/{attempt}', [ExamAttemptController::class, 'show']);
 
@@ -286,17 +411,23 @@ Route::prefix('v1')->group(function () {
             Route::post('cards/generate', [ActivationCardController::class, 'generate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::post('cards/import', [ActivationCardController::class, 'import'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
             Route::get('cards/import-template', [ActivationCardController::class, 'importTemplate'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
-            Route::post('cards/redeem', [ActivationCardController::class, 'redeem']);
+            Route::get('cards/export', [ActivationCardController::class, 'export'])->middleware('role:teacher,owner,admin,permission:cards.export', 'feature:cards_enabled');
+            // No feature gate on redeem: cards already handed to students must
+            // stay activatable even if the workspace plan later changes.
+            Route::post('cards/redeem', [ActivationCardController::class, 'redeem'])->middleware('throttle:redeem');
             Route::get('cards/{card}', [ActivationCardController::class, 'show']);
             Route::post('cards/{card}/cancel', [ActivationCardController::class, 'cancel'])->middleware('role:teacher,owner,admin,permission:cards.manage');
+            Route::post('cards/{card}/revoke', [ActivationCardController::class, 'revoke'])->middleware('role:teacher,owner,admin,permission:cards.manage');
             Route::get('cards/batch/{batchId}', [ActivationCardController::class, 'batchInfo'])->middleware('role:teacher,owner,admin,permission:cards.manage', 'feature:cards_enabled');
 
             // Payment initiation (subscription checkout — Freemius only)
             Route::post('videos/upload', [FileUploadController::class, 'uploadDirect'])->middleware('throttle:video-upload');
-            Route::post('subscriptions/freemius/checkout', [FreemiusCheckoutController::class, 'initiate'])->middleware('throttle:checkout');
+            // Subscription management is tenant-staff only: a student or any
+            // non-staff member must never start/cancel the workspace's billing.
+            Route::post('subscriptions/freemius/checkout', [FreemiusCheckoutController::class, 'initiate'])->middleware('role:teacher,owner,admin', 'throttle:checkout');
             Route::get('subscriptions/freemius/complete', [FreemiusCheckoutController::class, 'complete'])->middleware('throttle:checkout');
-            Route::post('subscriptions/freemius/portal', [FreemiusCheckoutController::class, 'portal']);
-            Route::post('subscriptions/freemius/cancel', [FreemiusCheckoutController::class, 'cancel']);
+            Route::post('subscriptions/freemius/portal', [FreemiusCheckoutController::class, 'portal'])->middleware('role:teacher,owner,admin');
+            Route::post('subscriptions/freemius/cancel', [FreemiusCheckoutController::class, 'cancel'])->middleware('role:teacher,owner,admin');
 
             // ─── Support Tickets (teacher/student side) ──
             Route::get('tickets', [AdminController::class, 'myTickets']);
@@ -309,7 +440,20 @@ Route::prefix('v1')->group(function () {
                 Route::get('subscriptions', [AdminController::class, 'subscriptions']);
                 Route::post('subscriptions/{subscription}/status', [AdminController::class, 'subscriptionStatus']);
                 Route::post('subscriptions/{subscription}/extend', [AdminController::class, 'subscriptionExtend']);
+                Route::post('subscriptions/{subscription}/extend-trial', [AdminController::class, 'subscriptionExtendTrial']);
                 Route::post('subscriptions/{subscription}/plan', [AdminController::class, 'subscriptionPlan']);
+
+                // ─── Manual subscription management (per teacher) ────────
+                Route::get('teachers/{teacher}/subscription/history', [ManualSubscriptionController::class, 'history']);
+                Route::post('teachers/{teacher}/subscription/preview', [ManualSubscriptionController::class, 'preview']);
+                Route::post('teachers/{teacher}/subscription/manual', [ManualSubscriptionController::class, 'apply']);
+                Route::get('manual-subscription-operations/{operation}/proof', [ManualSubscriptionController::class, 'proof']);
+
+                // ─── Custom domain management (per teacher) ──────────────
+                Route::get('teachers/{teacher}/domain', [AdminTeacherDomainController::class, 'show']);
+                Route::put('teachers/{teacher}/domain', [AdminTeacherDomainController::class, 'connect']);
+                Route::post('teachers/{teacher}/domain/verify', [AdminTeacherDomainController::class, 'verify']);
+                Route::delete('teachers/{teacher}/domain', [AdminTeacherDomainController::class, 'disconnect']);
 
                 Route::get('students', [AdminController::class, 'students']);
                 Route::post('students', [AdminController::class, 'studentStore']);
@@ -345,6 +489,23 @@ Route::prefix('v1')->group(function () {
                 Route::put('tickets/{ticket}/status', [AdminController::class, 'ticketStatus']);
                 Route::put('tickets/{ticket}/assign', [AdminController::class, 'ticketAssign']);
 
+                // ─── Platform notifications to teachers (Super Admin) ──
+                // Separate from tenant announcements: audience is every
+                // eligible teacher account on the platform. Static segments
+                // are declared before the {id} wildcard.
+                Route::prefix('teacher-notifications')->group(function () {
+                    Route::get('/', [AdminTeacherNotificationController::class, 'index']);
+                    Route::post('/', [AdminTeacherNotificationController::class, 'store']);
+                    Route::get('teachers', [AdminTeacherNotificationController::class, 'teachers']);
+                    Route::post('recipients', [AdminTeacherNotificationController::class, 'recipients']);
+                    Route::post('contact', [AdminTeacherNotificationController::class, 'contact']);
+                    Route::get('{id}', [AdminTeacherNotificationController::class, 'show']);
+                    Route::put('{id}', [AdminTeacherNotificationController::class, 'update']);
+                    Route::post('{id}/send', [AdminTeacherNotificationController::class, 'send']);
+                    Route::post('{id}/retract', [AdminTeacherNotificationController::class, 'retract']);
+                    Route::delete('{id}', [AdminTeacherNotificationController::class, 'destroy']);
+                });
+
                 Route::get('error-logs', [AdminController::class, 'errorLogs']);
                 Route::delete('error-logs/{log}', [AdminController::class, 'errorLogDestroy']);
                 Route::post('error-logs/clear', [AdminController::class, 'errorLogsClear']);
@@ -368,6 +529,12 @@ Route::prefix('v1')->group(function () {
                 Route::post('admin/plans/{plan}/features', [PlanFeatureController::class, 'store']);
                 Route::put('admin/plans/{plan}/features/{feature}', [PlanFeatureController::class, 'update']);
                 Route::delete('admin/plans/{plan}/features/{feature}', [PlanFeatureController::class, 'destroy']);
+
+                // ─── Subscription prices — Super Admin only ──────────
+                // Prices are verified against Freemius before being adopted.
+                Route::get('admin/plans/{plan}/freemius-sync', [SubscriptionPlanController::class, 'freemiusSync']);
+                Route::post('admin/plans/{plan}/publish-price', [SubscriptionPlanController::class, 'publishPrice']);
+                Route::post('admin/plans/{plan}/apply-pending-price', [SubscriptionPlanController::class, 'applyPendingPrice']);
             });
 
             // ─── Media Infrastructure (Super Admin) ────────
@@ -400,7 +567,13 @@ Route::prefix('v1')->group(function () {
                 Route::get('/', [MediaAssetController::class, 'index']);
                 Route::get('usage', [MediaAssetController::class, 'usage']);
                 Route::post('upload-ticket', [MediaAssetController::class, 'uploadTicket']);
-                Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy']);
+                // رفع جماعي مباشر إلى Bunny (بلا مرور الفيديو عبر السيرفر):
+                // تذكرة TUS لكل ملف + إتمام/ربط بعد نجاح الرفع + تنظيف.
+                Route::post('resumable-ticket', [MediaAssetController::class, 'resumableTicket'])->middleware('throttle:media-ticket');
+                Route::post('resumable-complete', [MediaAssetController::class, 'resumableComplete'])->middleware('throttle:media-ticket');
+                // إعادة استخدام فيديو مكتبة في درس آخر (بلا رفع أو نسخة ثانية).
+                Route::post('assets/{asset}/attach', [MediaAssetController::class, 'attachExisting'])->middleware('throttle:media-ticket');
+                Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy'])->middleware('throttle:media-ticket');
             });
 
             // ─── Teacher: Video security (watermark) ───────
@@ -421,9 +594,9 @@ Route::prefix('v1')->group(function () {
             // ─── Tenant Subscriptions ─────────────────────
             Route::get('subscriptions', [TenantSubscriptionController::class, 'index']);
             Route::get('subscriptions/current', [TenantSubscriptionController::class, 'current']);
-            Route::post('subscriptions', [TenantSubscriptionController::class, 'subscribe']);
-            Route::get('subscriptions/{subscription}', [TenantSubscriptionController::class, 'show']);
-            Route::post('subscriptions/{subscription}/cancel', [TenantSubscriptionController::class, 'cancel']);
+            Route::post('subscriptions', [TenantSubscriptionController::class, 'subscribe'])->middleware('role:teacher,owner,admin');
+            Route::get('subscriptions/{subscription}', [TenantSubscriptionController::class, 'show'])->middleware('role:teacher,owner,admin');
+            Route::post('subscriptions/{subscription}/cancel', [TenantSubscriptionController::class, 'cancel'])->middleware('role:teacher,owner,admin');
 
             // ─── Payments ─────────────────────────────────
             Route::get('payments', [PaymentController::class, 'index']);
@@ -445,12 +618,28 @@ Route::prefix('v1')->group(function () {
             Route::get('settings', [TenantSettingController::class, 'show']);
             Route::put('settings', [TenantSettingController::class, 'update']);
 
+            // ─── Per-user UI preferences (per teacher, per tenant) ──
+            // Stores only allowlisted, non-secret editor settings on the user row.
+            Route::get('me/preferences', [UserPreferenceController::class, 'show']);
+            Route::put('me/preferences', [UserPreferenceController::class, 'update'])->middleware('role:teacher,owner,admin');
+
             // ─── Notifications ───────────────────────────
             Route::prefix('notifications')->group(function () {
                 Route::get('/', [NotificationController::class, 'index']);
                 Route::post('{id}/read', [NotificationController::class, 'markAsRead']);
                 Route::post('read-all', [NotificationController::class, 'markAllAsRead']);
                 Route::get('unread-count', [NotificationController::class, 'unreadCount']);
+            });
+
+            // ─── Platform notifications from the Super Admin (teachers) ──
+            // Read-only for teachers: no delete route exists by design.
+            Route::prefix('admin-notifications')->middleware('role:teacher,owner,admin')->group(function () {
+                Route::get('/', [TeacherAdminNotificationController::class, 'index']);
+                Route::get('unread-count', [TeacherAdminNotificationController::class, 'unreadCount']);
+                Route::post('read-all', [TeacherAdminNotificationController::class, 'markAllRead']);
+                Route::get('{id}', [TeacherAdminNotificationController::class, 'show']);
+                Route::post('{id}/read', [TeacherAdminNotificationController::class, 'markRead']);
+                Route::post('{id}/contact', [TeacherAdminNotificationController::class, 'contact']);
             });
 
             // ─── Notification Preferences ────────────────
@@ -550,6 +739,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('{session}/start', [LiveSessionController::class, 'start']);
                 Route::post('{session}/end', [LiveSessionController::class, 'end']);
                 Route::post('{session}/cancel', [LiveSessionController::class, 'cancel']);
+                Route::post('{session}/recording', [LiveSessionController::class, 'attachRecording']);
                 Route::get('by-lesson/{lesson}', [LiveSessionController::class, 'byLesson']);
                 Route::post('{session}/join-ticket', [LiveSessionController::class, 'joinTicket'])->middleware('throttle:join-ticket');
                 Route::delete('{session}', [LiveSessionController::class, 'destroy']);
@@ -594,6 +784,8 @@ Route::prefix('v1')->group(function () {
             // ─── Teacher: Custom Domain ────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/domain')->group(function () {
                 Route::get('/', [TeacherDomainController::class, 'show']);
+                Route::get('slug-available', [TeacherDomainController::class, 'checkSlug'])->middleware('throttle:slug-check');
+                Route::put('slug', [TeacherDomainController::class, 'updateSlug']);
                 Route::put('/', [TeacherDomainController::class, 'connect']);
                 Route::post('verify', [TeacherDomainController::class, 'verify']);
                 Route::delete('/', [TeacherDomainController::class, 'disconnect']);
@@ -606,6 +798,13 @@ Route::prefix('v1')->group(function () {
 
             // ─── Teacher: Plan & Limits ───────────────────
             Route::get('teacher/plan', [TeacherPlanController::class, 'index']);
+
+            // ─── Teacher: Getting-started guide ───────────
+            Route::middleware('role:teacher,owner,admin')->prefix('teacher/onboarding')->group(function () {
+                Route::get('/', [OnboardingController::class, 'index']);
+                Route::post('dismiss', [OnboardingController::class, 'dismiss']);
+                Route::post('restore', [OnboardingController::class, 'restore']);
+            });
 
             // ─── Teacher: Site Design ─────────────────────
             Route::middleware('role:teacher,owner,admin,permission:settings.manage')->prefix('teacher/site-design')->group(function () {
@@ -628,11 +827,18 @@ Route::prefix('v1')->group(function () {
 
             // ─── Teacher: Device Control ────────────────
             Route::middleware('role:teacher,owner,admin,permission:students.manage')->prefix('teacher')->group(function () {
+                // متابعة الطلاب: من يحتاج انتباهاً (نشاط/تقدم/استحقاقات).
+                Route::get('follow-up', [TeacherStudentFollowUpController::class, 'index']);
                 Route::get('device-policy', [TeacherDeviceController::class, 'policy']);
                 Route::put('device-policy', [TeacherDeviceController::class, 'updatePolicy']);
+                Route::get('leaderboard-policy', [TeacherLeaderboardController::class, 'policy']);
+                Route::put('leaderboard-policy', [TeacherLeaderboardController::class, 'updatePolicy']);
                 Route::get('students', [TeacherDeviceController::class, 'students']);
+                Route::post('students/reset-all-devices', [TeacherDeviceController::class, 'resetAllDevices']);
+                Route::post('students/reset-all-limits', [TeacherDeviceController::class, 'resetAllLimits']);
                 Route::get('students/{student}', [TeacherDeviceController::class, 'showStudent']);
                 Route::get('students/{student}/activity', [TeacherDeviceController::class, 'studentActivity']);
+                Route::get('students/{student}/video-progress', [TeacherDeviceController::class, 'videoProgress']);
                 Route::post('students/{student}/device-limit', [TeacherDeviceController::class, 'setStudentLimit']);
                 Route::delete('students/{student}/device-limit', [TeacherDeviceController::class, 'removeStudentLimit']);
                 Route::post('students/{student}/reset-devices', [TeacherDeviceController::class, 'resetDevices']);
@@ -714,6 +920,8 @@ Route::prefix('v1')->group(function () {
         Route::get('courses/{course}/lessons/{lesson}', [PublicSiteController::class, 'lesson']);
         Route::get('{slug}', [PublicSiteController::class, 'show']);
         Route::get('{slug}/courses', [PublicSiteController::class, 'courses']);
+        Route::get('{slug}/courses/{course}', [PublicSiteController::class, 'course']);
+        Route::get('{slug}/bundles', [PublicSiteController::class, 'bundles']);
         Route::get('{slug}/posts', [TeacherBlogController::class, 'publicPosts']);
         Route::get('{slug}/posts/{post}', [TeacherBlogController::class, 'publicPost']);
     });
@@ -747,6 +955,8 @@ Route::prefix('v1')->group(function () {
     // ─── Platform Settings ─────────────────────────
     Route::get('platform-settings', [PlatformSettingController::class, 'show']);
     Route::get('public/domain/{domain}', [TeacherDomainController::class, 'lookup']);
+    // Caddy on-demand TLS `ask` gate: 200 only for a verified teacher domain.
+    Route::get('public/tls/ask', [TeacherDomainController::class, 'tlsAsk']);
 
     // ─── Quran Teacher Free Access Request (public) ──────────────────
     Route::post('quran-teacher-requests', [QuranTeacherRequestController::class, 'store']);

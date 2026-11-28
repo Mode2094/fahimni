@@ -8,14 +8,45 @@ import { patchFetchSecurity } from '@/lib/device';
 import { clearLegacyAuthStorage } from '@/lib/auth-client';
 import { initMonitoring, instrumentFetch } from '@/lib/monitoring';
 import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Toaster } from 'sonner';
 import { RouteShell } from '@/components/layout/route-shell';
+import { SessionStatusBanner } from '@/components/auth/session-status-banner';
+import { Analytics, MetaVerification } from '@/components/analytics/analytics';
+import PwaManager from '@/components/pwa/pwa-manager';
+import { ConfirmDialogHost } from '@/components/ui/confirm-dialog';
+import { TenantHostProvider, type TenantBranding } from '@/lib/tenant-host';
 
-export function Providers({ children }: { children: React.ReactNode }) {
+const HOUR = 60 * 60 * 1000;
+
+export function Providers({
+  children,
+  tenantBranding = null,
+}: {
+  children: React.ReactNode;
+  tenantBranding?: TenantBranding | null;
+}) {
   const user = useAuth((s) => s.user);
   const { locale, setLocale } = useLocale();
   const { settings, load: loadSettings, loaded } = useSettings();
   const { load: loadPlan } = usePlan();
+  const router = useRouter();
+
+  // On a teacher's own host, overlay the teacher's branding onto the platform
+  // settings so auth/panel chrome shows the teacher. Re-applied whenever the
+  // platform settings (re)load, since `load()` merges into the same object.
+  useEffect(() => {
+    useSettings.getState().setTenantBranding(
+      tenantBranding
+        ? {
+            name: tenantBranding.name,
+            logoUrl: tenantBranding.logoUrl,
+            primary: tenantBranding.primary,
+            accent: tenantBranding.accent,
+          }
+        : null,
+    );
+  }, [tenantBranding]);
 
   useEffect(() => {
     // Purge legacy bearer-token artefacts from older builds (one-time).
@@ -31,14 +62,31 @@ export function Providers({ children }: { children: React.ReactNode }) {
     void useAuth.getState().load();
   }, []);
 
+  // Installed PWAs created before the manifest changed still launch on `/`.
+  // Send them through the session-aware entry point instead of the public
+  // landing page, which made a valid session look logged out.
+  useEffect(() => {
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (navigator as unknown as { standalone?: boolean }).standalone === true;
+
+    if (standalone && window.location.pathname === '/') {
+      router.replace('/app');
+    }
+  }, [router]);
+
   // Platform settings are global: when the tab regains focus (e.g. the admin
   // changed something in another tab), re-fetch so every page reflects the
-  // change immediately — no reload required.
+  // change immediately — no reload required. The same moment is a natural
+  // point to slide the server session forward after a long idle period.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
         loadSettings();
         if (user) loadPlan();
+        if (Date.now() - useAuth.getState().lastValidatedAt > HOUR) {
+          void useAuth.getState().refreshSession();
+        }
       }
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -48,6 +96,26 @@ export function Providers({ children }: { children: React.ReactNode }) {
       window.removeEventListener('focus', onVisible);
     };
   }, [user, loadSettings, loadPlan]);
+
+  // Coming back online is the other moment a failed session check should be
+  // retried — without ever treating the outage as a logout.
+  useEffect(() => {
+    const onOnline = () => { void useAuth.getState().refreshSession(); };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  // Keep a long-lived tab's cookie sliding while the app stays open. The
+  // request is single-flight and skipped for signed-out visitors.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void useAuth.getState().refreshSession();
+      }
+    }, 6 * HOUR);
+
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (settings.default_locale && loaded && !localStorage.getItem('locale')) {
@@ -69,7 +137,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <RouteShell>{children}</RouteShell>
+      <Analytics />
+      <MetaVerification />
+      <SessionStatusBanner />
+      <TenantHostProvider slug={tenantBranding?.slug ?? null} branding={tenantBranding}>
+        <RouteShell>{children}</RouteShell>
+      </TenantHostProvider>
+      <PwaManager />
+      <ConfirmDialogHost />
       <Toaster richColors position={locale === 'ar' ? 'bottom-left' : 'bottom-right'} />
     </>
   );

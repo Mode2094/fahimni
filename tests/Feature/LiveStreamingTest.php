@@ -450,7 +450,162 @@ class LiveStreamingTest extends TenantTestCase
         $this->assertSame(1, (int) ($monthly['live_sessions_count'] ?? 0));
     }
 
+    public function test_ending_a_live_session_records_monthly_live_minutes(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [$teacher, $course] = $this->makeCourseWithLesson($tenant);
+
+        $session = $this->makeLiveSession($tenant, 'google_meet', $course->id);
+        $session->update(['user_id' => $teacher->id]);
+
+        $headers = $this->authHeaders($teacher, $tenant);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/start', [], $headers)->assertOk();
+
+        // simulate the session having been live for ~5 minutes before it ends
+        $session->update(['started_at' => now()->subMinutes(5)]);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/end', [], $headers)->assertOk();
+
+        $monthly = app(\App\Media\MediaUsageService::class)->monthlyAll($tenant->id, now()->format('Y-m'));
+        $this->assertGreaterThanOrEqual(5, (int) ($monthly['live_minutes'] ?? 0));
+
+        // A second end call is rejected, and must never add minutes again.
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/end', [], $headers)->assertStatus(422);
+
+        $again = app(\App\Media\MediaUsageService::class)->monthlyAll($tenant->id, now()->format('Y-m'));
+        $this->assertSame((int) ($monthly['live_minutes'] ?? 0), (int) ($again['live_minutes'] ?? 0));
+    }
+
+    public function test_starting_and_ending_a_session_notifies_enrolled_students(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [$teacher, $course] = $this->makeCourseWithLesson($tenant);
+
+        $student = $this->makeUser();
+        $this->attachToTenant($student, $tenant, 'student');
+        Enrollment::create([
+            'id' => UuidV7::generate(),
+            'tenant_id' => $tenant->id,
+            'course_id' => $course->id,
+            'user_id' => $student->id,
+            'status' => 'active',
+            'enrolled_at' => now(),
+        ]);
+
+        $session = $this->makeLiveSession($tenant, 'google_meet', $course->id);
+        $session->update(['user_id' => $teacher->id]);
+
+        $headers = $this->authHeaders($teacher, $tenant);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/start', [], $headers)->assertOk();
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/end', [], $headers)->assertOk();
+
+        $this->assertDatabaseHas('notifications', [
+            'notifiable_id' => $student->id,
+            'tenant_id' => $tenant->id,
+            'type' => 'live.started',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'notifiable_id' => $student->id,
+            'tenant_id' => $tenant->id,
+            'type' => 'live.ended',
+        ]);
+    }
+
+    public function test_live_minutes_limit_blocks_creating_when_exhausted(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $this->setPlanLimit($tenant->id, ['live_minutes_limit' => 30, 'live_stream_enabled' => true]);
+
+        $teacher = $this->makeUser();
+        $this->attachToTenant($teacher, $tenant, 'teacher');
+
+        // 25 of 30 minutes already used this month.
+        app(\App\Media\MediaUsageService::class)->applyDelta($tenant->id, 'live_minutes', 25, 'test');
+
+        // Scheduling a 30-minute session (25 + 30 > 30) must be refused.
+        $this->postJson('/api/v1/teacher/live-sessions', [
+            'title' => 'Too long', 'provider' => 'google_meet',
+            'meeting_url' => self::MEET_URL, 'duration_minutes' => 30,
+        ], $this->authHeaders($teacher, $tenant))->assertStatus(403);
+
+        // A 5-minute session fits and is created.
+        $this->postJson('/api/v1/teacher/live-sessions', [
+            'title' => 'Fits', 'provider' => 'google_meet',
+            'meeting_url' => self::MEET_URL, 'duration_minutes' => 5,
+        ], $this->authHeaders($teacher, $tenant))->assertStatus(201);
+    }
+
     // ─── Tenant isolation & lifecycle ───────────────────
+
+    public function test_teacher_can_attach_and_clear_a_session_recording(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [$teacher, $course] = $this->makeCourseWithLesson($tenant);
+
+        $session = $this->makeLiveSession($tenant, 'google_meet', $course->id);
+        $session->update(['user_id' => $teacher->id]);
+
+        $headers = $this->authHeaders($teacher, $tenant);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => 'https://drive.google.com/file/d/abc/view',
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('session.record_url', 'https://drive.google.com/file/d/abc/view');
+
+        $this->assertDatabaseHas('live_sessions', [
+            'id' => $session->id,
+            'record_enabled' => true,
+            'record_url' => 'https://drive.google.com/file/d/abc/view',
+        ]);
+
+        // Clearing the link removes the "has a recording" claim too.
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => null,
+        ], $headers)->assertOk();
+
+        $this->assertDatabaseHas('live_sessions', [
+            'id' => $session->id,
+            'record_enabled' => false,
+            'record_url' => null,
+        ]);
+    }
+
+    public function test_attaching_a_recording_rejects_an_invalid_url(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [$teacher] = $this->makeCourseWithLesson($tenant);
+
+        $session = $this->makeLiveSession($tenant, 'google_meet');
+        $session->update(['user_id' => $teacher->id]);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => 'not-a-url',
+        ], $this->authHeaders($teacher, $tenant))->assertStatus(422);
+    }
+
+    public function test_a_student_cannot_attach_a_recording(): void
+    {
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        [, $course] = $this->makeCourseWithLesson($tenant);
+
+        $student = $this->makeUser();
+        $this->attachToTenant($student, $tenant, 'student');
+
+        $session = $this->makeLiveSession($tenant, 'google_meet', $course->id);
+
+        $this->postJson('/api/v1/teacher/live-sessions/'.$session->id.'/recording', [
+            'record_url' => 'https://drive.google.com/file/d/abc/view',
+        ], $this->authHeaders($student, $tenant))->assertStatus(403);
+    }
 
     public function test_tenant_isolation_blocks_cross_tenant_management(): void
     {

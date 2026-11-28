@@ -25,7 +25,7 @@ class FeatureCatalog
             ['key' => 'live_sessions_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد البث المباشر', 'en' => 'Live sessions limit', 'desc_ar' => 'عدد جلسات البث المباشر المتاحة لك', 'desc_en' => 'Number of live streaming sessions available'],
             ['key' => 'assignments_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الواجبات', 'en' => 'Assignments limit', 'desc_ar' => 'عدد الواجبات التي يمكنك إنشاؤها لطلابك', 'desc_en' => 'Number of assignments you can create'],
             ['key' => 'teachers_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد المعلمين', 'en' => 'Teachers limit', 'desc_ar' => 'عدد المعلمين الذين يمكنك إضافتهم لفريقك', 'desc_en' => 'Number of teachers you can add to your team'],
-            ['key' => 'videos_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الفيديوهات', 'en' => 'Videos limit', 'desc_ar' => 'عدد الفيديوهات المرفوعة في كل كورساتك', 'desc_en' => 'Number of uploaded videos across your courses'],
+            ['key' => 'videos_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'عدد الفيديوهات', 'en' => 'Videos', 'desc_ar' => 'عدد الفيديوهات المرفوعة — بلا حد عددي، والضابط هو مساحة التخزين', 'desc_en' => 'Number of uploaded videos — no numeric limit, bounded by your storage'],
             ['key' => 'files_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الملفات', 'en' => 'Files limit', 'desc_ar' => 'عدد الملفات المرفوعة (PDF، مستندات وغيرها)', 'desc_en' => 'Number of uploaded files (PDF, documents, etc.)'],
             ['key' => 'pdfs_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد ملفات PDF', 'en' => 'PDFs limit', 'desc_ar' => 'عدد ملفات PDF التي يمكنك رفعها', 'desc_en' => 'Number of PDF files you can upload'],
             ['key' => 'blog_posts_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد مقالات المدونة', 'en' => 'Blog posts limit', 'desc_ar' => 'عدد المقالات التي يمكنك نشرها في مدونتك', 'desc_en' => 'Number of posts you can publish on your blog'],
@@ -33,7 +33,7 @@ class FeatureCatalog
             ['key' => 'appointments_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد المواعيد', 'en' => 'Appointments limit', 'desc_ar' => 'عدد المواعيد النشطة المتاحة', 'desc_en' => 'Number of active appointments available'],
             ['key' => 'services_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد الخدمات المدفوعة', 'en' => 'Paid services limit', 'desc_ar' => 'عدد الخدمات المدفوعة التي يمكنك عرضها', 'desc_en' => 'Number of paid services you can offer'],
             ['key' => 'live_minutes_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد دقائق البث شهرياً', 'en' => 'Monthly live minutes limit', 'desc_ar' => 'عدد دقائق البث المباشر المسموح بها شهرياً', 'desc_en' => 'Live streaming minutes allowed per month'],
-            ['key' => 'recordings_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد التسجيلات', 'en' => 'Recordings limit', 'desc_ar' => 'عدد تسجيلات البث المباشر المحفوظة', 'desc_en' => 'Number of stored live recordings'],
+            ['key' => 'recordings_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد التسجيلات', 'en' => 'Recordings limit', 'desc_ar' => 'عدد روابط تسجيل البث التي يمكن إرفاقها بجلساتك (تُرفَق يدوياً)', 'desc_en' => 'Number of live-session recording links you can attach (attached manually)'],
             ['key' => 'delivery_minutes_limit', 'type' => 'numeric', 'allow_unlimited' => true, 'ar' => 'حد دقائق المشاهدة', 'en' => 'Delivery minutes limit', 'desc_ar' => 'دقائق تشغيل الفيديو المسموح بها (التسليم)', 'desc_en' => 'Allowed video playback minutes (delivery)'],
 
             // ── Gates ───────────────────────────────────────
@@ -57,7 +57,10 @@ class FeatureCatalog
             ['key' => 'announcements_enabled', 'type' => 'boolean', 'ar' => 'الإعلانات', 'en' => 'Announcements', 'desc_ar' => 'إرسال إعلانات لطلابك داخل المنصة', 'desc_en' => 'Send announcements to your students'],
             ['key' => 'video_upload_enabled', 'type' => 'boolean', 'ar' => 'رفع الفيديو', 'en' => 'Video upload', 'desc_ar' => 'رفع فيديوهاتك مباشرة إلى المنصة', 'desc_en' => 'Upload your videos directly to the platform'],
             ['key' => 'file_upload_enabled', 'type' => 'boolean', 'ar' => 'رفع الملفات', 'en' => 'File upload', 'desc_ar' => 'رفع ملفات PDF والمستندات إلى دروسك', 'desc_en' => 'Upload PDFs and documents to your lessons'],
-            ['key' => 'live_recording_enabled', 'type' => 'boolean', 'ar' => 'تسجيل البث المباشر', 'en' => 'Live recording', 'desc_ar' => 'تسجيل البث تلقائياً وتحويله لفيديو مسجل', 'desc_en' => 'Automatically record live streams and save them as videos'],
+            // ملاحظة: لا يوجد مفتاح `live_recording_enabled` — لا يمكن لـ Google
+            // Meet التسجيل تلقائياً، والمعلم يُرفق رابط التسجيل يدوياً بعد الجلسة
+            // (POST /teacher/live-sessions/{id}/recording، غير محجوب بأي ميزة).
+            // تفادي الوعد بميزة تسجيل تلقائي غير موجودة.
             ['key' => 'secure_playback_enabled', 'type' => 'boolean', 'ar' => 'تشغيل آمن', 'en' => 'Secure playback', 'desc_ar' => 'روابط تشغيل موقعة ومنتهية الصلاحية للفيديوهات', 'desc_en' => 'Signed, expiring playback URLs for videos'],
             ['key' => 'video_watermark', 'type' => 'boolean', 'ar' => 'علامة مائية للفيديو', 'en' => 'Video watermark', 'desc_ar' => 'عرض اسم الطالب كعلامة مائية متحركة أثناء مشاهدة الفيديو', 'desc_en' => 'Show the student name as an animated watermark while watching videos'],
             ['key' => 'video_analytics_enabled', 'type' => 'boolean', 'ar' => 'تحليلات الفيديو', 'en' => 'Video analytics', 'desc_ar' => 'إحصائيات مشاهدة لكل فيديو', 'desc_en' => 'Per-video viewing analytics'],
@@ -121,10 +124,15 @@ class FeatureCatalog
                 $raw = (string) $f->feature_value;
                 $unit = $meta['unit'] ?? null;
 
-                $display = function (bool $ar) use ($type, $raw, $meta, $unit) {
+                $display = function (bool $ar) use ($type, $raw, $meta, $unit, $f) {
                     $lang = $ar ? 'ar' : 'en';
 
                     if ($raw === 'unlimited') {
+                        // الفيديوهات: لا حدّ عددي — الرفع مفتوح ضمن مساحة التخزين.
+                        if ($f->feature_key === 'videos_limit') {
+                            return $ar ? 'بلا حد عددي' : 'No numeric limit';
+                        }
+
                         return $ar ? 'غير محدود' : 'Unlimited';
                     }
 
@@ -147,6 +155,17 @@ class FeatureCatalog
                     if ($type === 'numeric') {
                         if ($unit === 'GB' && is_numeric($raw)) {
                             $mb = (float) $raw;
+
+                            // Terabytes for large quotas: 1.5 TB → "1.5 تيرا"
+                            // (not "1536 جيجا"), whole TB shown without decimals.
+                            if ($mb >= 1048576) {
+                                $tb = $mb / 1048576;
+                                $tbStr = $tb == (int) $tb
+                                    ? (string) (int) $tb
+                                    : rtrim(rtrim(number_format($tb, 1, '.', ''), '0'), '.');
+
+                                return $tbStr.' '.($ar ? 'تيرا' : 'TB');
+                            }
 
                             // Whole-number display: 5120 → "5 جيجا", not "5120".
                             if ($mb >= 1024) {

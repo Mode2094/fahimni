@@ -5,7 +5,10 @@ import { useParams } from 'next/navigation';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useLocale } from '@/store/locale';
+import { useAuth } from '@/store';
 import { Loader2, QrCode, GraduationCap, CheckCircle2, XCircle, ArrowLeft, Sparkles, Zap, UserPlus, LogIn } from 'lucide-react';
+import { setStoredTenantId } from '@/lib/auth-client';
+import { useTenantHost } from '@/lib/tenant-host';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -16,8 +19,17 @@ type CardInfo = {
   tenant?: { id: string; slug: string; name: string };
 };
 
+const CARD_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
+  generated: { ar: 'جاهزة', en: 'Ready' },
+  used: { ar: 'مستخدمة', en: 'Used' },
+  expired: { ar: 'منتهية', en: 'Expired' },
+  revoked: { ar: 'ملغاة', en: 'Revoked' },
+};
+
 export default function CardRedeemPage() {
   const { locale } = useLocale();
+  const user = useAuth((state) => state.user);
+  const loadSession = useAuth((state) => state.load);
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
   const params = useParams<{ code: string }>();
   const router = useRouter();
@@ -30,15 +42,15 @@ export default function CardRedeemPage() {
   const [isTeacher, setIsTeacher] = useState(false);
 
   const redeem = async (cd: string, tenantId: string) => {
-    const token = localStorage.getItem('lms_authed');
     setPhase('redeeming');
     setMessage('');
     try {
       // The card belongs to the teacher's tenant — switch context so the
       // redeem call validates against the right tenant.
-      localStorage.setItem('tenant_id', tenantId);
+      setStoredTenantId(tenantId);
       const res = await fetch(`${API}/cards/redeem`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenantId, Accept: 'application/json' },
         body: JSON.stringify({ code: cd }),
       });
@@ -61,36 +73,64 @@ export default function CardRedeemPage() {
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('lms_authed');
-    let user: any = null;
-    try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* */ }
-    setIsTeacher(!!user && !user.is_super_admin && (user.roles || []).includes('Teacher'));
+    let cancelled = false;
 
-    fetch(`${API}/public/cards/${encodeURIComponent(code)}`)
-      .then(async (r) => {
-        if (!r.ok) { setNotFound(true); setPhase('error'); return null; }
-        return r.json();
-      })
-      .then((d) => {
-        if (!d) return;
-        setCard(d.card);
-        if (!token) { setPhase('idle'); return; }
+    const loadCard = async () => {
+      // Resolve the HttpOnly session from the server. localStorage is only a
+      // UI hint and may be empty in a private window or newly installed PWA.
+      await loadSession();
+      const sessionUser = useAuth.getState().user;
+      if (cancelled) return;
 
-        // Logged in as a student → auto-redeem immediately.
-        if (!user || user.is_super_admin || !(user.roles || []).includes('Teacher')) {
-          if (d.card?.tenant?.id) redeem(d.card.code, d.card.tenant.id);
-        } else {
-          // Teacher/admin scanning a student card.
+      const staff = !!sessionUser
+        && (sessionUser.is_super_admin || (sessionUser.roles || []).includes('Teacher'));
+      setIsTeacher(staff);
+
+      try {
+        const response = await fetch(`${API}/public/cards/${encodeURIComponent(code)}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!response.ok) { setNotFound(true); setPhase('error'); return; }
+
+        const data = await response.json();
+        if (cancelled) return;
+        setCard(data.card);
+
+        if (!sessionUser) { setPhase('idle'); return; }
+
+        if (staff) {
+          // Staff/admin accounts must not redeem student cards.
           setPhase('idle');
           setMessage(t('بطاقات التسجيل خاصة بالطلاب — سجّل الدخول بحساب طالب لتفعيلها.', 'Registration cards are for students — log in with a student account to activate.'));
+          return;
         }
-      })
-      .catch(() => { setNotFound(true); setPhase('error'); });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
 
-  const loginUrl = card?.tenant ? `/student/login?tenant_slug=${card.tenant.slug}&from=/card/${code}` : `/student/login?from=/card/${code}`;
-  const registerUrl = card?.tenant ? `/register/student?tenant_slug=${card.tenant.slug}&from=/card/${code}` : `/register/student?from=/card/${code}`;
+        if (data.card?.tenant?.id) {
+          redeem(data.card.code, data.card.tenant.id);
+        } else {
+          setPhase('error');
+          setMessage(t('تعذر تحديد منصة البطاقة', 'Could not resolve the card workspace'));
+        }
+      } catch {
+        if (!cancelled) { setNotFound(true); setPhase('error'); }
+      }
+    };
+
+    void loadCard();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, loadSession]);
+
+  // On the teacher's own host the tenant is resolved from the host, so the
+  // internal slug is dropped from the links when the card belongs to it (it is
+  // kept when a card for a DIFFERENT tenant is opened here, so login still
+  // targets the card's workspace).
+  const { slug: hostTenantSlug } = useTenantHost();
+  const sameTenant = !!hostTenantSlug && card?.tenant?.slug === hostTenantSlug;
+  const tenantQuery = card?.tenant && !sameTenant ? `tenant_slug=${card.tenant.slug}&` : '';
+  const loginUrl = `/student/login?${tenantQuery}from=/card/${code}`;
+  const registerUrl = `/register/student?${tenantQuery}from=/card/${code}`;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-teal-950 flex items-center justify-center p-4">
@@ -100,7 +140,7 @@ export default function CardRedeemPage() {
           <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 shadow-xl shadow-teal-500/20">
             <QrCode className="h-7 w-7 text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white">{t('تفعيل بطاقة تسجيل', 'Registration card activation')}</h1>
+          <h1 className="text-2xl font-bold text-white">{t('تفعيل بطاقة تسجيل', 'Registration card activation')}</h1>
         </div>
 
         <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
@@ -121,7 +161,7 @@ export default function CardRedeemPage() {
                   <p className="font-mono font-bold text-lg tracking-widest" dir="ltr">{card.code}</p>
                 </div>
                 <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium shrink-0">
-                  {card.status === 'generated' ? t('جاهزة', 'Ready') : t(card.status, card.status)}
+                  {t(CARD_STATUS_LABELS[card.status]?.ar ?? 'حالة غير معروفة', CARD_STATUS_LABELS[card.status]?.en ?? 'Unknown status')}
                 </span>
               </div>
 
@@ -144,7 +184,7 @@ export default function CardRedeemPage() {
               )}
 
               {/* Not logged in → auth required */}
-              {!localStorage.getItem('lms_authed') ? (
+              {!user ? (
                 <>
                   <div className="flex items-start gap-3 p-4 rounded-2xl bg-teal-50 border border-teal-100 text-sm text-teal-700">
                     <Sparkles className="h-5 w-5 shrink-0 mt-0.5" />

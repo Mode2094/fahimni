@@ -1,16 +1,16 @@
 import type { Metadata } from 'next';
-import { ogBase, twitterBase } from '@/lib/seo';
+import { NOINDEX } from '@/lib/seo';
 
-const title = 'المدونة والأدلة — Blog & guides for teachers';
-const description =
-  'أدلة ومقالات عملية للمعلمين: إنشاء الدورات أونلاين، إدارة الطلاب، بيع الكورسات، والصفوف المباشرة.';
+/**
+ * NOTE: `/blog` is the AUTH-GATED teacher blog manager (create/edit/publish
+ * posts) — it is NOT a public marketing blog. It must never be indexed.
+ * Public blog content lives at `/t/{slug}/blog`.
+ */
+const title = 'مدير مقالات المعلم — Teacher blog manager';
 
 export const metadata: Metadata = {
   title,
-  description,
-  alternates: { canonical: '/blog' },
-  openGraph: ogBase(title, description, '/blog'),
-  twitter: twitterBase(title, description),
+  robots: NOINDEX,
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

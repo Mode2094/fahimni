@@ -48,6 +48,42 @@ return [
         'path' => env('BACKUP_RCLONE_PATH', 'backups'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Cloudflare for SaaS (teacher custom domains)
+    |--------------------------------------------------------------------------
+    | The origin is locked to Cloudflare's network (strict origin firewall), so
+    | a teacher domain is served ONLY as a Cloudflare custom hostname on the
+    | platform zone. Cloudflare terminates TLS at the edge and forwards to the
+    | zone's fallback origin — the teacher never needs a Cloudflare account and
+    | the origin IP is never exposed.
+    |
+    | CLOUDFLARE_API_TOKEN            Scoped token (secret, env only). Needs
+    |                                 Zone → SSL and Certificates → Edit,
+    |                                 Zone → DNS → Edit, Zone → Zone → Read.
+    | CLOUDFLARE_ZONE_ID              Zone id of fahimni.me.
+    | CLOUDFLARE_ZONE_NAME            Zone apex (fahimni.me).
+    | CLOUDFLARE_SAAS_ORIGIN_IP       Origin VPS address for the fallback record.
+    | CLOUDFLARE_SAAS_FALLBACK_ORIGIN Proxied host that receives custom traffic.
+    | CLOUDFLARE_SAAS_CNAME_TARGET    Host teachers point their CNAME at.
+    | CLOUDFLARE_SAAS_ENABLED         Master switch (also admin-editable).
+    |
+    | The fallback origin and CNAME target can additionally be overridden from
+    | the admin panel (platform_settings) so the target address is centrally
+    | changeable without a redeploy.
+    */
+
+    'cloudflare' => [
+        'api_token' => (string) env('CLOUDFLARE_API_TOKEN', ''),
+        'account_id' => (string) env('CLOUDFLARE_ACCOUNT_ID', ''),
+        'zone_id' => (string) env('CLOUDFLARE_ZONE_ID', ''),
+        'zone_name' => (string) env('CLOUDFLARE_ZONE_NAME', ''),
+        'origin_ip' => (string) env('CLOUDFLARE_SAAS_ORIGIN_IP', ''),
+        'fallback_origin' => (string) env('CLOUDFLARE_SAAS_FALLBACK_ORIGIN', ''),
+        'cname_target' => (string) env('CLOUDFLARE_SAAS_CNAME_TARGET', ''),
+        'enabled' => (bool) env('CLOUDFLARE_SAAS_ENABLED', false),
+    ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
@@ -73,8 +109,18 @@ return [
     | FREEMIUS_API_URL             Official API base URL (override for testing)
     | FREEMIUS_CHECKOUT_URL        Hosted checkout base URL
     |
+    | Developer-scope credentials (Dashboard → My Profile → Keys). These are
+    | required ONLY to PUBLISH plan prices to Freemius. The product Bearer token
+    | is read-only for plans/pricing and can never change a price. Secrets live
+    | in the environment only — never in the database and never in source control.
+    |
+    | FREEMIUS_DEVELOPER_ID            Developer id (Dashboard → My Profile → Keys)
+    | FREEMIUS_DEVELOPER_PUBLIC_KEY    Developer public key
+    | FREEMIUS_DEVELOPER_SECRET_KEY    Developer secret key (used to sign requests)
+    |
     | Per-plan mapping (env default; admin may override per plan in metadata):
     |   FREEMIUS_PLAN_{SLUG}_MONTHLY_ID / FREEMIUS_PLAN_{SLUG}_YEARLY_ID
+    |   FREEMIUS_PLAN_{SLUG}_MONTHLY_PRICING_ID / ..._YEARLY_PRICING_ID
     |   e.g. FREEMIUS_PLAN_STARTER_MONTHLY_ID=12345
     */
 
@@ -87,5 +133,9 @@ return [
         'api_url' => env('FREEMIUS_API_URL', 'https://api.freemius.com'),
         'checkout_url' => env('FREEMIUS_CHECKOUT_URL', 'https://checkout.freemius.com'),
         'sandbox' => (bool) env('FREEMIUS_SANDBOX', false),
+        // Developer scope — needed to publish prices (writes). Env only.
+        'developer_id' => (string) env('FREEMIUS_DEVELOPER_ID', ''),
+        'developer_public_key' => (string) env('FREEMIUS_DEVELOPER_PUBLIC_KEY', ''),
+        'developer_secret_key' => (string) env('FREEMIUS_DEVELOPER_SECRET_KEY', ''),
     ],
 ];

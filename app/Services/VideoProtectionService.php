@@ -115,6 +115,13 @@ class VideoProtectionService
                 'provider_video_id' => $video->provider_video_id,
                 'title' => $video->title,
                 'duration' => (int) $video->duration,
+                'watermark' => $watermark['enabled'] ? [
+                    'enabled' => true,
+                    'text' => $this->watermarkText($user, (bool) ($watermark['show_id'] ?? false)),
+                    'opacity' => $watermark['opacity'],
+                    'speed' => $watermark['speed'],
+                    'size' => $watermark['size'],
+                ] : ['enabled' => false],
                 'protection' => $protection,
             ];
         }
@@ -308,13 +315,19 @@ class VideoProtectionService
 
         $lesson = $content->lesson;
 
+        // Course-group restriction runs before the free-preview allowance so a
+        // lesson shared to specific groups never leaks through the media path.
+        if (! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return false;
+        }
+
         if ($lesson->is_free_preview) {
             return true;
         }
 
         $enrollment = Enrollment::where('course_id', $lesson->section->course_id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         if (! $enrollment) {
@@ -332,6 +345,7 @@ class VideoProtectionService
     public function providerPlaybackPayload(VideoContent $video, User $user, ?string $deviceHash = null): array
     {
         $protection = $this->protectionConfig($video);
+        $watermark = $this->watermarkFor($video);
 
         if ($video->status !== 'ready') {
             return [
@@ -369,6 +383,13 @@ class VideoProtectionService
             'stream_url' => $driver->signedPlaybackUrl($video->provider_video_id, (string) $user->id, $ttl),
             'thumbnail_url' => $driver->thumbnailUrl($video->provider_video_id, (string) $user->id, $ttl),
             'expires_in' => $ttl,
+            'watermark' => $watermark['enabled'] ? [
+                'enabled' => true,
+                'text' => $this->watermarkText($user, (bool) ($watermark['show_id'] ?? false)),
+                'opacity' => $watermark['opacity'],
+                'speed' => $watermark['speed'],
+                'size' => $watermark['size'],
+            ] : ['enabled' => false],
             'protection' => $protection,
         ];
 

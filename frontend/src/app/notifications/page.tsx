@@ -27,32 +27,35 @@ const TYPE_LABELS: Record<string, { ar: string; en: string }> = {
   'enrollment.created': { ar: 'التسجيل في دورة', en: 'Course enrollment' },
   'lesson.completed': { ar: 'إكمال درس', en: 'Lesson completed' },
   'exam.graded': { ar: 'تصحيح امتحان', en: 'Exam graded' },
+  'exam.review_required': { ar: 'محاولة تحتاج تصحيح', en: 'Attempt needs review' },
   'subscription.activated': { ar: 'تفعيل اشتراك', en: 'Subscription activated' },
   'payment.completed': { ar: 'اكتمال دفعة', en: 'Payment completed' },
   'announcement.published': { ar: 'إعلانات عامة', en: 'Announcements' },
   'chat.message': { ar: 'رسائل المحادثة', en: 'Chat messages' },
+  'community.reply': { ar: 'ردود المجتمع', en: 'Community replies' },
 };
 
 /* ترجمة إشعارات قديمة مخزنة بالإنجليزية حسب نوعها */
-function translateLegacyNotification(n: any): any {
-  const t = String(n.title || '');
-  const b = String(n.body || '');
-  if (n.type === 'enrollment.created' && t.startsWith('Enrolled in')) {
-    const course = t.replace('Enrolled in ', '');
-    return { ...n, title: `تم تسجيلك في: ${course}`, body: `تم تسجيلك في الكورس: ${course}` };
+function translateLegacyNotification(n: any, t: (ar: string, en: string) => string): any {
+  const title = String(n.title || '');
+  const body = String(n.body || '');
+  if (n.type === 'enrollment.created' && title.startsWith('Enrolled in')) {
+    const course = title.replace('Enrolled in ', '');
+    return { ...n, title: t(`تم تسجيلك في: ${course}`, `Enrolled in: ${course}`), body: t(`تم تسجيلك في الكورس: ${course}`, `Enrolled in the course: ${course}`) };
   }
-  if (n.type === 'lesson.completed' && t.startsWith('Lesson completed')) {
-    return { ...n, title: `أكملت الدرس: ${t.replace('Lesson completed: ', '')}`, body: `أنهيت الدرس: ${b.replace('You completed the lesson: ', '')}` };
+  if (n.type === 'lesson.completed' && title.startsWith('Lesson completed')) {
+    const lesson = title.replace('Lesson completed: ', '');
+    return { ...n, title: t(`أكملت الدرس: ${lesson}`, `Lesson completed: ${lesson}`), body: t(`أنهيت الدرس: ${body.replace('You completed the lesson: ', '')}`, body) };
   }
-  if (n.type === 'exam.graded' && (t.startsWith('Exam passed') || t.startsWith('Exam failed'))) {
-    const passed = t.startsWith('Exam passed');
-    return { ...n, title: `${passed ? 'نجحت في الاختبار' : 'لم تنجح في الاختبار'}: ${t.replace(/^Exam (passed|failed): /, '')}` };
+  if (n.type === 'exam.graded' && (title.startsWith('Exam passed') || title.startsWith('Exam failed'))) {
+    const passed = title.startsWith('Exam passed');
+    return { ...n, title: t(`${passed ? 'نجحت في الاختبار' : 'لم تنجح في الاختبار'}: ${title.replace(/^Exam (passed|failed): /, '')}`, title) };
   }
-  if (n.type === 'payment.completed' && t.startsWith('Payment received')) {
-    return { ...n, title: `تم استلام دفعة: ${t.replace('Payment received: ', '')}` };
+  if (n.type === 'payment.completed' && title.startsWith('Payment received')) {
+    return { ...n, title: t(`تم استلام دفعة: ${title.replace('Payment received: ', '')}`, title) };
   }
-  if (n.type === 'subscription.activated' && t.startsWith('Subscription activated')) {
-    return { ...n, title: `تم تفعيل اشتراكك: ${t.replace('Subscription activated: ', '')}` };
+  if (n.type === 'subscription.activated' && title.startsWith('Subscription activated')) {
+    return { ...n, title: t(`تم تفعيل اشتراكك: ${title.replace('Subscription activated: ', '')}`, title) };
   }
   return n;
 }
@@ -89,6 +92,20 @@ export default function NotificationsPage() {
     await notificationsApi.markAsRead(id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString(), read_in_app: true } : n)));
     refreshUnread();
+  };
+
+  /**
+   * A notification may point somewhere (full announcement, community thread).
+   * Open it and mark read in one gesture. The mark-read request must finish
+   * BEFORE navigating: a fire-and-forget request is aborted by the navigation
+   * and the unread flag would silently survive.
+   */
+  const openNotification = async (n: any) => {
+    const url = typeof n.data?.action_url === 'string' ? n.data.action_url : null;
+    if (!n.read_at) {
+      try { await markRead(n.id); } catch { /* navigate anyway */ }
+    }
+    if (url) window.location.href = url;
   };
 
   const markAll = async () => {
@@ -130,7 +147,7 @@ export default function NotificationsPage() {
           <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-500/10"><Bell className="h-6 w-6 text-teal-600" /></span>
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold">{t('الإشعارات', 'Notifications')}</h1>
-            <p className="text-muted-foreground text-sm">{t('كل تنبيهاتك في مكان واحد', 'All your alerts in one place')}</p>
+            <p className="text-muted-foreground text-sm mt-1">{t('كل تنبيهاتك في مكان واحد', 'All your alerts in one place')}</p>
           </div>
         </div>
         <div className="flex gap-1.5 p-1 rounded-full bg-slate-100/80">
@@ -161,24 +178,25 @@ export default function NotificationsPage() {
               <EmptyState icon={Bell} title={t('لا توجد إشعارات بعد', 'No notifications yet')} description={t('ستظهر هنا تنبيهات دوراتك واختباراتك', 'Alerts about your courses and exams will show here')} />
             ) : (
               notifications.map((raw) => {
-                const n = locale === 'ar' ? translateLegacyNotification(raw) : raw;
+                const n = locale === 'ar' ? translateLegacyNotification(raw, t) : raw;
                 return (
-                <div key={n.id} onClick={() => !n.read_at && markRead(n.id)} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${n.read_at ? 'border-gray-100 bg-white' : 'border-teal-100 bg-teal-50/60'}`}>
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
+                <button key={n.id} type="button" onClick={() => openNotification(n)} className={`flex w-full items-start gap-3 p-3 rounded-xl border cursor-pointer text-start transition-colors ${n.read_at ? 'border-gray-100 bg-white' : 'border-teal-100 bg-teal-50/60'}`}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
                     {n.type === 'chat.message' ? <MessageSquare className="h-4 w-4 text-violet-500" />
                       : n.type === 'announcement.published' ? <Megaphone className="h-4 w-4 text-amber-500" />
+                      : n.type === 'community.reply' ? <MessagesSquare className="h-4 w-4 text-teal-600" />
                       : <Bell className="h-4 w-4 text-teal-600" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold text-sm truncate">{n.title}</p>
+                  </span>
+                  <span className="block flex-1 min-w-0">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="block font-semibold text-sm truncate">{n.title}</span>
                       {!n.read_at && <span className="h-2 w-2 shrink-0 rounded-full bg-teal-500" />}
-                    </div>
-                    {n.body && <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">{n.body}</p>}
-                    <p className="text-xs text-gray-400 mt-1" dir="ltr">{new Date(n.created_at).toLocaleString(locale === 'ar' ? 'ar' : 'en')}</p>
-                  </div>
+                    </span>
+                    {n.body && <span className="block text-sm text-gray-500 mt-0.5 line-clamp-2">{n.body}</span>}
+                    <span className="block text-xs text-gray-400 mt-1" dir="ltr">{new Date(n.created_at).toLocaleString(locale === 'ar' ? 'ar' : 'en')}</span>
+                  </span>
                   {n.read_at && <CheckCheck className="h-4 w-4 text-gray-300 mt-1 shrink-0" />}
-                </div>
+                </button>
                 );
               })
             )}

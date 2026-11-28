@@ -66,3 +66,63 @@ boot by `clearLegacyAuthStorage()`.
   appears in a URL.
 - Mobile Google (`/api/v1/mobile/auth/google`) is untouched and still returns
   a bearer token.
+
+## Custom teacher domains
+
+A teacher can connect their own domain (`teacher.com`) or use the free
+`{slug}.fahimni.me` subdomain. Their students must be able to register and sign
+in **on that same host**, so the cookie-session flow has to work there too.
+
+### Why the static list is not enough — and what replaces it
+
+`SANCTUM_STATEFUL_DOMAINS` is built once from env at deploy time and can only
+hold the platform's own hosts. A teacher's domain is unknown then, and adding a
+wildcard (`*.fahimni.me`, `*`) or pre-listing every possible domain is unsafe:
+it would make Sanctum treat a spoofed `Origin` as first-party.
+
+```
+Browser (teacher.com) ──/api/session/*──▶ Next.js BFF ──▶ Laravel
+                                      forwards Origin: https://teacher.com
+```
+
+Two server-side gates replace the env list, and **both verify the domain from
+the database** — never from the request:
+
+1. `resolveRequestOrigin()` (`frontend/src/lib/request-origin.ts`) forwards the
+   BFF's real `Origin` only when the backend confirms the host. It asks
+   `GET /api/v1/public/domain/{host}`; a `200` means a verified custom domain
+   (or a live `{slug}.{platform}` subdomain), anything else falls back to the
+   canonical platform origin. Host-header spoofing protection is unchanged.
+2. `TrustTenantDomainsStatefully` (`app/Http/Middleware/…`) runs immediately
+   **before** `EnsureFrontendRequestsAreStateful` and appends the request's
+   Referer/Origin host to `config('sanctum.stateful')` — but only when
+   `TenantDomainResolver::belongsToActiveTenant()` confirms it (a VERIFIED
+   `TenantSetting.custom_domain` of an ACTIVE tenant, or a live teacher
+   subdomain). Everything else keeps the default (stateless → 401).
+
+The exact same predicate backs the Caddy on-demand-TLS `ask` gate
+(`GET /api/v1/public/tls/ask`), so the edge, the site lookup and the session
+trust can never drift apart.
+
+### No session sharing between teacher domains
+
+`SESSION_DOMAIN` stays empty, so the session cookie is **host-only**: a cookie
+set on `teacher-a.com` is never sent to `teacher-b.com` or to `fahimni.me`.
+Tenant membership is still re-validated server-side on every call (the
+`X-Tenant-Id` header is a *hint*, not an authorization), so a session from one
+teacher's domain can never reach another tenant.
+
+### Google OAuth on a custom domain — deliberately unavailable
+
+The Google callback lives on the platform domain (`fahimni.me`). A teacher's
+custom domain is a different site, so the callback cannot set a session cookie
+there: the student would land on the platform with no session. There is **no
+new redirect URI per teacher**, and the flow is disabled on non-platform hosts
+instead of silently breaking:
+
+- `GoogleLoginButton` checks `isPlatformBrowserHost()` and renders **disabled**
+  with an explanatory message on a custom domain / subdomain.
+- Email + password remains fully supported on every host.
+
+A safe central-callback handoff is designed but **BLOCKED** on provider
+credentials and a real domain test (see `docs/CUSTOM_DOMAIN_OAUTH_HANDOFF.md`).

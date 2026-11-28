@@ -103,7 +103,7 @@ class ExpireSubscriptionsJob implements ShouldQueue
             'transaction_id' => 'renewal-'.str()->uuid(),
             'gateway' => 'pending',
             'amount' => $amount,
-            'currency' => $plan->currency ?? 'JOD',
+            'currency' => $plan->currency ?? 'USD',
             'status' => 'pending',
             'payment_method' => 'renewal',
             'gateway_data' => ['renewal' => true, 'billing_cycle' => $sub->billing_cycle],

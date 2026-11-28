@@ -29,7 +29,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ['/live-online-classes', 'weekly', 0.8, 'monthly'],
     ['/teacher-website', 'weekly', 0.8, 'monthly'],
     ['/pricing', 'monthly', 0.8, 'monthly'],
-    ['/blog', 'weekly', 0.7, 'weekly'],
     ['/contact', 'monthly', 0.5, 'monthly'],
     ['/support', 'monthly', 0.5, 'monthly'],
     ['/terms', 'yearly', 0.2, 'yearly'],
@@ -52,6 +51,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly',
       priority: 0.6,
     });
+    entries.push({
+      url: `${origin}/t/${t.slug}/courses`,
+      lastModified: t.updated_at ? new Date(t.updated_at) : new Date(),
+      changeFrequency: 'weekly',
+      priority: 0.6,
+    });
+    const hasPosts = (t.posts || []).some((p: any) => p?.slug);
+    if (hasPosts) {
+      entries.push({
+        url: `${origin}/t/${t.slug}/blog`,
+        lastModified: t.updated_at ? new Date(t.updated_at) : new Date(),
+        changeFrequency: 'weekly',
+        priority: 0.5,
+      });
+    }
     for (const post of t.posts || []) {
       if (!post?.slug) continue;
       entries.push({

@@ -44,22 +44,71 @@ export type PlatformSettings = {
   contact_whatsapp: string;
   live_google_meet_enabled: boolean;
   live_default_provider: string;
+  analytics_enabled: boolean;
+  meta_pixel_id: string;
+  meta_domain_verification: string;
+  ga_measurement_id: string;
+  gtm_container_id: string;
+  // Teacher free trial: master switch + limited "first N teachers" offer.
+  teacher_trial_enabled: boolean;
+  teacher_trial_days: number;
+  teacher_trial_offer_enabled: boolean;
+  teacher_trial_offer_seats: number;
+  teacher_trial_offer_text: string;
+  teacher_trial_offer_text_rendered: string;
+  teacher_trial_offer_seats_used: number;
+  teacher_trial_offer_seats_remaining: number;
+  trial_available: boolean;
+  trial_days: number;
+};
+
+/**
+ * Teacher branding shown when the browser is on the teacher's OWN host (custom
+ * domain / `{slug}.{platform}` subdomain). It overrides the platform identity
+ * for display only — the settings row is never rewritten.
+ */
+export type TenantBrandingOverride = {
+  name: string;
+  logoUrl: string | null;
+  primary: string;
+  accent: string;
 };
 
 type SettingsState = {
   settings: PlatformSettings;
+  /** Present only on a teacher host; `null` on the platform. */
+  tenantBranding: TenantBrandingOverride | null;
   loaded: boolean;
   load: () => Promise<void>;
+  setTenantBranding: (branding: TenantBrandingOverride | null) => void;
   save: (patch: Partial<PlatformSettings>) => Promise<void>;
   formatPrice: (amount: number | string | null | undefined) => string;
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
+/**
+ * Overlay a teacher's branding onto the platform settings for display. Kept as
+ * a pure helper so `load()`/`save()` re-apply it after any refresh.
+ */
+function applyTenantBranding(
+  settings: PlatformSettings,
+  tenant: TenantBrandingOverride | null,
+): PlatformSettings {
+  if (!tenant) return settings;
+
+  return {
+    ...settings,
+    platform_name: tenant.name || settings.platform_name,
+    logo_url: tenant.logoUrl ?? settings.logo_url,
+    primary_color: tenant.primary || settings.primary_color,
+  };
+}
+
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: {
     platform_name: BRAND_NAME,
-    currency: 'JOD',
+    currency: 'USD',
     currency_rate: 1,
     default_locale: 'ar',
     logo_url: null,
@@ -98,21 +147,32 @@ export const useSettings = create<SettingsState>((set, get) => ({
     contact_whatsapp: '',
     live_google_meet_enabled: true,
     live_default_provider: 'google_meet',
+    analytics_enabled: true,
+    meta_pixel_id: '',
+    meta_domain_verification: '',
+    ga_measurement_id: '',
+    gtm_container_id: '',
+    teacher_trial_enabled: true,
+    teacher_trial_days: 7,
+    teacher_trial_offer_enabled: false,
+    teacher_trial_offer_seats: 50,
+    teacher_trial_offer_text: '🎁 تجربة مجانية لمدة {days} أيام لأول {seats} معلمًا — الأماكن المتبقية: {remaining}',
+    teacher_trial_offer_text_rendered: '',
+    teacher_trial_offer_seats_used: 0,
+    teacher_trial_offer_seats_remaining: 50,
+    trial_available: true,
+    trial_days: 7,
   },
   loaded: false,
+  tenantBranding: null,
 
   load: async () => {
     try {
-      // X-Tenant-Id يجعل الخادم يعيد لوجو/اسم المعلم (منصته) بدل لوجو المنصة العام.
-      const rawTid = typeof window !== 'undefined' ? localStorage.getItem('tenant_id') : null;
-      // tenant_id values are UUIDs server-side; a stale/garbled value makes the
-      // API 500, so only send well-formed UUIDs.
-      const tid = rawTid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTid) ? rawTid : null;
+      // هوية منصة فهمني العامة لا علاقة لها بالمستأجر/الجلسة: لا نرسل
+      // X-Tenant-Id إطلاقًا حتى لا يستبدل الخادم اسم/شعار المنصة بهوية معلّم.
+      // علامة كل معلّم تُقرأ من مصدرها المستقل (public/{slug} أو teacher/site-design).
       const res = await fetch(`${API}/platform-settings`, {
-        headers: {
-          Accept: 'application/json',
-          ...(tid ? { 'X-Tenant-Id': tid } : {}),
-        },
+        headers: { Accept: 'application/json' },
       });
       if (!res.ok) return;
       const d = await res.json();
@@ -120,16 +180,26 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // official identity without rewriting the settings row.
       const merged = { ...get().settings, ...d.settings };
       set({
-        settings: {
-          ...merged,
-          platform_name: normalizeBrandName(merged.platform_name),
-          contact_email: normalizeBrandEmail(merged.contact_email),
-        },
+        settings: applyTenantBranding(
+          {
+            ...merged,
+            platform_name: normalizeBrandName(merged.platform_name),
+            contact_email: normalizeBrandEmail(merged.contact_email),
+          },
+          get().tenantBranding,
+        ),
         loaded: true,
       });
     } catch {
       set({ loaded: false });
     }
+  },
+
+  setTenantBranding: (branding) => {
+    set((state) => ({
+      tenantBranding: branding,
+      settings: applyTenantBranding(state.settings, branding),
+    }));
   },
 
   save: async (patch) => {
@@ -145,18 +215,21 @@ export const useSettings = create<SettingsState>((set, get) => ({
     const d = await res.json();
     const merged = { ...get().settings, ...d.settings };
     set({
-      settings: {
-        ...merged,
-        platform_name: normalizeBrandName(merged.platform_name),
-        contact_email: normalizeBrandEmail(merged.contact_email),
-      },
+      settings: applyTenantBranding(
+        {
+          ...merged,
+          platform_name: normalizeBrandName(merged.platform_name),
+          contact_email: normalizeBrandEmail(merged.contact_email),
+        },
+        get().tenantBranding,
+      ),
     });
   },
 
   formatPrice: (amount) => {
     const { currency } = get().settings;
-    // الأسعار مخزنة بعملة المنصة (JOD) وتُعرض كما هي — currency_rate
-    // يُستخدم للتحويل الداخلي (التكلفة بالدولار) فقط ولا يضرب العرض.
+    // أسعار الاشتراكات مخزنة بالدولار (Freemius لا يدعم JOD) وتُعرض كما هي —
+    // currency_rate يُستخدم للتحويل الداخلي للتكاليف فقط ولا يضرب العرض.
     const num = Number(amount) || 0;
     const value = Math.round(num * 100) / 100;
     return `${value.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;

@@ -50,7 +50,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       const d = await res.json();
       setSite({ ...site, logo_url: d.url });
       toast.success(t('تم رفع الشعار', 'Logo uploaded'));
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -71,7 +71,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       });
       if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
       toast.success(t('تم حفظ التصميم — صفحتك محدثة فوراً', 'Design saved — your page is live now'));
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setSaving(false);
   };
 
@@ -123,8 +123,8 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
     </Card>
   );
 
-  const Toggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
-    <button onClick={onClick} type="button" className="shrink-0">
+  const Toggle = ({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) => (
+    <button onClick={onClick} type="button" role="switch" aria-checked={on} aria-label={label} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50">
       <div className={`relative w-11 h-6 rounded-full transition-all ${on ? 'bg-teal-500' : 'bg-gray-200'}`}>
         <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${on ? 'start-5' : 'start-0.5'}`} />
       </div>
@@ -268,7 +268,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       <Section title={t('شريط الإحصائيات', 'Stats bar')}>
         <div className="flex items-center justify-between p-3 rounded-xl border">
           <div><p className="text-sm font-medium">{t('إظهار شريط الأرقام', 'Show stats bar')}</p><p className="text-xs text-gray-400">{t('أرقام الثقة ترفع التحويل', 'Trust numbers boost conversion')}</p></div>
-          <Toggle on={!!cfg.show_stats} onClick={() => setCfg({ ...cfg, show_stats: !cfg.show_stats })} />
+          <Toggle label={t('إظهار شريط الأرقام', 'Show stats bar')} on={!!cfg.show_stats} onClick={() => setCfg({ ...cfg, show_stats: !cfg.show_stats })} />
         </div>
         {cfg.show_stats && (
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -286,7 +286,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       <Section title={t('قسم "من نحن"', 'About section')}>
         <div className="flex items-center justify-between p-3 rounded-xl border">
           <p className="text-sm font-medium">{t('تفعيل القسم', 'Enable section')}</p>
-          <Toggle on={!!cfg.show_about} onClick={() => setCfg({ ...cfg, show_about: !cfg.show_about })} />
+          <Toggle label={t('تفعيل قسم من نحن', 'Enable about section')} on={!!cfg.show_about} onClick={() => setCfg({ ...cfg, show_about: !cfg.show_about })} />
         </div>
         {cfg.show_about && (
           <div className="space-y-3">
@@ -301,7 +301,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       <Section title={t('آراء الطلاب', 'Testimonials')}>
         <div className="flex items-center justify-between p-3 rounded-xl border">
           <p className="text-sm font-medium">{t('تفعيل الآراء', 'Enable testimonials')}</p>
-          <Toggle on={!!cfg.show_testimonials} onClick={() => setCfg({ ...cfg, show_testimonials: !cfg.show_testimonials })} />
+          <Toggle label={t('تفعيل الآراء', 'Enable testimonials')} on={!!cfg.show_testimonials} onClick={() => setCfg({ ...cfg, show_testimonials: !cfg.show_testimonials })} />
         </div>
         {cfg.show_testimonials && (
           <div className="space-y-3">
@@ -320,7 +320,7 @@ export default function SiteDesignEditor({ onPreview }: { onPreview?: () => void
       <Section title={t('الأسئلة الشائعة', 'FAQ')}>
         <div className="flex items-center justify-between p-3 rounded-xl border">
           <p className="text-sm font-medium">{t('تفعيل الأسئلة', 'Enable FAQ')}</p>
-          <Toggle on={!!cfg.show_faq} onClick={() => setCfg({ ...cfg, show_faq: !cfg.show_faq })} />
+          <Toggle label={t('تفعيل الأسئلة الشائعة', 'Enable FAQ')} on={!!cfg.show_faq} onClick={() => setCfg({ ...cfg, show_faq: !cfg.show_faq })} />
         </div>
         {cfg.show_faq && (
           <div className="space-y-3">

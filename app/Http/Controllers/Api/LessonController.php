@@ -12,9 +12,11 @@ use App\Models\LiveSession;
 use App\Models\Section;
 use App\Models\TextContent;
 use App\Models\VideoContent;
+use App\Rules\TenantScopedExists;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
 class LessonController extends Controller
@@ -75,10 +77,16 @@ class LessonController extends Controller
     {
         $this->authorize('create', Lesson::class);
 
-        $lesson = Lesson::create([
-            'id' => UuidV7::generate(),
-            ...$request->validated(),
-        ]);
+        $validated = $request->validated();
+        $lesson = DB::transaction(function () use ($validated) {
+            $section = Section::whereKey($validated['section_id'])->lockForUpdate()->firstOrFail();
+            $validated['sort_order'] ??= (Lesson::where('section_id', $section->id)->max('sort_order') ?? 0) + 1;
+
+            return Lesson::create([
+                'id' => UuidV7::generate(),
+                ...$validated,
+            ]);
+        }, attempts: 3);
 
         $this->syncContent($lesson, $request);
 
@@ -102,9 +110,24 @@ class LessonController extends Controller
             'is_free_preview' => 'nullable|boolean',
             'lesson_type' => 'nullable|string|max:20',
             'metadata' => 'nullable|array',
+            'metadata.exercise_exam_id' => ['nullable', 'string', new TenantScopedExists('exams')],
+            'metadata.exercise_position' => 'nullable|string|in:after_video,after_content',
         ]);
 
-        $lesson->update($validated);
+        // Merge metadata instead of replacing it so attaching an exercise never
+        // silently wipes any other key already stored on the lesson.
+        if (array_key_exists('metadata', $validated) && is_array($validated['metadata'])) {
+            $validated['metadata'] = array_merge($lesson->metadata ?? [], $validated['metadata']);
+        }
+
+        if (array_key_exists('sort_order', $validated)) {
+            DB::transaction(function () use ($lesson, $validated) {
+                Section::whereKey($lesson->section_id)->lockForUpdate()->firstOrFail();
+                $lesson->update($validated);
+            }, attempts: 3);
+        } else {
+            $lesson->update($validated);
+        }
 
         if ($request->has('video_url') || $request->has('content')) {
             $this->syncContent($lesson, $request);
@@ -119,8 +142,10 @@ class LessonController extends Controller
     {
         $validated = $request->validate([
             'section_id' => 'required|string|exists:sections,id',
-            'lesson_ids' => 'required|array|min:1',
+            'lesson_ids' => 'required|array|min:1|max:500',
             'lesson_ids.*' => 'required|string|distinct',
+            'expected_lesson_ids' => 'sometimes|required|array|min:1|max:500',
+            'expected_lesson_ids.*' => 'required|string|distinct',
         ]);
 
         $section = Section::findOrFail($validated['section_id']);
@@ -129,24 +154,51 @@ class LessonController extends Controller
 
         $ids = array_values($validated['lesson_ids']);
 
-        $lessons = Lesson::where('section_id', $section->id)
-            ->whereIn('id', $ids)
-            ->get()
-            ->keyBy('id');
+        $expectedIds = isset($validated['expected_lesson_ids'])
+            ? array_values($validated['expected_lesson_ids'])
+            : null;
 
-        if ($lessons->count() !== count($ids)) {
-            return response()->json(['message' => 'Invalid lesson ids.'], 422);
-        }
+        return DB::transaction(function () use ($section, $ids, $expectedIds) {
+            $lockedSection = Section::whereKey($section->id)->lockForUpdate()->firstOrFail();
+            $lessons = Lesson::where('section_id', $lockedSection->id)
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
 
-        foreach ($ids as $index => $lessonId) {
-            $lesson = $lessons[$lessonId];
-            if ($lesson->sort_order !== $index + 1) {
-                $lesson->sort_order = $index + 1;
-                $lesson->save();
+            foreach ($ids as $lessonId) {
+                if (! $lessons->has($lessonId)) {
+                    return response()->json(['message' => 'Invalid lesson ids.'], 422);
+                }
             }
-        }
 
-        return response()->json(['message' => 'Lessons reordered successfully.']);
+            $currentIds = $lessons->keys()->map(fn ($id) => (string) $id)->all();
+            if (count($ids) !== count($currentIds) || array_diff($currentIds, $ids) !== []) {
+                return response()->json([
+                    'message' => 'The lesson list changed. Reload the section and try again.',
+                    'code' => 'lesson_order_conflict',
+                ], 409);
+            }
+
+            if ($expectedIds !== null && $expectedIds !== $currentIds) {
+                return response()->json([
+                    'message' => 'The lesson order changed elsewhere. Reload the section and try again.',
+                    'code' => 'lesson_order_conflict',
+                ], 409);
+            }
+
+            foreach ($ids as $index => $lessonId) {
+                $lesson = $lessons[$lessonId];
+                $nextOrder = $index + 1;
+                if ($lesson->sort_order !== $nextOrder) {
+                    $lesson->sort_order = $nextOrder;
+                    $lesson->save();
+                }
+            }
+
+            return response()->json(['message' => 'Lessons reordered successfully.']);
+        }, attempts: 3);
     }
 
     public function destroy(string $id): JsonResponse
@@ -155,9 +207,34 @@ class LessonController extends Controller
 
         $this->authorize('delete', $lesson);
 
-        $lesson->delete();
+        DB::transaction(function () use ($lesson) {
+            Section::whereKey($lesson->section_id)->lockForUpdate()->firstOrFail();
+            $lesson->delete();
+        }, attempts: 3);
 
         return response()->json(['message' => 'Lesson deleted successfully.']);
+    }
+
+    /**
+     * إنشاء نسخة (مسودة) من درس داخل نفس الوحدة — المحتوى فقط، بلا تقدّم
+     * أو أي بيانات طلاب. الوسائط الثقيلة تُعاد بالمرجع.
+     */
+    public function duplicate(Request $request, string $id): JsonResponse
+    {
+        $lesson = Lesson::findOrFail($id);
+
+        $this->authorize('view', $lesson);
+        $this->authorize('create', Lesson::class);
+
+        $validated = $request->validate(['title' => 'nullable|string|max:255']);
+
+        $result = app(\App\Content\ContentDuplicator::class)
+            ->duplicateLesson($lesson, $validated['title'] ?? null);
+
+        return response()->json([
+            'lesson' => new LessonResource($result['model']),
+            'report' => $result['report'],
+        ], 201);
     }
 
     private function syncContent(Lesson $lesson, Request $request): void

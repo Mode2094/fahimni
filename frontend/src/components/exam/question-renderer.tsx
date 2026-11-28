@@ -6,13 +6,16 @@ import { CheckCircle, GripVertical, ArrowUp, ArrowDown, Upload, FileText, Loader
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 import { Latex } from '@/components/exam/latex';
+import { InteractiveHtmlQuestion } from '@/components/exam/interactive-html-question';
 
 export type AnswerValue = string | string[] | { left: string; right: string }[];
 
-export function QuestionRenderer({ q, value, onChange }: {
+export function QuestionRenderer({ q, value, onChange, onDone }: {
   q: any;
   value: AnswerValue;
   onChange: (v: AnswerValue) => void;
+  /** Interactive exercise reported itself finished (ungraded practice only). */
+  onDone?: () => void;
 }) {
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
@@ -170,6 +173,23 @@ export function QuestionRenderer({ q, value, onChange }: {
 
   if (type === 'file_upload') {
     return <FileUploadAnswer value={typeof value === 'string' ? value : ''} onChange={onChange} />;
+  }
+
+  if (type === 'interactive_html' || type === 'custom_html') {
+    const interactive = md.interactive || {};
+    return (
+      <InteractiveHtmlQuestion
+        questionId={q.question_id || q.id || ''}
+        html={interactive.html || ''}
+        css={interactive.css || ''}
+        js={interactive.js || ''}
+        height={interactive.height}
+        autoCapture={interactive.auto_capture !== false}
+        value={typeof value === 'string' ? value : ''}
+        onChange={onChange}
+        onDone={onDone}
+      />
+    );
   }
 
   return null;

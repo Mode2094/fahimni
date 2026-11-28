@@ -11,12 +11,14 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog, promptDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
   CalendarClock, Plus, Trash2, Loader2, Pencil, XCircle, CheckCircle2, Clock, User, Video, Link2, CalendarDays, HandCoins, ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import AppointmentsTabs from '@/components/teacher/appointments-tabs';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -71,10 +73,10 @@ export default function TeacherAppointmentsPage() {
     try {
       const body = { ...form };
       const res = await fetch(`${API}/teacher/availabilities${editing ? `/${editing.id}` : ''}`, { method: editing ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ فترة التوفر', 'Could not save the availability slot')); return; }
       toast.success(editing ? t('تم تحديث الموعد المتاح', 'Availability updated') : t('تمت إضافة فترة التوفر', 'Availability added'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ فترة التوفر', 'Could not save the availability slot'))); }
     setBusyId('');
   };
 
@@ -83,17 +85,17 @@ export default function TeacherAppointmentsPage() {
       const res = await fetch(`${API}/teacher/availabilities/${a.id}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ is_active: !a.is_active }) });
       if (!res.ok) throw new Error();
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحديث فترة التوفر', 'Could not update the availability slot'))); }
   };
 
   const removeAvailability = async (id: string) => {
-    if (!window.confirm(t('حذف فترة التوفر هذه؟', 'Delete this availability slot?'))) return;
+    if (!(await confirmDialog({ description: t('حذف فترة التوفر هذه؟', 'Delete this availability slot?') }))) return;
     setRemoving(id);
     try {
       const res = await fetch(`${API}/teacher/availabilities/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف فترة التوفر', 'Could not delete the availability slot'))); }
     setRemoving('');
   };
 
@@ -103,15 +105,15 @@ export default function TeacherAppointmentsPage() {
       const body: any = { status };
       if (meeting_url !== undefined) body.meeting_url = meeting_url;
       const res = await fetch(`${API}/teacher/bookings/${b.id}/status`, { method: 'PUT', headers: headers(), body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر تحديث حالة الحجز', 'Could not update the booking status')); return; }
       toast.success(t('تم تحديث الحالة', 'Status updated'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحديث حالة الحجز', 'Could not update the booking status'))); }
     setBusyId('');
   };
 
   const confirmWithLink = async (b: any) => {
-    const url = prompt(t('رابط الاجتماع (اختياري)', 'Meeting link (optional)'));
+    const url = await promptDialog({ inputLabel: t('رابط الاجتماع (اختياري)', 'Meeting link (optional)') });
     if (url === null) return;
     await setStatus(b, 'confirmed', url || undefined);
   };
@@ -147,9 +149,9 @@ export default function TeacherAppointmentsPage() {
           {tab === 'availability' && <Button onClick={openAdd} className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}><Plus className="h-4 w-4" /> {t('فترة توفر', 'Add availability')}</Button>}
       </div>
 
-      <div className="flex gap-2 rounded-full bg-slate-100/80 p-1 w-fit">
-        <button aria-selected={tab === 'bookings'} onClick={() => setTab('bookings')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'bookings' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('الحجوزات', 'Bookings')}</button>
-        <button aria-selected={tab === 'availability'} onClick={() => setTab('availability')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'availability' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('أوقات التوفر', 'Availability')}</button>
+      <div role="tablist" aria-label={t('الحجوزات وأوقات التوفر', 'Bookings and availability')} className="flex gap-2 rounded-full bg-slate-100/80 p-1 w-fit">
+        <button role="tab" type="button" aria-selected={tab === 'bookings'} onClick={() => setTab('bookings')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'bookings' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('الحجوزات', 'Bookings')}</button>
+        <button role="tab" type="button" aria-selected={tab === 'availability'} onClick={() => setTab('availability')} className={`px-5 py-2 rounded-full text-sm font-bold transition-all ${tab === 'availability' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>{t('أوقات التوفر', 'Availability')}</button>
       </div>
 
       {loading ? <CardSkeleton count={3} /> : tab === 'availability' ? (

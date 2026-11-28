@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 type PlanState = {
   plan: any;
+  active: boolean | null;
   features: Record<string, string>;
   usage: any;
   gates: Record<string, boolean>;
@@ -16,6 +17,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
 export const usePlan = create<PlanState>((set, get) => ({
   plan: null,
+  active: null,
   features: {},
   usage: null,
   gates: {},
@@ -29,7 +31,15 @@ export const usePlan = create<PlanState>((set, get) => ({
       });
       if (!res.ok) return;
       const d = await res.json();
-      set({ plan: d.plan, features: d.features || {}, usage: d.usage, gates: d.gates || {}, loaded: true });
+      set({
+        plan: d.plan,
+        // Explicit signal; fall back to `plan` presence for older payloads.
+        active: typeof d.active === 'boolean' ? d.active : !!d.plan,
+        features: d.features || {},
+        usage: d.usage,
+        gates: d.gates || {},
+        loaded: true,
+      });
     } catch {
       set({ loaded: true });
     }
@@ -47,7 +57,9 @@ export const usePlan = create<PlanState>((set, get) => ({
   storageLabel: () => {
     const u = get().usage?.storage;
     if (!u) return '';
-    if (u.unlimited) return `${u.used_mb} MB ∞`;
-    return `${u.used_mb} / ${u.limit_mb} MB`;
+    // `used`/`limit` arrive in bytes from /teacher/plan (same shape as
+    // usageLabel) — never the legacy `used_mb`/`limit_mb` names.
+    if (u.unlimited) return `${u.used} / ∞`;
+    return `${u.used} / ${u.limit}`;
   },
 }));

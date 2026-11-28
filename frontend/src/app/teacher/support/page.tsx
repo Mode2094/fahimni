@@ -14,6 +14,7 @@ import { TableSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { LifeBuoy, Loader2, Send, Plus, MessageSquare, Mail } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -84,7 +85,7 @@ export default function TeacherSupportPage() {
     try {
       const res = await fetch(`${API}/tickets/${detail.id}/messages`, { method: 'POST', headers: headers(), body: JSON.stringify({ body: reply }) });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إرسال الرد', 'Could not send the reply')); return; }
       setReply('');
       openDetail(detail.id);
       load();
@@ -98,7 +99,7 @@ export default function TeacherSupportPage() {
     try {
       const res = await fetch(`${API}/tickets`, { method: 'POST', headers: headers(), body: JSON.stringify(form) });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إرسال التذكرة', 'Could not submit the ticket')); return; }
       toast.success(t('تم إرسال التذكرة', 'Ticket submitted'));
       setShowNew(false);
       setForm({ subject: '', category: 'general', priority: 'medium', body: '' });

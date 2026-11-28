@@ -15,7 +15,7 @@ class LiveSession extends Model
     protected $fillable = [
         'tenant_id', 'user_id', 'lesson_content_id', 'course_id', 'title', 'description',
         'provider', 'room_name', 'room_sid',
-        'scheduled_at', 'started_at', 'ended_at', 'status',
+        'scheduled_at', 'started_at', 'ended_at', 'cancelled_at', 'status',
         'max_participants', 'record_enabled', 'record_url',
         'config', 'metadata',
     ];
@@ -24,6 +24,7 @@ class LiveSession extends Model
         'scheduled_at' => 'datetime',
         'started_at' => 'datetime',
         'ended_at' => 'datetime',
+        'cancelled_at' => 'datetime',
         'max_participants' => 'integer',
         'record_enabled' => 'boolean',
         'config' => 'array',

@@ -170,15 +170,15 @@ export default function QuranRequestsPage() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             placeholder={t('بحث بالاسم أو البريد...', 'Search by name or email...')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pr-10"
+            className="ps-10"
           />
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           {['', 'pending', 'approved', 'rejected'].map((s) => (
             <Button
               key={s}

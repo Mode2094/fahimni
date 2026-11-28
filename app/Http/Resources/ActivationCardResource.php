@@ -20,6 +20,10 @@ class ActivationCardResource extends JsonResource
             'expires_at' => $this->expires_at,
             'used_at' => $this->used_at,
             'cancelled_at' => $this->cancelled_at,
+            // Access window / revocation surfaced from metadata so the teacher
+            // UI can show "grants N days" and "revoked at".
+            'access_days' => $this->metadata['access_days'] ?? null,
+            'revoked_at' => $this->metadata['revoked_at'] ?? null,
             'course' => new CourseResource($this->whenLoaded('course')),
             'student' => new UserResource($this->whenLoaded('student')),
             'redemptions' => CardRedemptionResource::collection($this->whenLoaded('redemptions')),

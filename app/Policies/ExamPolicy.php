@@ -27,12 +27,18 @@ class ExamPolicy
             return false;
         }
 
+        if ($this->isTenantStaff($user, $exam->tenant_id)) {
+            return true;
+        }
+
         // Staff can inspect drafts; students only see published exams.
-        if (! $this->isTenantStaff($user, $exam->tenant_id) && ! $exam->is_published) {
+        if (! $exam->is_published) {
             return false;
         }
 
-        return true;
+        // Course-group restriction: an exam shared to specific groups is
+        // invisible to students who are not members of one of those groups.
+        return Exam::whereKey($exam->id)->visibleToStudent((string) $user->id)->exists();
     }
 
     public function viewQuestions(User $user, Exam $exam): bool
@@ -80,12 +86,14 @@ class ExamPolicy
             return false;
         }
 
+        // A group-restricted exam cannot be attempted by non-members.
+        if (! Exam::whereKey($exam->id)->visibleToStudent((string) $user->id)->exists()) {
+            return false;
+        }
+
         $enrolled = Enrollment::where('course_id', $exam->course_id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
-            ->where(function ($q) {
-                $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
-            })
+            ->effective()
             ->exists();
 
         if (! $enrolled) {
@@ -95,9 +103,23 @@ class ExamPolicy
         if ($exam->max_attempts > 0) {
             // Only finalized attempts count against the cap; expired
             // in-progress attempts are auto-submitted and never burn slots.
+            // Attempts are counted PER TERM (the student's current effective
+            // enrollment term) so re-joining the course in a new term grants a
+            // fresh budget without mixing results across terms.
+            $currentTermId = Enrollment::where('course_id', $exam->course_id)
+                ->where('user_id', $user->id)
+                ->effective()
+                ->orderByDesc('enrolled_at')
+                ->value('academic_term_id');
+
             $attempts = ExamAttempt::where('exam_id', $exam->id)
                 ->where('user_id', $user->id)
                 ->where('status', 'submitted')
+                ->when(
+                    $currentTermId === null,
+                    fn ($q) => $q->whereNull('academic_term_id'),
+                    fn ($q) => $q->where('academic_term_id', $currentTermId)
+                )
                 ->count();
 
             return $attempts < $exam->max_attempts;

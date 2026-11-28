@@ -61,10 +61,37 @@ class LessonProgressController extends Controller
             $this->guardCanComplete($enrollment, $lesson, (int) ($validated['watch_time_seconds'] ?? 0));
         }
 
-        $wasCompleted = LessonProgress::where('enrollment_id', $enrollmentId)
+        // Existing row (if any). Completion and recorded watch time are
+        // MONOTONIC: a later, lighter update (e.g. an in-progress tick after a
+        // finished lesson, or a background position ping) can never un-complete
+        // a finished lesson or shrink history. This also means a platform watch
+        // policy change (60% → 90%) cannot retroactively invalidate lessons that
+        // were already completed.
+        $existing = LessonProgress::withoutTenant()
+            ->where('enrollment_id', $enrollmentId)
             ->where('lesson_id', $lessonId)
-            ->where('status', 'completed')
-            ->exists();
+            ->first();
+
+        $wasCompleted = $existing?->status === 'completed';
+
+        // Completed is a terminal state for a student-side update.
+        $effectiveStatus = $wasCompleted ? 'completed' : $status;
+
+        // لا نمسح موضع مشاهدة الفيديو (metadata.video_positions) عند تحديث
+        // الحالة/الدقائق من عميل لا يعرف عنه — منعاً لضياع الاستكمال.
+        $existingMeta = $existing?->metadata ?? [];
+        if (! is_array($existingMeta)) {
+            $existingMeta = [];
+        }
+        $incomingMeta = $validated['metadata'] ?? [];
+        if (! array_key_exists('video_positions', $incomingMeta) && isset($existingMeta['video_positions'])) {
+            $incomingMeta['video_positions'] = $existingMeta['video_positions'];
+        }
+
+        $watchSeconds = max(
+            (int) ($validated['watch_time_seconds'] ?? 0),
+            (int) ($existing->watch_time_seconds ?? 0),
+        );
 
         $progress = LessonProgress::updateOrCreate(
             [
@@ -75,10 +102,12 @@ class LessonProgressController extends Controller
                 'id' => UuidV7::generate(),
                 'tenant_id' => $enrollment->tenant_id,
                 'user_id' => $enrollment->user_id,
-                'status' => $status,
-                'watch_time_seconds' => $validated['watch_time_seconds'] ?? 0,
-                'completed_at' => $status === 'completed' && ! $wasCompleted ? now() : null,
-                'metadata' => $validated['metadata'] ?? [],
+                'status' => $effectiveStatus,
+                'watch_time_seconds' => $watchSeconds,
+                'completed_at' => $wasCompleted
+                    ? ($existing->completed_at ?? now())
+                    : ($effectiveStatus === 'completed' ? now() : null),
+                'metadata' => $incomingMeta,
             ]
         );
 
@@ -170,6 +199,12 @@ class LessonProgressController extends Controller
 
         if (! $lesson->is_published) {
             abort(422, 'This lesson is not published yet.');
+        }
+
+        // A lesson shared to specific course groups cannot be completed by a
+        // student who is not a member of one of them.
+        if (! $this->access->lessonVisibleToUser($lesson, $enrollment->student)) {
+            abort(403, 'This lesson is not available for your group.');
         }
 
         if (! $this->access->lessonUnlocked($enrollment, $lesson)) {

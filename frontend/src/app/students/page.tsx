@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/store';
 import { useLocale } from '@/store/locale';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,27 +10,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
   Users, Loader2, MonitorSmartphone, RotateCcw, Settings2, Search, Mail, Calendar,
   BookOpen, Award, TrendingUp, XCircle, CheckCircle2, UserX, Clock, Smartphone, Star,
-  Coins, Trophy, Activity as ActivityIcon, History,
+  Coins, Trophy, Activity as ActivityIcon, History, Ticket, Play,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
-export default function StudentsPage() {
+function StudentsPageInner() {
   const { check } = useAuth();
   const { locale } = useLocale();
   const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
 
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seats, setSeats] = useState<any>(null);
   const [search, setSearch] = useState('');
   const [profile, setProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [videoReport, setVideoReport] = useState<any>(null);
   const [limitTarget, setLimitTarget] = useState<any>(null);
   const [limitVal, setLimitVal] = useState('1');
   const [busyId, setBusyId] = useState('');
@@ -45,17 +50,40 @@ export default function StudentsPage() {
       .then(r => r.json()).then(d => setStudents(d.students || [])).catch(() => {})
       .finally(() => setLoading(false));
   };
+  const loadSeats = () => {
+    // Seats = distinct students with a currently-effective enrollment
+    // (active/completed, not expired, not archived). Server-owned value.
+    fetch(`${API}/teacher/plan`, { headers: headers() })
+      .then(r => r.json()).then(d => setSeats(d.usage?.students || null)).catch(() => {});
+  };
   useEffect(() => { if (check()) load(); }, [check()]);
+  useEffect(() => { if (check()) loadSeats(); }, [check()]);
 
   const openProfile = async (s: any) => {
     setProfileLoading(true);
+    setVideoReport(null);
     try {
       const res = await fetch(`${API}/teacher/students/${s.id}`, { headers: headers() });
       if (!res.ok) throw new Error();
       setProfile((await res.json()).student);
-    } catch { toast.error('Failed'); }
+      // Video watch report loads alongside; a failure only hides that section.
+      fetch(`${API}/teacher/students/${s.id}/video-progress`, { headers: headers() })
+        .then(r => r.ok ? r.json() : null).then(d => setVideoReport(d)).catch(() => {});
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحميل ملف الطالب', 'Could not load the student profile'))); }
     setProfileLoading(false);
   };
+
+  // انتقال مباشر من «متابعة الطلاب»: /students?student=<id> يفتح ملف الطالب.
+  const searchParams = useSearchParams();
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    const target = searchParams.get('student');
+    if (!target || deepLinked.current || students.length === 0) return;
+    deepLinked.current = true;
+    const found = students.find((x) => x.id === target);
+    if (found) void openProfile(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, searchParams]);
 
   const saveLimit = async () => {
     if (!limitTarget) return;
@@ -65,11 +93,15 @@ export default function StudentsPage() {
       if (!res.ok) throw new Error();
       toast.success(t(`تم منح ${limitTarget.name} الدخول من ${limitVal} أجهزة`, `Granted ${limitTarget.name} ${limitVal} device(s)`));
       setLimitTarget(null); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ حد الأجهزة', 'Could not save the device limit'))); }
     setBusyId('');
   };
 
   const resetDevices = async (s: any) => {
+    if (!(await confirmDialog({
+      danger: true,
+      description: t(`إعادة تعيين أجهزة ${s.name}؟ سيتم فصل كل أجهزته الحالية ويمكنه الدخول من جهاز جديد.`, `Reset ${s.name}'s devices? All current devices will be unbound and they can log in from a new one.`),
+    }))) return;
     setBusyId(s.id);
     try {
       const res = await fetch(`${API}/teacher/students/${s.id}/reset-devices`, { method: 'POST', headers: headers() });
@@ -77,12 +109,12 @@ export default function StudentsPage() {
       toast.success(t(`تم إعادة تعيين أجهزة ${s.name} — يمكنه الدخول من جهاز جديد الآن`, `Devices reset for ${s.name} — they can log in from a new device now`));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
     setBusyId('');
   };
 
   const clearOverride = async (s: any) => {
-    if (!confirm(t('إزالة الصلاحية الخاصة عن هذا الطالب؟', 'Remove the special grant from this student?'))) return;
+    if (!(await confirmDialog({ description: t('إزالة الصلاحية الخاصة عن هذا الطالب؟', 'Remove the special grant from this student?') }))) return;
     setBusyId(s.id);
     try {
       const res = await fetch(`${API}/teacher/students/${s.id}/device-limit`, { method: 'DELETE', headers: headers() });
@@ -90,7 +122,38 @@ export default function StudentsPage() {
       toast.success(t('تمت إزالة الصلاحية — عاد للحد الافتراضي', 'Override removed — back to default'));
       if (profile?.id === s.id) openProfile(s);
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة الصلاحية', 'Could not remove the override'))); }
+    setBusyId('');
+  };
+
+  const resetAllDevices = async () => {
+    if (!(await confirmDialog({
+      danger: true,
+      description: t('إعادة تعيين أجهزة جميع الطلاب؟ سيتم فصل كل الأجهزة الحالية لكل طالب، ويمكن لكل طالب الدخول من جهاز جديد. لا يمسّ هذا الإجراء حدود الأجهزة ولا صلاحياتها الفردية، ولا ينهي جلسات الطلاب الحالية، ولا بيانات الدروس أو النتائج.', 'Reset devices for all students? Every current device is unbound and each student can log in from a new one. This does not change any device limit or individual grant, does not end existing student sessions, and leaves lesson data and results untouched.'),
+    }))) return;
+    setBusyId('__all__');
+    try {
+      const res = await fetch(`${API}/teacher/students/reset-all-devices`, { method: 'POST', headers: headers() });
+      if (!res.ok) throw new Error();
+      const d = await res.json().catch(() => ({}));
+      toast.success(t(`تم إعادة تعيين أجهزة ${d.students ?? students.length} طالباً — يمكنهم الدخول من أجهزة جديدة الآن`, `Devices reset for ${d.students ?? students.length} students — they can log in from new devices now`));
+      setProfile(null); load();
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إعادة تعيين الأجهزة', 'Could not reset the devices'))); }
+    setBusyId('');
+  };
+
+  const resetAllLimits = async () => {
+    if (!(await confirmDialog({
+      description: t('إزالة كل الصلاحيات الفردية للأجهزة؟ سيعود كل طالب إلى الحد الافتراضي للمنصة. هذا تغيير سياسة فقط: لا يُفصل أي جهاز ولا تُنهى أي جلسة.', 'Remove every individual device grant? Every student returns to the platform default limit. This is a policy-only change: no device is unbound and no session is ended.'),
+    }))) return;
+    setBusyId('__limits__');
+    try {
+      const res = await fetch(`${API}/teacher/students/reset-all-limits`, { method: 'POST', headers: headers() });
+      if (!res.ok) throw new Error();
+      const d = await res.json().catch(() => ({}));
+      toast.success(t(`تمت إزالة ${d.removed ?? 0} صلاحية فردية — الجميع على الحد الافتراضي`, `Removed ${d.removed ?? 0} individual grants — everyone on the default limit`));
+      setProfile(null); load();
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إزالة الصلاحيات', 'Could not remove the grants'))); }
     setBusyId('');
   };
 
@@ -119,7 +182,31 @@ export default function StudentsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold">{t('الطلاب', 'Students')}</h1>
           <p className="text-muted-foreground mt-1">{t('إدارة كاملة: الأداء، الأجهزة، الحدود، وإعادة التعيين', 'Full control: performance, devices, limits & resets')}</p>
         </div>
+        {seats && (
+          <div className="flex items-center gap-2 rounded-full bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-700 ms-auto">
+            <Users className="h-4 w-4" />
+            {seats.unlimited
+              ? t(`${seats.used} مقعد مستخدم (غير محدود)`, `${seats.used} seats used (unlimited)`)
+              : t(`${seats.used} / ${seats.limit} مقعد · متاح ${seats.remaining}`, `${seats.used} / ${seats.limit} seats · ${seats.remaining} available`)}
+          </div>
+        )}
+        <a
+          href="/teacher/terms"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-semibold ${seats ? '' : 'ms-auto'}`}
+        >
+          <Calendar className="h-4 w-4" />
+          {t('الفصول وربط الطلاب', 'Terms & link students')}
+        </a>
       </div>
+
+      {seats && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground -mt-1">
+          {t(
+            'المقعد يُحسب لكل طالب عندك مرة واحدة مهما التحق بعدة كورسات. إنهاء الدروس لا يحرّر المقعد؛ يتحرّر فقط عندما لا يبقى له أي تسجيل ساري (كأن تُنهي الفصل أو تؤرشف تسجيلاته).',
+            'A seat is counted once per student in your platform however many courses they join. Finishing lessons does not free the seat; it is freed only when they have no active enrolment left (e.g. you end the term or archive their enrolments).',
+          )}
+        </p>
+      )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((s, i) => (
@@ -134,14 +221,49 @@ export default function StudentsPage() {
         ))}
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="h-4 w-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('ابحث بالاسم أو الإيميل...', 'Search by name or email...')} className="h-11 ps-10 rounded-full border-teal-100 bg-white shadow-sm focus-visible:ring-teal-500" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 max-w-md min-w-[220px]">
+          <Search className="h-4 w-4 absolute start-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('ابحث بالاسم أو الإيميل...', 'Search by name or email...')} className="h-11 ps-10 rounded-full border-teal-100 bg-white shadow-sm focus-visible:ring-teal-500" />
+        </div>
+        {students.some((s) => s.devices_count > 0) && (
+          <Button
+            variant="outline"
+            className="h-11 gap-2 rounded-full text-red-600 border-red-100 hover:bg-red-50"
+            disabled={busyId === '__all__'}
+            onClick={resetAllDevices}
+          >
+            {busyId === '__all__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+            {t('إعادة تعيين أجهزة الجميع', 'Reset all devices')}
+          </Button>
+        )}
+        {students.some((s) => s.override) && (
+          <Button
+            variant="outline"
+            className="h-11 gap-2 rounded-full"
+            disabled={busyId === '__limits__'}
+            onClick={resetAllLimits}
+          >
+            {busyId === '__limits__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+            {t('إزالة صلاحيات الأجهزة الفردية', 'Reset individual device grants')}
+          </Button>
+        )}
       </div>
 
       {loading ? <TableSkeleton rows={6} cols={4} /> :
         filtered.length === 0 ? (
-          <EmptyState icon={search ? UserX : Users} title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')} />
+          <EmptyState
+            icon={search ? UserX : Users}
+            title={search ? t('لا نتائج مطابقة', 'No matching students') : t('لا يوجد طلاب بعد', 'No students yet')}
+            description={!search ? t('شارك رابط منصتك، أو أنشئ بطاقة تسجيل برمز QR ليظهر طلابك هنا.', 'Share your platform link, or create a QR registration card to see your students here.') : undefined}
+            action={!search ? (
+              <a href="/teacher/cards">
+                <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                  <Ticket className="h-4 w-4" /> {t('أنشئ بطاقة تسجيل', 'Create a registration card')}
+                </Button>
+              </a>
+            ) : undefined}
+          />
         ) : (
           <div className="grid gap-4">
             {filtered.map((s) => (
@@ -276,6 +398,34 @@ export default function StudentsPage() {
                 </div>
               </div>
 
+              {videoReport && videoReport.summary?.videos_total > 0 && (
+                <div>
+                  <h3 className="font-semibold text-sm mb-2 flex items-center gap-1.5">
+                    <Play className="h-4 w-4 text-teal-600" />{t('تقرير مشاهدة الفيديو', 'Video watch report')}
+                    <span className="ms-auto text-[11px] font-normal text-gray-400">{videoReport.summary.videos_completed}/{videoReport.summary.videos_total} {t('مكتمل', 'done')}</span>
+                  </h3>
+                  <div className="space-y-3">
+                    {(videoReport.courses || []).filter((c: any) => (c.lessons || []).length > 0).map((c: any) => (
+                      <div key={c.enrollment_id} className="rounded-xl border p-3">
+                        <p className="text-xs font-semibold text-gray-600 mb-2">{c.course_title}</p>
+                        <div className="space-y-1.5">
+                          {(c.lessons || []).map((l: any) => (
+                            <div key={l.lesson_id} className="flex items-center gap-3">
+                              <span className={`flex h-6 w-6 items-center justify-center rounded-full shrink-0 ${l.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : l.status === 'in_progress' ? 'bg-amber-100 text-amber-600' : 'bg-gray-100 text-gray-400'}`}>
+                                {l.status === 'completed' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Play className="h-3 w-3" />}
+                              </span>
+                              <span className="flex-1 text-xs text-gray-700 truncate">{l.lesson_title}</span>
+                              <span className="text-[11px] text-gray-400 w-12 text-end">{l.coverage_percent}%</span>
+                              <div className="w-20 h-1.5 rounded-full bg-gray-100"><div className="h-1.5 rounded-full bg-teal-500" style={{ width: `${l.coverage_percent}%` }} /></div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <h3 className="font-semibold text-sm mb-2 flex items-center gap-1.5"><Award className="h-4 w-4 text-violet-500" />{t('نتائج الاختبارات', 'Exam results')}</h3>
                 <div className="space-y-2">
@@ -314,5 +464,15 @@ export default function StudentsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function StudentsPage() {
+  // `useSearchParams` requires a Suspense boundary in this Next version; the
+  // fallback keeps the shell from flashing while the params resolve.
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl p-6"><TableSkeleton rows={6} cols={4} /></div>}>
+      <StudentsPageInner />
+    </Suspense>
   );
 }

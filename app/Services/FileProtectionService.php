@@ -12,13 +12,30 @@ class FileProtectionService
 {
     public const DEFAULT_TTL = 900; // 15 minutes
 
+    /** Extensions the platform is willing to render inside the app. */
+    public const PREVIEWABLE_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+
+    /**
+     * Whether a file may be shown inside the in-app viewer.
+     * Deliberately narrow: only formats a browser can render natively.
+     */
+    public function isPreviewable(string $extension): bool
+    {
+        return in_array(strtolower($extension), self::PREVIEWABLE_EXTENSIONS, true);
+    }
+
     /**
      * Short-lived, HMAC-signed file URL bound to a specific user + lesson.
      * Useless after expiry and cannot be replayed by another user.
+     *
+     * `$mode` is an explicit hint for the media endpoint: `inline` for the
+     * in-app viewer, `attachment` for a real download. It is re-validated
+     * server-side against the lesson's access rules and the teacher's policy,
+     * so a hand-edited mode can never bypass either.
      */
-    public function fileUrl(Lesson $lesson, User $user, int $ttl = self::DEFAULT_TTL): string
+    public function fileUrl(Lesson $lesson, User $user, int $ttl = self::DEFAULT_TTL, string $mode = 'inline'): string
     {
-        return URL::to('/api/v1/lessons/'.$lesson->id.'/file?token='.$this->sign($lesson->id, $user->id, $ttl));
+        return URL::to('/api/v1/lessons/'.$lesson->id.'/file?mode='.$mode.'&token='.$this->sign($lesson->id, $user->id, $ttl));
     }
 
     public function sign(string $lessonId, string $userId, int $ttl = self::DEFAULT_TTL): string
@@ -103,9 +120,15 @@ class FileProtectionService
             return false;
         }
 
+        // Course-group restriction: a lesson shared to specific groups is only
+        // downloadable by members of one of those groups.
+        if (! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return false;
+        }
+
         $enrollment = Enrollment::where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         if (! $enrollment) {

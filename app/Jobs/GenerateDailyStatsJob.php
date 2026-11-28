@@ -48,7 +48,7 @@ class GenerateDailyStatsJob implements ShouldQueue
         ]);
 
         $this->storeStat($tenantId, $today, 'tenant.exams', null, [
-            'total_attempts' => ExamAttempt::byTenant($tenantId)->count(),
+            'total_attempts' => ExamAttempt::byTenant($tenantId)->excludePractice()->count(),
             'submitted' => ExamAttempt::byTenant($tenantId)->where('status', 'submitted')->count(),
             'avg_score' => ExamAttempt::byTenant($tenantId)->where('status', 'submitted')->avg('percentage') ?: 0,
         ]);

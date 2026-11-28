@@ -1,0 +1,115 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Fahimni — STANDALONE Caddyfile (own Caddy container, automatic HTTPS)
+#
+# This is the public TLS terminator for a clean, single-project VPS running ONLY
+# «منصة فهمني». It has NO dependency on any other project (no shared Caddy, no
+# shared network, no `import` of anything outside this file). A second edge on
+# 80/443 is impossible on a shared host, so this file is used ONLY when Fahimni
+# owns the host — which is the case for the fresh-install flow
+# (deploy/scripts/fresh-install.sh).
+#
+# Domains and upstreams are injected by Docker env (see docker-compose.caddy.yml
+# + /etc/fahimni/caddy.env):
+#   FAHIMNI_DOMAIN       apex the browser UI is served on        (fahimni.me)
+#   FAHIMNI_API_DOMAIN   host that answers webhooks/external API (api.fahimni.me)
+#   FAHIMNI_UPSTREAM     Fahimni nginx alias on the proxy network (fahimni-prod:80)
+#   ACME_EMAIL           ACME account email for Let's Encrypt     (required)
+#
+# ── CUSTOM TEACHER DOMAINS (on-demand TLS) ───────────────────────────────────
+# The apex/www/api hosts above use normal managed certificates. A teacher's OWN
+# domain (e.g. teacher.com) is NOT known when this file is written, so it is
+# handled by the `:443` catch-all below with ON-DEMAND TLS. Before issuing a
+# certificate, Caddy calls the platform's `ask` gate
+# (`/api/v1/public/tls/ask?domain=…`), which answers 200 ONLY for a domain a
+# teacher has already connected AND verified. Everything else is refused, so no
+# certificate is ever minted for a hostname that is not a real teacher site.
+# This means connecting a new domain needs NO server edit and NO Caddy reload.
+#
+# Do NOT add a second global options block. The `:80`/`:443` catch-alls below are
+# intentional and required for custom domains; the concrete apex/www/api blocks
+# always win over them for their own hostnames.
+# ─────────────────────────────────────────────────────────────────────────────
+{
+	email {$ACME_EMAIL}
+	# No admin API is published: nothing needs to mutate this config at runtime.
+	admin off
+
+	on_demand_tls {
+		# Authoritative allow-list: only a verified teacher domain (or a live
+		# platform subdomain) is issued a certificate.
+		ask http://{$FAHIMNI_UPSTREAM:fahimni-prod:80}/api/v1/public/tls/ask
+	}
+}
+
+(fahimni_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# NOTE: Permissions-Policy and Content-Security-Policy are intentionally
+		# NOT set here — the Next.js app emits them per-request (with the
+		# Freemius `payment=` allowance and a nonce'd CSP). Overriding them at
+		# the edge would weaken or break the app's own policy.
+		-Server
+		# Do not advertise the framework/version. The upstream stack (Next.js,
+		# PHP, nginx) already suppresses it, but strip it at the edge so a stale
+		# image can never leak it.
+		-X-Powered-By
+	}
+}
+
+# ── Apex: the whole platform UI + same-origin /api (BFF session cookies) ─────
+{$FAHIMNI_DOMAIN:fahimni.me} {
+	import fahimni_headers
+	encode zstd gzip
+
+	reverse_proxy {$FAHIMNI_UPSTREAM:fahimni-prod:80} {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# ── www → apex (permanent) ───────────────────────────────────────────────────
+www.{$FAHIMNI_DOMAIN:fahimni.me} {
+	redir https://{$FAHIMNI_DOMAIN:fahimni.me}{uri} permanent
+}
+
+# ── API host: only webhooks / health / signed storage, nothing else ──────────
+{$FAHIMNI_API_DOMAIN:api.fahimni.me} {
+	import fahimni_headers
+	encode zstd gzip
+
+	@api path /api/* /storage/* /up /health /.well-known/*
+	handle @api {
+		reverse_proxy {$FAHIMNI_UPSTREAM:fahimni-prod:80} {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+}
+
+# ── Catch-all: custom teacher domains (on-demand TLS) ────────────────────────
+# A hostname that matches no block above lands here. TLS is issued on demand
+# only after the `ask` gate above confirms a verified teacher domain; the
+# request is then served by the same app/nginx upstream, whose tenant-resolution
+# layer maps the Host to the right teacher (frontend proxy.ts → /public/domain).
+:443 {
+	import fahimni_headers
+	encode zstd gzip
+
+	tls {
+		on_demand
+	}
+
+	reverse_proxy {$FAHIMNI_UPSTREAM:fahimni-prod:80} {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# ── HTTP catch-all: redirect everything (incl. custom domains) to HTTPS ──────
+:80 {
+	redir https://{host}{uri} permanent
+}

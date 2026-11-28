@@ -66,7 +66,7 @@ class TeacherServiceController extends Controller
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
             'price' => $validated['price'],
-            'currency' => $validated['currency'] ?? 'JOD',
+            'currency' => $validated['currency'] ?? 'USD',
             'duration_minutes' => $validated['duration_minutes'],
             'is_active' => $validated['is_active'] ?? true,
         ]);

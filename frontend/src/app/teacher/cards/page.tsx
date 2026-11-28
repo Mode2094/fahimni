@@ -9,12 +9,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import {
   CreditCard, Plus, Copy, Check, Loader2, Trash2, Upload, FileDown, Printer,
-  QrCode, Layers, Users, CalendarDays, Ban, Package,
+  QrCode, Layers, Users, CalendarDays, Ban, Package, MessageCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import QRCode from 'qrcode';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -33,6 +35,7 @@ export default function TeacherCardsPage() {
   const [courseId, setCourseId] = useState('');
   const [count, setCount] = useState('5');
   const [expiresAt, setExpiresAt] = useState('');
+  const [accessDays, setAccessDays] = useState('');
   const [batchName, setBatchName] = useState('');
   const [generating, setGenerating] = useState(false);
 
@@ -80,12 +83,12 @@ export default function TeacherCardsPage() {
       const res = await fetch(`${API}/cards/generate`, {
         method: 'POST',
         headers: { ...headers(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ course_id: courseId, count: Number(count), expires_at: expiresAt || null, batch_id: batchName || undefined }),
+        body: JSON.stringify({ course_id: courseId, count: Number(count), expires_at: expiresAt || null, access_days: accessDays ? Number(accessDays) : undefined, batch_id: batchName || undefined }),
       });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إنشاء البطاقات', 'Could not generate the cards')); return; }
       toast.success(t(`تم إنشاء ${d.cards?.length || count} بطاقة`, `Generated ${d.cards?.length || count} cards`, locale));
-      setCourseId(''); setExpiresAt(''); setBatchName(''); setCount('5');
+      setCourseId(''); setExpiresAt(''); setAccessDays(''); setBatchName(''); setCount('5');
       load();
     } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
     setGenerating(false);
@@ -130,7 +133,35 @@ export default function TeacherCardsPage() {
     } catch { toast.error(t('تعذر تحميل القالب', 'Cannot download template')); }
   };
 
+  const exportCards = async () => {
+    try {
+      const res = await fetch(`${API}/cards/export`, { headers: headers() });
+      if (!res.ok) { toast.error(t('فشل التصدير', 'Export failed')); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `activation-cards-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error(t('تعذر التصدير', 'Cannot export')); }
+  };
+
   const copyCode = (code: string) => { navigator.clipboard.writeText(code); setCopied(code); setTimeout(() => setCopied(''), 2000); };
+
+  /**
+   * فتح واتساب برسالة جاهزة تحتوي اسم الكورس ورابط التفعيل.
+   * لا نُدرج أي بيانات طالب هنا، وفتح واتساب ليس إثباتاً على الإرسال.
+   */
+  const sendViaWhatsApp = (card: any) => {
+    const courseTitle = card.course?.title || selected?.course?.title || '';
+    const url = `${window.location.origin}/card/${card.code}`;
+    const message = [
+      t('بطاقة تفعيل الكورس', 'Course activation card'),
+      courseTitle ? `${t('الكورس', 'Course')}: ${courseTitle}` : '',
+      url,
+      t('افتح الرابط وسجّل بالكود لتبدأ التعلم.', 'Open the link and use the code to start learning.'),
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener');
+  };
 
   const ensureQr = async (code: string) => {
     if (qrData[code]) return;
@@ -149,13 +180,29 @@ export default function TeacherCardsPage() {
   };
 
   const cancelCard = async (id: string) => {
-    if (!window.confirm(t('إلغاء هذه البطاقة؟', 'Cancel this card?'))) return;
+    if (!(await confirmDialog({ description: t('إلغاء هذه البطاقة؟', 'Cancel this card?') }))) return;
     setCancellingId(id);
     try {
       const res = await fetch(`${API}/cards/${id}/cancel`, { method: 'POST', headers: headers() });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إلغاء البطاقة', 'Could not cancel the card')); return; }
       toast.success(t('تم الإلغاء', 'Cancelled'));
+      load();
+    } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
+    setCancellingId('');
+  };
+
+  const revokeCard = async (id: string) => {
+    if (!(await confirmDialog({
+      danger: true,
+      description: t('إبطال هذه البطاقة المستخدمة؟ سيُسحب وصول الطالب الذي فعّلها فوراً.', 'Revoke this used card? The student who redeemed it loses access immediately.'),
+    }))) return;
+    setCancellingId(id);
+    try {
+      const res = await fetch(`${API}/cards/${id}/revoke`, { method: 'POST', headers: headers() });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.message || t('تعذر إبطال البطاقة', 'Could not revoke the card')); return; }
+      toast.success(t('تم إبطال البطاقة وسحب الوصول', 'Card revoked and access removed'));
       load();
     } catch { toast.error(t('تعذر الاتصال', 'Cannot connect')); }
     setCancellingId('');
@@ -247,7 +294,7 @@ export default function TeacherCardsPage() {
       </div>
 
       {/* ─── Generate ─── */}
-      <Card className="border-0 shadow-sm overflow-hidden"><CardContent className="p-6 space-y-4">
+      <Card id="generate-cards" className="border-0 shadow-sm overflow-hidden scroll-mt-24"><CardContent className="p-6 space-y-4">
         <div className="flex items-center gap-2.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-500/10"><Plus className="h-4.5 w-4.5 text-teal-600" /></span>
           <div>
@@ -264,6 +311,7 @@ export default function TeacherCardsPage() {
           </div>
           <div><Label>{t('العدد', 'Count')}</Label><Input type="number" min={1} max={1000} value={count} onChange={(e) => setCount(e.target.value)} className="h-11 mt-1 border-teal-100" /></div>
           <div><Label>{t('صلاحية حتى', 'Valid until')}</Label><Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="h-11 mt-1 border-teal-100" /></div>
+          <div><Label>{t('مدة الوصول (أيام)', 'Access duration (days)')}</Label><Input type="number" min={1} max={3650} value={accessDays} onChange={(e) => setAccessDays(e.target.value)} placeholder={t('فارغ = دائم', 'Blank = lifetime')} className="h-11 mt-1 border-teal-100" /></div>
           <div><Label>{t('اسم الدفعة (اختياري)', 'Batch name (optional)')}</Label><Input value={batchName} onChange={(e) => setBatchName(e.target.value)} placeholder="دفعة 1" className="h-11 mt-1 border-teal-100" /></div>
         </div>
         <div className="flex justify-end">
@@ -284,6 +332,7 @@ export default function TeacherCardsPage() {
             </div>
           </div>
           <Button variant="outline" size="sm" className="gap-2 rounded-full" onClick={downloadTemplate}><FileDown className="h-4 w-4 text-teal-700" /> {t('تحميل القالب', 'Download template')}</Button>
+          <Button variant="outline" size="sm" className="gap-2 rounded-full" onClick={exportCards}><FileDown className="h-4 w-4 text-teal-700" /> {t('تصدير CSV', 'Export CSV')}</Button>
         </div>
         <p className="text-xs text-muted-foreground">{t('العمود الأول في الملف يجب أن يحتوي على أكواد البطاقات (سطر لكل كود). الصيغة: .xlsx أو .csv', 'First column of the file must contain card codes (one per row). Supported: .xlsx or .csv')}</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
@@ -308,7 +357,18 @@ export default function TeacherCardsPage() {
 
       {/* ─── Batches ─── */}
       {loading ? <CardSkeleton count={3} /> : batches.length === 0 ? (
-        <EmptyState icon={CreditCard} title={t('لا توجد بطاقات بعد', 'No cards yet')} description={t('أنشئ دفعة جديدة لبدء توليد بطاقات التسجيل', 'Create a new batch to start generating registration cards')} />
+        <EmptyState
+          icon={CreditCard}
+          title={t('لا توجد بطاقات بعد', 'No cards yet')}
+          description={t('أنشئ دفعة جديدة لبدء توليد بطاقات التسجيل لطلابك.', 'Create a new batch to start generating registration cards for your students.')}
+          action={
+            <a href="#generate-cards">
+              <Button className="gap-2 rounded-full text-white shadow-brand" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                <Plus className="h-4 w-4" /> {t('أنشئ دفعة', 'Create a batch')}
+              </Button>
+            </a>
+          }
+        />
       ) : (
         <>
           <Card className="border-0 shadow-sm overflow-hidden"><CardContent className="p-4">
@@ -364,6 +424,7 @@ export default function TeacherCardsPage() {
                           <p className="text-xs text-gray-500 mt-1">
                   {c.course?.title || '—'}
                   {c.expires_at && <span className="ms-2">· {t('تنتهي', 'Expires')}: {c.expires_at.split('T')[0]}</span>}
+                  {c.access_days && <span className="ms-2">· {t('وصول', 'Access')}: {c.access_days} {t('يوم', 'days')}</span>}
                   {c.status === 'redeemed' && (
                     <span className="ms-2 text-green-600">· {t('استخدمها', 'Used by')}: {c.student?.name || c.student?.full_name || c.student_id} {c.used_at ? `(${c.used_at.split('T')[0]})` : ''}</span>
                   )}
@@ -373,12 +434,22 @@ export default function TeacherCardsPage() {
                           <Button variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => toggleQr(c.code)}>
                             <QrCode className={`h-4 w-4 ${showQr === c.code ? 'text-teal-600' : ''}`} /> {showQr === c.code ? t('إخفاء', 'Hide') : 'QR'}
                           </Button>
+                          {c.status !== 'redeemed' && (
+                            <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-green-700" onClick={() => sendViaWhatsApp(c)} title={t('إرسال عبر واتساب', 'Send via WhatsApp')} aria-label={t('إرسال عبر واتساب', 'Send via WhatsApp')}>
+                              <MessageCircle className="h-4 w-4" /> {t('واتساب', 'WhatsApp')}
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" onClick={() => copyCode(c.code)} title={t('نسخ الكود', 'Copy code')} aria-label={t('نسخ الكود', 'Copy code')}>
                             {copied === c.code ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                           </Button>
                           {c.status !== 'redeemed' && (
                             <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-600" onClick={() => cancelCard(c.id)} disabled={cancellingId === c.id} title={t('إلغاء', 'Cancel')} aria-label={t('إلغاء', 'Cancel')}>
                               <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {c.status === 'redeemed' && (
+                            <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-600" onClick={() => revokeCard(c.id)} disabled={cancellingId === c.id} title={t('إبطال وسحب الوصول', 'Revoke and remove access')} aria-label={t('إبطال وسحب الوصول', 'Revoke and remove access')}>
+                              <Ban className="h-4 w-4" />
                             </Button>
                           )}
                         </div>

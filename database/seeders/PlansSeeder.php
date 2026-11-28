@@ -54,7 +54,7 @@ class PlansSeeder extends Seeder
                     'pdfs_limit' => '50',
                     'blog_posts_limit' => '10',
                     'cards_limit' => '500',
-                    'appointments_limit' => '0',
+                    'appointments_limit' => 'unlimited',
                     'services_limit' => '0',
                     'live_minutes_limit' => '0',
                     'recordings_limit' => '0',
@@ -76,7 +76,7 @@ class PlansSeeder extends Seeder
                     // ── Gates (Disabled) ───────────────
                     'live_stream_enabled' => 'false',
                     'live_recording_enabled' => 'false',
-                    'appointments_enabled' => 'false',
+                    'appointments_enabled' => 'true',
                     'paid_services_enabled' => 'false',
                     'multi_teacher_enabled' => 'false',
                     'custom_branding_enabled' => 'false',

@@ -8,8 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog, promptDialog } from '@/components/ui/confirm-dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -17,6 +19,7 @@ import {
   Copy, Share2, ExternalLink, Link2, MonitorPlay,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -33,6 +36,7 @@ export default function LiveSessionsPage() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>({ ...EMPTY });
   const [busyId, setBusyId] = useState('');
+  const [recInputs, setRecInputs] = useState<Record<string, string>>({});
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -71,7 +75,7 @@ export default function LiveSessionsPage() {
       if (!res.ok) throw new Error();
       toast.success(editing ? t('تم تحديث الجلسة', 'Session updated') : t('تم إنشاء الجلسة — شارك رابط الانضمام مع طلابك', 'Session created — share the join link with your students'));
       setShowForm(false); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ الجلسة', 'Could not save the session'))); }
     setBusyId('');
   };
 
@@ -79,20 +83,36 @@ export default function LiveSessionsPage() {
     setBusyId(id);
     try {
       const res = await fetch(`${API}/teacher/live-sessions/${id}/${act}`, { method: 'POST', headers: headers() });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر تحديث حالة الجلسة', 'Could not update the session status')); return; }
       toast.success(act === 'start' ? t('الحصة جاهزة — افتح رابط Google Meet كمضيف', 'Session ready — open the Google Meet link as host') : act === 'end' ? t('تم إنهاء الحصة', 'Session ended') : t('تم إلغاء الجلسة', 'Session cancelled'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر تحديث حالة الجلسة', 'Could not update the session status'))); }
+    setBusyId('');
+  };
+
+  const attachRecording = async (id: string) => {
+    const url = (recInputs[id] || '').trim();
+    if (!url) { toast.error(t('ألصق رابط التسجيل أولاً', 'Paste the recording link first')); return; }
+    setBusyId(id);
+    try {
+      const res = await fetch(`${API}/teacher/live-sessions/${id}/recording`, {
+        method: 'POST', headers: headers(), body: JSON.stringify({ record_url: url }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || t('تعذر حفظ رابط التسجيل', 'Could not save the recording link')); return; }
+      toast.success(t('تم حفظ رابط التسجيل', 'Recording link saved'));
+      setRecInputs((p) => ({ ...p, [id]: '' }));
+      load();
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حفظ رابط التسجيل', 'Could not save the recording link'))); }
     setBusyId('');
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm(t('حذف هذه الجلسة نهائياً؟', 'Delete this session permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذه الجلسة نهائياً؟', 'Delete this session permanently?') }))) return;
     try {
       const res = await fetch(`${API}/teacher/live-sessions/${id}`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم الحذف', 'Deleted')); load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر حذف الجلسة', 'Could not delete the session'))); }
   };
 
   const copyLink = async (s: any) => {
@@ -101,7 +121,7 @@ export default function LiveSessionsPage() {
       await navigator.clipboard.writeText(url);
       toast.success(t('تم نسخ رابط الانضمام', 'Join link copied'));
     } catch {
-      window.prompt(t('انسخ الرابط', 'Copy link:'), url);
+      void promptDialog({ inputLabel: t('انسخ الرابط', 'Copy link:'), defaultValue: url });
     }
   };
 
@@ -160,8 +180,12 @@ export default function LiveSessionsPage() {
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-gray-500">
                         <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{s.scheduled_at ? new Date(s.scheduled_at).toLocaleString() : t('فوري', 'Now')}</span>
                         <span className="flex items-center gap-1"><Users className="h-3 w-3" />{s.max_participants}</span>
-                        {s.record_enabled && <Badge className="bg-red-50 text-red-600 border-0 text-[10px]">● {t('تسجيل', 'Rec')}</Badge>}
-                        {s.record_url && <span className="text-gray-400">{t('تسجيل:', 'Rec:')} <a href={s.record_url} target="_blank" className="text-teal-600 underline">{t('عرض', 'view')}</a></span>}
+                        {s.record_url ? (
+                          <span className="text-gray-400">{t('التسجيل:', 'Rec:')} <a href={s.record_url} target="_blank" rel="noreferrer" className="text-teal-600 underline">{t('عرض', 'view')}</a></span>
+                        ) : s.record_enabled ? (
+                          // Google Meet لا يسجّل تلقائياً — التذكير صريح.
+                          <span className="text-[10px] text-amber-600">{t('سجّل في Meet ثم ألصق الرابط بالأسفل', 'Record in Meet, then paste the link below')}</span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -198,6 +222,21 @@ export default function LiveSessionsPage() {
                       <span className="font-mono text-teal-700 truncate" dir="ltr">{s.join_url}</span>
                     )}
                   </div>
+                  {(s.status === 'ended' || s.record_enabled || s.record_url) && (
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <Input
+                        value={recInputs[s.id] || ''}
+                        onChange={(e) => setRecInputs((p) => ({ ...p, [s.id]: e.target.value }))}
+                        placeholder={t('ألصق رابط التسجيل (Drive / YouTube)', 'Paste recording link (Drive / YouTube)')}
+                        dir="ltr"
+                        className="h-9 text-xs max-w-sm"
+                      />
+                      <Button size="sm" variant="outline" className="gap-1.5 rounded-full text-xs" onClick={() => attachRecording(s.id)} disabled={busyId === s.id}>
+                        {busyId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                        {t('حفظ رابط التسجيل', 'Save recording link')}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -217,6 +256,10 @@ export default function LiveSessionsPage() {
             <div className="space-y-2"><Label>{t('الموعد (اختياري)', 'Schedule (optional)')}</Label><Input type="datetime-local" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} className="h-11" /></div>
             <div className="space-y-2"><Label>{t('المدة المتوقعة (دقيقة)', 'Expected duration (minutes)')}</Label><Input type="number" min={5} max={600} value={form.duration_minutes} onChange={(e) => setForm({ ...form, duration_minutes: e.target.value })} className="h-11" /></div>
             <div className="space-y-2"><Label>{t('الحد الأقصى للمشاركين', 'Max participants')}</Label><Input type="number" value={form.max_participants} onChange={(e) => setForm({ ...form, max_participants: e.target.value })} className="h-11" /></div>
+            <div className="space-y-1">
+              <Switch checked={form.record_enabled} onCheckedChange={(v) => setForm({ ...form, record_enabled: v })} label={t('سأُسجّل الحصة وأرفق الرابط لاحقاً', 'I will record the session and attach the link later')} />
+              <p className="text-[11px] text-gray-400 leading-relaxed">{t('Google Meet لا يسجّل تلقائياً — فعّل التسجيل داخل Meet، ثم ألصق الرابط في صفحة الجلسة.', 'Google Meet does not record automatically — turn on recording inside Meet, then paste the link on the session card.')}</p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>{t('إلغاء', 'Cancel')}</Button>

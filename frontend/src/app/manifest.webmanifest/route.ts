@@ -31,7 +31,7 @@ const PLATFORM_MANIFEST = {
   name: SITE_NAME,
   short_name: BRAND_NAME_SHORT,
   description: 'منصة تعليمية متكاملة للمعلمين: دورات، طلاب، امتحانات وبث مباشر.',
-  start_url: '/',
+  start_url: '/app',
   scope: '/',
   id: '/',
   display: 'standalone',
@@ -46,6 +46,54 @@ const PLATFORM_MANIFEST = {
     { src: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
   ],
 } as const;
+
+/**
+ * One installable platform app, three identities. When the requesting page is a
+ * signed-in student area we serve the student identity (name, theme, shortcuts)
+ * so "فهمني للطلاب" is what lands on the home screen — while sharing the SAME
+ * `id`/`scope` as the platform manifest, so a device never ends up with two
+ * colliding Fahimni apps. Teacher storefronts keep their own tenant manifest.
+ */
+const STUDENT_PATHS =
+  /^\/(?:app|my-learning|my-notes|exams|results|certificates|leaderboard|messages|notifications|announcements|my-bookings|profile|community|course|exam|live|book|checkout)(?:\/|$)/;
+
+const STUDENT_MANIFEST = {
+  name: 'فهمني للطلاب — Fahimni Students',
+  short_name: 'فهمني للطلاب',
+  description: 'تطبيق فهمني للطلاب: كورساتك ودروسك وواجباتك واختباراتك — بواجهة مصمّمة للهاتف.',
+  start_url: '/app',
+  scope: '/',
+  id: '/',
+  display: 'standalone',
+  orientation: 'portrait',
+  background_color: '#ffffff',
+  theme_color: '#0d9488',
+  lang: 'ar',
+  dir: 'rtl',
+  categories: ['education'],
+  prefer_related_applications: false,
+  icons: [
+    { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    { src: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+  ],
+  shortcuts: [
+    { name: 'كورساتي', short_name: 'كورساتي', url: '/my-learning' },
+    { name: 'الاختبارات', short_name: 'الاختبارات', url: '/exams' },
+    { name: 'الرسائل', short_name: 'الرسائل', url: '/messages' },
+    { name: 'الإشعارات', short_name: 'الإشعارات', url: '/notifications' },
+  ],
+} as const;
+
+/** Pathname of the page that requested the manifest (Referer), or ''. */
+function refererPath(referer: string): string {
+  try {
+    return new URL(referer).pathname;
+  } catch {
+    return referer.startsWith('/') ? referer.split(/[?#]/)[0] : '';
+  }
+}
 
 type SitePayload = {
   slug?: string;
@@ -85,11 +133,38 @@ function shortName(name: string): string {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * The same URL (/manifest.webmanifest) serves a DIFFERENT document per tenant,
+ * resolved from Referer/Host. A shared cache (Cloudflare/CDN) that keys on the
+ * URL alone could hand teacher A's name/logo/start_url to teacher B, so the
+ * response must never be publicly shareable: `private, no-store` stops shared
+ * caches storing it at all, and `Vary` keeps any honouring cache correct.
+ */
+const MANIFEST_HEADERS = {
+  'Content-Type': 'application/manifest+json; charset=utf-8',
+  'Cache-Control': 'private, no-store',
+  'Vary': 'Referer, Host',
+} as const;
+
 export async function GET(request: Request) {
   const referer = request.headers.get('referer') || '';
   const host = (request.headers.get('host') || '').split(':')[0]?.toLowerCase() || '';
 
+  // 0) Student app: any student area installs "فهمني للطلاب" (same app id as
+  //    the platform, so the two identities never collide on one device).
+  const path = refererPath(referer);
+  if (path && STUDENT_PATHS.test(path)) {
+    return new NextResponse(JSON.stringify(STUDENT_MANIFEST), {
+      headers: MANIFEST_HEADERS,
+    });
+  }
+
   let site: SitePayload | null = null;
+  // True when the tenant was resolved from the Host (custom domain /
+  // `{slug}.{platform}` subdomain) rather than a `/t/{slug}` Referer: on the
+  // teacher's own host the site is served from the ROOT, so the PWA must
+  // install from `/`, not the internal `/t/{slug}`.
+  let hostResolved = false;
 
   // 1) Referer-based tenant resolution: same-origin page /t/{slug} → slug.
   const match = referer.match(/\/t\/([^/?#]+)/);
@@ -101,16 +176,18 @@ export async function GET(request: Request) {
   // 2) Host-based resolution: custom domains and teacher subdomains.
   if (!site && host && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/.test(host)) {
     site = await fetchSite(`/public/domain/${encodeURIComponent(host)}`);
+    hostResolved = Boolean(site?.slug);
   }
 
   if (!site || !site.slug) {
     return new NextResponse(JSON.stringify(PLATFORM_MANIFEST), {
-      headers: { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'public, max-age=60' },
+      headers: MANIFEST_HEADERS,
     });
   }
 
   const name = site.name?.trim() || 'منصتي';
-  const teacherPath = `/t/${encodeURIComponent(site.slug)}`;
+  const basePath = hostResolved ? '' : `/t/${encodeURIComponent(site.slug)}`;
+  const start_url = basePath || '/';
   const logo = site.logo_url ? resolveIcon(site.logo_url) : null;
 
   const manifest = {
@@ -119,9 +196,9 @@ export async function GET(request: Request) {
     description:
       site.site_config?.about_text?.trim().slice(0, 200) ||
       'منصة تعليمية: دورات، طلاب، امتحانات وبث مباشر.',
-    start_url: teacherPath,
-    scope: `${teacherPath}/`,
-    id: teacherPath,
+    start_url,
+    scope: basePath ? `${basePath}/` : '/',
+    id: start_url,
     display: 'standalone',
     background_color: '#ffffff',
     theme_color: site.primary_color || '#2563eb',
@@ -137,6 +214,6 @@ export async function GET(request: Request) {
   };
 
   return new NextResponse(JSON.stringify(manifest), {
-    headers: { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'public, max-age=60' },
+    headers: MANIFEST_HEADERS,
   });
 }

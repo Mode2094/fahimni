@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '@/store/locale';
+import AppCard from '@/components/pwa/app-card';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardSkeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 import {
   Star, Trophy, Medal, Rocket, Play, BookOpen, GraduationCap, CheckCircle2,
   Lock, Coins, History, Heart, Activity as ActivityIcon, CalendarDays, ArrowLeft,
-  BookMarked, Target, Award, TrendingUp,
+  BookMarked, Target, Award, TrendingUp, User, Flame,
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -39,12 +41,12 @@ const ICONS: Record<string, any> = {
 };
 
 const TYPE_META: Record<string, { color: string; bg: string }> = {
-  login: { color: '#0d9488', bg: '#eff6ff' },
+  login: { color: '#0d9488', bg: '#f0fdfa' },
   lesson: { color: '#059669', bg: '#ecfdf5' },
   exam: { color: '#7c3aed', bg: '#f5f3ff' },
   course: { color: '#d97706', bg: '#fffbeb' },
   achievement: { color: '#e11d48', bg: '#fff1f2' },
-  enrollment: { color: '#0891b2', bg: '#ecfeff' },
+  enrollment: { color: '#0d9488', bg: '#f0fdfa' },
   point: { color: '#475569', bg: '#f8fafc' },
 };
 
@@ -57,6 +59,7 @@ export default function ProfilePage() {
   const [activity, setActivity] = useState<any[]>([]);
   const [points, setPoints] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [leaderboardEnabled, setLeaderboardEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const headers = () => {
@@ -78,6 +81,7 @@ export default function ProfilePage() {
       setActivity(act.activity || []);
       setPoints(pt.history || []);
       setLeaderboard(lb.leaderboard || []);
+      setLeaderboardEnabled(lb.enabled !== false);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
@@ -89,7 +93,7 @@ export default function ProfilePage() {
   };
 
   if (loading) return <div className="px-4 py-8"><CardSkeleton count={4} /></div>;
-  if (!data) return <div className="flex items-center justify-center h-screen text-gray-400">{t('غير موجود', 'Not found')}</div>;
+  if (!data) return <div className="px-4 py-8"><EmptyState icon={User} title={t('غير موجود', 'Not found')} /></div>;
 
   const s = data.stats;
   const myRank = data.stats.rank;
@@ -115,7 +119,7 @@ export default function ProfilePage() {
         <CardContent className="p-6 -mt-12">
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-400 text-white font-bold text-3xl ring-4 ring-white shadow-lg">
-              {data.avatar_url ? <img src={data.avatar_url} className="w-full h-full object-cover rounded-2xl" alt="" /> : data.name?.[0]?.toUpperCase()}
+              {data.avatar_url ? <img src={data.avatar_url} className="w-full h-full object-cover rounded-2xl" alt={data.name || t('الصورة الشخصية', 'Profile photo')} /> : data.name?.[0]?.toUpperCase()}
             </div>
             <div className="flex-1 pt-10">
               <h1 className="text-2xl font-bold">{data.name}</h1>
@@ -123,12 +127,18 @@ export default function ProfilePage() {
             </div>
             <div className="flex gap-2 pt-10">
               <Badge className="bg-amber-100 text-amber-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Coins className="h-3.5 w-3.5" />{s.points} {t('نقطة', 'pts')}</Badge>
-              {myRank && <Badge className="bg-teal-100 text-teal-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Trophy className="h-3.5 w-3.5" />{t('الترتيب', 'Rank')} #{myRank}</Badge>}
+              {(s.streak?.current ?? 0) > 0 && (
+                <Badge data-testid="streak-badge" className="bg-orange-100 text-orange-700 border-0 gap-1 px-3 py-1.5 rounded-full">
+                  <Flame className="h-3.5 w-3.5" />{s.streak.current} {t('يوم متتالي', 'day streak')}
+                </Badge>
+              )}
+              {leaderboardEnabled && myRank && <Badge className="bg-teal-100 text-teal-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Trophy className="h-3.5 w-3.5" />{t('الترتيب', 'Rank')} #{myRank}</Badge>}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-6">
             {[
+              { label: t('أيام متتالية', 'Day streak'), value: s.streak?.current ?? 0, icon: Flame, color: '#ea580c' },
               { label: t('كورسات', 'Courses'), value: `${s.courses_completed}/${s.courses_count}`, icon: GraduationCap, color: '#0d9488' },
               { label: t('متوسط التقدم', 'Avg progress'), value: `${s.avg_progress}%`, icon: TrendingUp, color: '#7c3aed' },
               { label: t('دروس مكتملة', 'Lessons'), value: s.lessons_completed, icon: BookOpen, color: '#059669' },
@@ -159,7 +169,7 @@ export default function ProfilePage() {
           <div className="grid lg:grid-cols-2 gap-4">
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <h3 className="font-semibold mb-3 flex items-center gap-2"><BookOpen className="h-4 w-4 text-teal-600" />{t('تقدمي في الكورسات', 'My course progress')}</h3>
-              {(data.enrollments || []).length === 0 && <p className="text-sm text-gray-400">{t('لا توجد كورسات مسجلة', 'No enrolled courses')}</p>}
+              {(data.enrollments || []).length === 0 && <EmptyState className="border-0 bg-transparent py-6" title={t('لا توجد كورسات مسجلة', 'No enrolled courses')} />}
               <div className="space-y-3">
                 {(data.enrollments || []).map((e: any) => (
                   <a key={e.course_id} href={`/course/${e.course_id}/learn`} className="block">
@@ -175,16 +185,17 @@ export default function ProfilePage() {
               </div>
             </CardContent></Card>
 
+            {leaderboardEnabled && (
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <h3 className="font-semibold mb-3 flex items-center gap-2"><Trophy className="h-4 w-4 text-amber-500" />{t('ترتيبي بين الطلاب', 'My ranking')}</h3>
-              {leaderboard.length === 0 ? <p className="text-sm text-gray-400">{t('لا يوجد ترتيب بعد', 'No ranking yet')}</p> : (
+              {leaderboard.length === 0 ? <EmptyState className="border-0 bg-transparent py-6" title={t('لا يوجد ترتيب بعد', 'No ranking yet')} /> : (
                 <div className="space-y-2">
                   {leaderboard.slice(0, 5).map((l: any) => (
-                    <div key={l.user_id} className={`flex items-center gap-3 p-2.5 rounded-xl ${l.user_id === data.id ? 'bg-teal-50 border border-teal-200' : 'border'}`}>
+                    <div key={l.rank} className={`flex items-center gap-3 p-2.5 rounded-xl ${l.is_me ? 'bg-teal-50 border border-teal-200' : 'border'}`}>
                       <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold shrink-0 ${l.rank === 1 ? 'bg-amber-100 text-amber-700' : l.rank === 2 ? 'bg-gray-200 text-gray-600' : l.rank === 3 ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'}`}>{l.rank}</span>
                       <div className="flex-1 flex items-center gap-2 min-w-0">
-                        {l.user_id === data.id && <Star className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
-                        <span className="text-sm font-medium truncate">{l.name}{l.user_id === data.id && <span className="text-teal-700"> ({t('أنا', 'me')})</span>}</span>
+                        {l.is_me && <Star className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                        <span className="text-sm font-medium truncate">{l.name}{l.is_me && <span className="text-teal-700"> ({t('أنا', 'me')})</span>}</span>
                       </div>
                       <span className="text-sm font-bold text-amber-600 shrink-0">{l.points}</span>
                     </div>
@@ -193,7 +204,10 @@ export default function ProfilePage() {
                 </div>
               )}
             </CardContent></Card>
+            )}
           </div>
+
+          <AppCard />
 
           <Card className="border-0 shadow-sm"><CardContent className="p-5">
             <h3 className="font-semibold mb-3 flex items-center gap-2"><Trophy className="h-4 w-4 text-violet-500" />{t('أحدث الإنجازات', 'Latest achievements')}</h3>
@@ -241,7 +255,7 @@ export default function ProfilePage() {
       {/* ─── Activity ────────────────────────────── */}
       {tab === 'activity' && (
         <Card className="border-0 shadow-sm"><CardContent className="p-5">
-          {activity.length === 0 && <p className="text-sm text-gray-400 text-center py-8">{t('لا يوجد نشاط بعد', 'No activity yet')}</p>}
+          {activity.length === 0 && <EmptyState className="border-0 bg-transparent py-8" title={t('لا يوجد نشاط بعد', 'No activity yet')} />}
           <div className="relative space-y-0">
             {activity.map((a: any, i: number) => {
               const meta = TYPE_META[a.type] || TYPE_META.point;
@@ -269,7 +283,7 @@ export default function ProfilePage() {
             <Coins className="h-8 w-8" />
             <div><div className="text-2xl font-bold">{s.points}</div><div className="text-sm text-white/80">{t('إجمالي النقاط', 'Total points')}</div></div>
           </div>
-          {points.length === 0 && <p className="text-sm text-gray-400 text-center py-6">{t('لا نقاط بعد — أكمل الدروس والاختبارات لتكسب النقاط!', 'No points yet — complete lessons and exams to earn points!')}</p>}
+          {points.length === 0 && <EmptyState className="border-0 bg-transparent py-6" title={t('لا نقاط بعد — أكمل الدروس والاختبارات لتكسب النقاط!', 'No points yet — complete lessons and exams to earn points!')} />}
           <div className="space-y-2">
             {points.map((p: any) => {
               const reason = String(p.reason || '');
@@ -296,11 +310,7 @@ export default function ProfilePage() {
       {tab === 'favorites' && (
         <div className="space-y-3">
           {(data.favorites || []).length === 0 && (
-            <Card className="border-0 shadow-sm"><CardContent className="flex flex-col items-center gap-4 py-12 text-gray-400">
-              <Heart className="h-12 w-12 opacity-40" />
-              <p className="text-lg">{t('لا توجد كورسات مفضلة بعد', 'No favorite courses yet')}</p>
-              <p className="text-sm">{t('اضغط على علامة القلب في صفحة تعليمي لإضافتها هنا', 'Tap the heart on a course in My Learning to add it here')}</p>
-            </CardContent></Card>
+            <EmptyState icon={Heart} title={t('لا توجد كورسات مفضلة بعد', 'No favorite courses yet')} description={t('اضغط على علامة القلب في صفحة تعليمي لإضافتها هنا', 'Tap the heart on a course in My Learning to add it here')} />
           )}
           {(data.favorites || []).map((f: any) => (
             <Card key={f.course_id} className="border-0 shadow-sm">
@@ -314,7 +324,7 @@ export default function ProfilePage() {
                   </div>
                 </div>
                 <a href={`/course/${f.course_id}/learn`}><Button size="sm" variant="outline" className="rounded-full gap-1"><BookOpen className="h-3.5 w-3.5" />{t('متابعة', 'Continue')}</Button></a>
-                <Button size="sm" variant="ghost" className="rounded-full text-rose-500" onClick={() => toggleFavorite(f.course_id)}><Heart className="h-4 w-4 fill-rose-500" /></Button>
+                <Button size="sm" variant="ghost" className="rounded-full text-rose-500" aria-label={t('إزالة من المفضلة', 'Remove from favorites')} onClick={() => toggleFavorite(f.course_id)}><Heart className="h-4 w-4 fill-rose-500" /></Button>
               </CardContent>
             </Card>
           ))}

@@ -45,10 +45,13 @@ export default function AdminBiPage() {
     finally { setRecalc(false); }
   };
 
-  const monthlyRev = Number(bi?.monthly_revenue ?? 0);
+  const monthlyRev = Number(bi?.monthly_revenue_usd ?? bi?.monthly_revenue ?? 0);
   const monthlyCost = Number(bi?.monthly_infra_cost ?? 0);
   const margin = Number(bi?.platform_margin ?? 0);
-  const totalSubs = (bi?.plans || []).reduce((a: number, p: any) => a + Number(p.subscribers ?? 0), 0);
+  // المدفوع والتجريبي منفصلان: الإيراد يُحسب من المدفوع فقط، فدمجهما كان
+  // يوهم بـ 12 «مشتركاً» مع إيراد صفر (12 تجربة مجانية فعلياً).
+  const paidSubs = (bi?.plans || []).reduce((a: number, p: any) => a + Number(p.paid_subscribers ?? 0), 0);
+  const trialSubs = (bi?.plans || []).reduce((a: number, p: any) => a + Number(p.trial_subscribers ?? 0), 0);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -74,11 +77,12 @@ export default function AdminBiPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <p className="text-xs text-gray-400 flex items-center gap-1"><CircleDollarSign className="h-3.5 w-3.5" />{t('إيراد الشهر', 'Monthly revenue')}</p>
-              <p className="text-2xl font-bold mt-1">{monthlyRev} {bi.revenue_currency || 'JOD'}</p>
+              <p className="text-2xl font-bold mt-1">{monthlyRev} {bi.revenue_currency || 'USD'}</p>
             </CardContent></Card>
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
-              <p className="text-xs text-gray-400 flex items-center gap-1"><Users className="h-3.5 w-3.5" />{t('المشتركون', 'Subscribers')}</p>
-              <p className="text-2xl font-bold mt-1">{totalSubs}</p>
+              <p className="text-xs text-gray-400 flex items-center gap-1"><Users className="h-3.5 w-3.5" />{t('المشتركون (مدفوعون)', 'Subscribers (paid)')}</p>
+              <p className="text-2xl font-bold mt-1">{paidSubs}</p>
+              {trialSubs > 0 && <p className="text-[11px] text-gray-400 mt-0.5">{t(`+ ${trialSubs} تجربة مجانية`, `+ ${trialSubs} free trial${trialSubs === 1 ? '' : 's'}`)}</p>}
             </CardContent></Card>
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <p className="text-xs text-gray-400 flex items-center gap-1"><HardDrive className="h-3.5 w-3.5" />{t('تكلفة البنية', 'Infra cost')}</p>
@@ -92,12 +96,13 @@ export default function AdminBiPage() {
 
           {/* ─── ربحية الخطط (مبسطة) ─────────────────── */}
           <Card className="border-0 shadow-sm"><CardContent className="p-6">
-            <h3 className="font-bold mb-4">{t('ربحية الخطط', 'Plan profitability')}</h3>
+            <h3 className="font-bold mb-1">{t('ربحية الخطط', 'Plan profitability')}</h3>
+            <p className="text-xs text-gray-400 mb-4">{t('الأرقام لكل مشترك على أساس أقصى استخدام للخطة (أسوأ حالة).', 'Figures are per subscriber at the plan’s maximum usage (worst case).')}</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-slate-50 text-xs text-gray-500">
-                    {[t('الخطة', 'Plan'), t('السعر', 'Price'), t('مشتركون', 'Subscribers'), t('ربح متوقع', 'Expected profit'), t('الحالة', 'Status')].map((h, i) => (
+                    {[t('الخطة', 'Plan'), t('السعر', 'Price'), t('مشتركون', 'Subscribers'), t('ربح متوقع/مشترك', 'Expected profit / subscriber'), t('الحالة', 'Status')].map((h, i) => (
                       <th key={i} className="px-4 py-3 text-start font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -107,7 +112,10 @@ export default function AdminBiPage() {
                     <tr key={p.plan_id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 font-medium">{p.plan_name}</td>
                       <td className="px-4 py-3">{p.price} {p.currency}</td>
-                      <td className="px-4 py-3">{p.subscribers}</td>
+                      <td className="px-4 py-3">
+                        {p.paid_subscribers ?? p.subscribers}
+                        {(p.trial_subscribers ?? 0) > 0 && <span className="text-[11px] text-gray-400"> + {p.trial_subscribers} {t('تجربة', 'trial')}</span>}
+                      </td>
                       <td className={`px-4 py-3 font-semibold ${p.expected_profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{p.expected_profit} USD</td>
                       <td className="px-4 py-3">
                         {p.loss ? <span className="text-red-600 font-medium">{t('خاسرة', 'Loss')}</span> : p.margin_percentage < 40 ? <span className="text-amber-600 font-medium">{t('هامش ضعيف', 'Thin')}</span> : <span className="text-emerald-600 font-medium">{t('مربحة', 'Profitable')}</span>}
@@ -141,6 +149,9 @@ export default function AdminBiPage() {
                         </div>
                       ))}
                     </div>
+                    {Number(p.minimum_monthly ?? 0) > 0 && (
+                      <p className="text-[10px] text-gray-400 mt-2">{t(`يشمل حداً أدنى شهرياً ${p.minimum_monthly} ${p.currency}`, `Includes a ${p.minimum_monthly} ${p.currency} monthly minimum`)}</p>
+                    )}
                   </div>
                 ))}
               </div>

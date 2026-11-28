@@ -252,7 +252,7 @@ class PlatformIndex
     {
         return [
             ['key' => 'page:dashboard', 'label_ar' => 'لوحة التحكم', 'synonyms' => ['لوحه التحكم', 'لوحه', 'الرئيسيه', 'الرئيسية', 'الصفحة الرئيسية', 'dashboard', 'home'], 'gate' => null, 'path' => '/teacher/dashboard', 'desc_ar' => 'نظرة يومية على منصتك: الإحصائيات، استخدام الخطة، الدروس والمواعيد القادمة، والأداء.', 'actions_ar' => ['إنشاء كورس', 'إدارة الكورسات', 'التحليلات']],
-            ['key' => 'page:courses', 'label_ar' => 'الكورسات', 'synonyms' => ['كورس', 'كورسات', 'الدورات', 'دوره', 'دورة', 'courses', 'course', 'مواد', 'الماده', 'المادة', 'فيديو', 'درس', 'دروس', 'اضيف درس', 'وحدة', 'وحدات', 'اضيف وحدة', 'اضيف فيديو', 'محتوي', 'محتوى'], 'gate' => null, 'path' => '/courses', 'desc_ar' => 'إنشاء وإدارة الكورسات: وحدات، دروس، اختبارات، واجبات، محتوى، ونشر.', 'actions_ar' => ['كورس جديد', 'إدارة', 'نشر/إلغاء نشر', 'معاينة', 'بحث']],
+            ['key' => 'page:courses', 'label_ar' => 'الكورسات', 'synonyms' => ['كورس', 'كورسات', 'الدورات', 'دوره', 'دورة', 'courses', 'course', 'مواد', 'الماده', 'المادة', 'فيديو', 'درس', 'دروس', 'اضيف درس', 'وحدة', 'وحدات', 'اضيف وحدة', 'اضيف فيديو', 'محتوي', 'محتوى'], 'gate' => null, 'path' => '/teacher/courses', 'desc_ar' => 'إنشاء وإدارة الكورسات: وحدات، دروس، اختبارات، واجبات، محتوى، ونشر.', 'actions_ar' => ['كورس جديد', 'إدارة', 'نشر/إلغاء نشر', 'معاينة', 'بحث']],
             ['key' => 'page:students', 'label_ar' => 'الطلاب', 'synonyms' => ['طالب', 'طلاب', 'تلميذ', 'تلاميذ', 'الدارسين', 'students', 'student'], 'gate' => null, 'path' => '/students', 'desc_ar' => 'إدارة الطلاب: ملف كامل، نشاط، نتائج، أجهزة، حدود.', 'actions_ar' => ['الملف', 'تحديد حد الأجهزة', 'إعادة تعيين الأجهزة']],
             ['key' => 'page:cards', 'label_ar' => 'البطاقات', 'synonyms' => ['بطاقه', 'بطاقات', 'كارت', 'كروت', 'كود', 'اكواد', 'التسجيل', 'cards', 'activation', 'كوبون', 'رموز', 'يسترد', 'استرداد', 'استرد', 'يفعّل الكود', 'يريد الكود'], 'gate' => 'cards_enabled', 'path' => '/teacher/cards', 'desc_ar' => 'توليد بطاقات تسجيل برمز QR، استيراد Excel، طباعة الدفعات، تتبع الاستخدام.', 'actions_ar' => ['إنشاء بطاقات', 'استيراد', 'طباعة الدفعة', 'إلغاء', 'نسخ الكود']],
             ['key' => 'page:appointments', 'label_ar' => 'المواعيد', 'synonyms' => ['موعد', 'مواعيد', 'حجز', 'حجوزات', 'توفر', 'اوقات', 'اوقات', 'appointment', 'booking', 'جدوله', 'جدولة'], 'gate' => 'appointments_enabled', 'path' => '/teacher/appointments', 'desc_ar' => 'حجوزات الطلاب (تأكيد/رفض/إنهاء) وتحديد أوقات التوفر الأسبوعية.', 'actions_ar' => ['تأكيد', 'رفض', 'إنهاء', 'رابط الاجتماع', 'أوقات التوفر']],
@@ -278,7 +278,7 @@ class PlatformIndex
     private static function workflowPath(string $key): ?string
     {
         return match ($key) {
-            'create_course', 'upload_video', 'create_exam' => '/courses',
+            'create_course', 'upload_video', 'create_exam' => '/teacher/courses',
             'live_stream' => '/teacher/live',
             'registration_card' => '/teacher/cards',
             'booking_service' => '/teacher/appointments',

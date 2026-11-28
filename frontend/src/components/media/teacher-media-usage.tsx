@@ -72,7 +72,7 @@ export default function TeacherMediaUsage() {
               <p className="text-[11px] text-muted-foreground">{t('التخزين والبث والتسجيلات', 'Storage, live & recordings')}</p>
             </div>
           </div>
-          <button onClick={() => router.push('/courses')} className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-3.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100">
+          <button onClick={() => router.push('/teacher/courses')} className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-3.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100">
             {t('إدارة المحتوى', 'Manage content')}
           </button>
         </div>
@@ -122,6 +122,14 @@ export default function TeacherMediaUsage() {
             );
           })}
         </div>
+
+        {/* يوضّح أن حد الفيديوهات لمنصتك كاملة (كل الكورسات) وأن العدد يختلف عن المساحة. */}
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          {t(
+            'عدد الفيديوهات يُحسب لمنصتك كاملة (كل الكورسات معًا)، وليس لكل كورس. وهو منفصل تمامًا عن مساحة التخزين: قد يكون لديك عدد فيديوهات صغير وحجم كبير، أو العكس.',
+            'The video count applies to your whole platform (all courses together), not per course. It is separate from storage space: you may have few videos that are large, or many that are small.',
+          )}
+        </p>
 
         {usage.storage.exceeded && (
           <button

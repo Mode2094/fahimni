@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Loader2, ShieldCheck, CheckCircle2, Crown, ArrowLeft, ArrowRight, Lock, Zap, Headset, ExternalLink, CreditCard, Clock } from 'lucide-react';
 import { toast } from 'sonner';
+import { track } from '@/lib/analytics';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -26,6 +27,7 @@ function CheckoutInner() {
   const [cycle, setCycle] = useState<'monthly' | 'yearly'>(() => (search.get('cycle') === 'yearly' ? 'yearly' : 'monthly'));
   const [gateway, setGateway] = useState<Gateway>({ enabled: false, configured: false });
   const [loading, setLoading] = useState(true);
+  const [planError, setPlanError] = useState(false);
   const [paying, setPaying] = useState(false);
 
   useEffect(() => {
@@ -36,9 +38,12 @@ function CheckoutInner() {
     if (!planId) { router.replace('/pricing'); return; }
     fetch(`${API}/public/plans`).then(r => r.json()).then(d => {
       const found = (d.plans || []).find((p: any) => p.id === planId);
-      if (found) setPlan(found);
-      else router.replace('/pricing');
-    }).catch(() => {});
+      if (found) {
+        setPlan(found);
+        // Fire `checkout_start` once when a real plan intent is present.
+        track('checkout_start', { content_name: 'platform_subscription', plan_id: found.id, billing_cycle: search.get('cycle') === 'yearly' ? 'yearly' : 'monthly' });
+      } else router.replace('/pricing');
+    }).catch(() => setPlanError(true));
     fetch(`${API}/payment-gateways`).then(r => r.json()).then(d => {
       setGateway(d.freemius || { enabled: false, configured: false });
     }).catch(() => {})
@@ -66,7 +71,7 @@ function CheckoutInner() {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          'X-Tenant-Id': localStorage.getItem('lms_tenant') || '',
+          'X-Tenant-Id': localStorage.getItem('tenant_id') || '',
         },
         body: JSON.stringify({
           plan_id: plan.id,
@@ -159,6 +164,11 @@ function CheckoutInner() {
                     </Badge>
                   )}
                 </>
+              ) : planError ? (
+                <div className="text-center py-6">
+                  <p className="text-sm text-muted-foreground">{t('تعذر تحميل تفاصيل الخطة', 'Could not load the plan details')}</p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => router.replace('/pricing')}>{t('اختر خطة أخرى', 'Choose another plan')}</Button>
+                </div>
               ) : (
                 <Loader2 className="w-5 h-5 animate-spin" />
               )}

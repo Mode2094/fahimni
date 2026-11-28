@@ -29,6 +29,10 @@ class BunnyStreamProvider implements MediaProviderInterface
     // (upload.bunnycdn.com غير موجود في DNS).
     private const UPLOAD_API = 'https://video.bunnycdn.com/library';
 
+    // رفع TUS قابل للاستئناف — المتصفح يرفع مباشرة إلى هذا العنوان.
+    // https://docs.bunny.net/stream/tus-resumable-uploads
+    private const TUS_ENDPOINT = 'https://video.bunnycdn.com/tusupload';
+
     private ?MediaProvider $model = null;
 
     public function __construct(?MediaProvider $model = null)
@@ -45,6 +49,7 @@ class BunnyStreamProvider implements MediaProviderInterface
     {
         return [
             'direct_upload' => true,
+            'resumable_upload' => true,
             'recordings' => true,
             'signed_urls' => true,
             'webhooks' => true,
@@ -94,6 +99,25 @@ class BunnyStreamProvider implements MediaProviderInterface
     private function hostname(): string
     {
         return (string) ($this->credentials()['hostname'] ?? '');
+    }
+
+    /**
+     * Whether Bunny CDN Token Authentication is enabled on the pull zone.
+     *
+     * Off by default: signing a URL whose pull zone has token auth disabled
+     * makes Bunny answer 404. The flag lives in media_providers.config
+     * (per-deployment, set from the admin Media panel) with a BUNNY_TOKEN_AUTH
+     * env fallback.
+     */
+    private function tokenAuthEnabled(): bool
+    {
+        $config = $this->model?->config ?? [];
+
+        if (array_key_exists('token_auth', $config)) {
+            return (bool) $config['token_auth'];
+        }
+
+        return (bool) config('bunny.token_auth', false);
     }
 
     private function videoBase(): string
@@ -159,6 +183,43 @@ class BunnyStreamProvider implements MediaProviderInterface
         ];
     }
 
+    /**
+     * بيانات اعتماد رفع TUS المباشر لملف واحد.
+     *
+     * التوقيع = SHA256(library_id + api_key + expires + video_id) بصيغة hex.
+     * يُحسب هنا على السيرفر — مفتاح الـAPI لا يصل المتصفح أبداً. الرمز نفسه
+     * يمكن إعادة توقيعه لنفس الفيديو لاستئناف رفع منقطع (لا فيديو جديد).
+     */
+    public function createResumableUploadTicket(string $assetId, int $ttlSeconds = 86400): array
+    {
+        if (! $this->isConfigured()) {
+            throw new RuntimeException('Bunny Stream is not configured.');
+        }
+
+        if ($assetId === '') {
+            throw new RuntimeException('A provider video id is required for a resumable upload ticket.');
+        }
+
+        $libraryId = $this->libraryId();
+        $apiKey = $this->apiKey();
+
+        // وثائق Bunny: لا تقل مدة الصلاحية عن ساعة حتى يكتمل الرفع.
+        $expires = time() + max(3600, $ttlSeconds);
+
+        return [
+            'endpoint' => self::TUS_ENDPOINT,
+            'signature' => hash('sha256', $libraryId.$apiKey.$expires.$assetId),
+            'expires' => $expires,
+            'library_id' => $libraryId,
+            'video_id' => $assetId,
+        ];
+    }
+
+    public function supportsResumableUpload(): bool
+    {
+        return $this->isConfigured();
+    }
+
     public function getVideo(string $assetId): array
     {
         $video = $this->request('GET', $this->videoBase().'/videos/'.urlencode($assetId));
@@ -200,11 +261,22 @@ class BunnyStreamProvider implements MediaProviderInterface
     {
         // المسار الرسمي لـ HLS على Pull Zone المكتبة:
         //   https://{hostname}/{videoId}/playlist.m3u8  (بلا Library ID)
-        // حماية المكتبة عبر Referer Domains (Block direct url file access) —
-        // إضافة توقيع بلا تفعيل CDN token authentication يكسر الرابط (404).
         $host = $this->hostname() ?: 'video.bunnycdn.com';
+        $url = 'https://'.$host.'/'.$assetId.'/playlist.m3u8';
 
-        return 'https://'.$host.'/'.$assetId.'/playlist.m3u8';
+        // Token Authentication (روابط موقّعة بانتهاء صلاحية) تُنتَج فقط عندما
+        // يُفعّل النشرُ ذلك صراحةً (hostname + security_key + token_auth).
+        // توقيع رابط على Pull Zone لم يُفعَّل عليها Token Auth يجعل Bunny
+        // يرد 404 — أي أن كل فيديو يتعطل. حتى التفعيل، نُعيد رابط الصلاحية
+        // المحمية بالـReferer (Block direct url file access + نطاقات مسموحة)،
+        // ويبقى توكن المنصة الموقّع /stream/{id} هو من يقرر من يستلم الرابط.
+        if ($this->hostname() !== '' && $this->securityKey() !== '' && $this->tokenAuthEnabled()) {
+            $expires = time() + max(60, $ttlSeconds);
+
+            return $this->sign($url, $expires, directory: true);
+        }
+
+        return $url;
     }
 
     /**

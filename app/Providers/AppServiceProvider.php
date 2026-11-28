@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Models\ActivationCard;
 use App\Models\Backup;
+use App\Models\Bundle;
 use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Exam;
@@ -30,6 +31,7 @@ use App\Observers\SubscriptionPlanObserver;
 use App\Observers\TenantSubscriptionObserver;
 use App\Policies\ActivationCardPolicy;
 use App\Policies\BackupPolicy;
+use App\Policies\BundlePolicy;
 use App\Policies\CoursePolicy;
 use App\Policies\EnrollmentPolicy;
 use App\Policies\ExamPolicy;
@@ -73,6 +75,7 @@ class AppServiceProvider extends ServiceProvider
         Transaction::class => TransactionPolicy::class,
         TenantSetting::class => TenantSettingPolicy::class,
         Backup::class => BackupPolicy::class,
+        Bundle::class => BundlePolicy::class,
     ];
 
     public function boot(): void
@@ -119,6 +122,12 @@ class AppServiceProvider extends ServiceProvider
         // رفع الفيديو عبر الخادم: مدة أطول للرفعات الكبيرة.
         RateLimiter::for('video-upload', fn (Request $request) => Limit::perMinute(6)->by($request->ip()));
 
+        // رفع جماعي مباشر (TUS): تذكرة/إتمام/إلغاء لكل ملف. الحد لكل مستخدم
+        // (لا لكل IP) لأن معلمًا واحدًا يرفع عشرات الملفات دفعةً واحدة —
+        // يبقى محدودًا لكنه لا يعطّل الرفع الجماعي المشروع. الفيديو نفسه لا
+        // يمر عبر السيرفر؛ هذه الطلبات خفيفة (توقيع/ربط فقط).
+        RateLimiter::for('media-ticket', fn (Request $request) => Limit::perMinute(120)->by($request->user()?->id ?: $request->ip()));
+
         // رفع الملفات العامة (صور/مستندات/إجابات): حد لكل مستخدم — يمنع
         // استخدام المنصة كمستضيف ملفات عام أو استنزاف التخزين.
         RateLimiter::for('uploads', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));
@@ -128,6 +137,15 @@ class AppServiceProvider extends ServiceProvider
 
         // طلبات الدفق (Ranges للـ <video>): حد معقول للمشاهدة الفعلية.
         RateLimiter::for('stream', fn (Request $request) => Limit::perMinute(240)->by($request->ip()));
+
+        // حفظ موضع المشاهدة (نبضة خفيفة كل بضع ثوانٍ): حد سخي لكن محدود لكل
+        // مستخدم — يكفي الحفظ الدوري وعند الإيقاف/الخروج دون إثقال القاعدة.
+        RateLimiter::for('position', fn (Request $request) => Limit::perMinute(40)->by($request->user()?->id ?: $request->ip()));
+
+        // ملاحظات الطالب: قراءة سخيّة تكفي التصفح، وكتابة محدودة تكفي
+        // الاستخدام الطبيعي وتمنع الإغراق.
+        RateLimiter::for('notes-read', fn (Request $request) => Limit::perMinute(120)->by($request->user()?->id ?: $request->ip()));
+        RateLimiter::for('notes-write', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
 
         RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by(hash('sha256', (string) $request->input('email')).'|'.$request->ip()));
 
@@ -157,6 +175,8 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('assistant-ask', fn (Request $request) => Limit::perMinute(20)->by($request->user()?->id ?: $request->ip()));
 
+        RateLimiter::for('slug-check', fn (Request $request) => Limit::perMinute(40)->by($request->user()?->id ?: $request->ip()));
+
         RateLimiter::for('mobile-code', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
 
         RateLimiter::for('monitoring', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
@@ -168,6 +188,9 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('live-create', fn (Request $request) => Limit::perMinute(10)->by($request->user()?->id ?: $request->ip()));
 
         RateLimiter::for('join-ticket', fn (Request $request) => Limit::perMinute(60)->by($request->user()?->id ?: $request->ip()));
+
+        // تفعيل البطاقات: حد لكل مستخدم — يحبط تخمين الأكواد بالقوة الغاشمة.
+        RateLimiter::for('redeem', fn (Request $request) => Limit::perMinute(10)->by($request->user()?->id ?: $request->ip()));
 
         Enrollment::observe(EnrollmentObserver::class);
         LessonProgress::observe(LessonProgressObserver::class);

@@ -8,8 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CalendarClock, XCircle, HandCoins, Clock, ExternalLink, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/services/api';
 import { useRouter } from 'next/navigation';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -41,15 +43,15 @@ export default function MyBookingsPage() {
   useEffect(() => { if (check()) load(); }, [check()]);
 
   const cancel = async (id: string) => {
-    if (!confirm(t('إلغاء هذا الحجز؟', 'Cancel this booking?'))) return;
+    if (!(await confirmDialog({ description: t('إلغاء هذا الحجز؟', 'Cancel this booking?') }))) return;
     setCancelling(true);
     try {
       const res = await fetch(`${API}/my-bookings/${id}/cancel`, { method: 'POST', headers: headers() });
       const d = await res.json();
-      if (!res.ok) { toast.error(d.message || 'Failed'); return; }
+      if (!res.ok) { toast.error(d.message || t('تعذر إلغاء الحجز', 'Could not cancel the booking')); return; }
       toast.success(t('تم إلغاء الحجز', 'Booking cancelled'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch (err) { toast.error(getApiErrorMessage(err, t('تعذر إلغاء الحجز', 'Could not cancel the booking'))); }
     setCancelling(false);
   };
 

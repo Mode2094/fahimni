@@ -32,6 +32,7 @@ class RequireSubscription
         'teacher/domain',
         'teacher/site-design',
         'notifications',
+        'admin-notifications',
         'preferences',
         'push-tokens',
         'conversations',
@@ -80,7 +81,7 @@ class RequireSubscription
             }
         }
 
-        if (app(FeatureService::class)->activeSubscription()) {
+        if (app(FeatureService::class)->active()) {
             return $next($request);
         }
 

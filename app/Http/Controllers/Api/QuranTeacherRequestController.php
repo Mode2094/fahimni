@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Mail\PlatformNotification;
 use App\Models\QuranTeacherRequest;
 use App\Models\SubscriptionPlan;
+use App\Rules\ValidPhoneNumber;
+use App\Support\PhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -20,13 +22,18 @@ class QuranTeacherRequestController extends Controller
         $validated = $request->validate([
             'name'            => 'required|string|max:255',
             'email'           => ['required', 'string', 'max:255', new Email],
-            'phone'           => 'nullable|string|max:50',
+            // A Quran teacher account is a teacher account: a phone number is
+            // mandatory so it can never be activated without one.
+            'phone'           => ['required', 'string', 'max:25', new ValidPhoneNumber],
             'city'            => 'nullable|string|max:255',
             'country'         => 'nullable|string|max:2',
             'memorized_juz'   => 'nullable|integer|between:1,30',
             'tajweed_level'   => 'nullable|string|in:beginner,intermediate,advanced,proficient,ijazah',
             'message'         => 'nullable|string|max:2000',
         ]);
+
+        // Store the canonical E.164 form (Jordan default) like every account.
+        $validated['phone'] = PhoneNumber::toE164($validated['phone']) ?? $validated['phone'];
 
         $existing = QuranTeacherRequest::where('email', $validated['email'])
             ->whereIn('status', [QuranTeacherRequest::STATUS_PENDING, QuranTeacherRequest::STATUS_APPROVED])
@@ -120,15 +127,24 @@ class QuranTeacherRequestController extends Controller
      */
     private function createAccount(QuranTeacherRequest $qr): \App\Models\User
     {
-        $user = \App\Models\User::firstOrCreate(
-            ['email' => $qr->email],
-            [
-                'name'     => $qr->name,
-                'phone'    => $qr->phone,
-                'password' => bcrypt('quran-' . substr(md5($qr->email), 0, 8)),
+        // Approved by an admin: resolve the address INCLUDING soft-deleted rows
+        // (a deleted account still reserves its email) and reactivate it rather
+        // than letting the insert collide on the unique index.
+        $user = \App\Models\User::findByEmail((string) $qr->email);
+
+        if ($user) {
+            if ($user->trashed()) {
+                $user->restoreWithWorkspaces();
+            }
+        } else {
+            $user = \App\Models\User::create([
+                'name'      => $qr->name,
+                'phone'     => PhoneNumber::toE164($qr->phone),
+                'email'     => \App\Models\User::normalizeEmail((string) $qr->email),
+                'password'  => bcrypt('quran-' . substr(md5($qr->email), 0, 8)),
                 'is_active' => true,
-            ]
-        );
+            ]);
+        }
 
         if (!$user->email_verified_at) {
             $user->forceFill(['email_verified_at' => now()])->save();
@@ -151,15 +167,17 @@ class QuranTeacherRequestController extends Controller
             $broker = \Illuminate\Support\Facades\Password::broker();
             $token = $broker->createToken($user);
 
-            // Build a reset URL pointing to the frontend
-            $resetUrl = config('app.frontend_url', 'http://localhost:3000')
-                . '/ar/reset-password?token=' . $token
-                . '&email=' . urlencode($user->email);
+            // Build a reset URL pointing to the frontend (the same page the
+            // standard password-reset email uses: /reset-password with
+            // token+email in the query string).
+            $frontend = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $resetUrl = $frontend.'/reset-password?token='.$token
+                .'&email='.urlencode($user->email);
 
             $planName = $qr->plan?->name;
 
             $body = "أهلاً {$user->name}،\n\n";
-            $body .= "تمت الموافقة على طلبك كمعلم قرءان في منصة شahead.\n\n";
+            $body .= "تمت الموافقة على طلبك كمعلم قرءان في منصة فهمني.\n\n";
             $body .= "لإنشاء كلمة المرور والدخول للمنصة، اضغط على الرابط التالي:\n";
             $body .= "{$resetUrl}\n\n";
             $body .= "بيانات الدخول:\n";
@@ -170,7 +188,7 @@ class QuranTeacherRequestController extends Controller
 
             Mail::to($user->email)->queue(
                 new PlatformNotification(
-                    title: 'مرحباً بك في شahead — تم تفعيل حسابك كمعلم قرءان',
+                    title: 'مرحباً بك في منصة فهمني — تم تفعيل حسابك كمعلم قرءان',
                     body: $body,
                     data: ['action_url' => $resetUrl, 'action_text' => 'تسجيل الدخول'],
                 )

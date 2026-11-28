@@ -7,9 +7,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Loader2, Globe, Search, CheckCircle2, XCircle, ExternalLink, Copy, Rocket, ShieldCheck, ArrowRight, Link2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -32,6 +34,10 @@ export default function DomainManager() {
   const [busy, setBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [checking, setChecking] = useState(false);
+  const [slugDraft, setSlugDraft] = useState('');
+  const [slugStatus, setSlugStatus] = useState<{ state: 'idle' | 'checking' | 'available' | 'taken' | 'reserved' | 'invalid' | 'error' }>({ state: 'idle' });
+  const [savingSlug, setSavingSlug] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const headers = () => {
     const token = localStorage.getItem('lms_authed');
@@ -46,6 +52,44 @@ export default function DomainManager() {
   };
   useEffect(() => { load(); }, []);
 
+  // مزامنة حقل الرابط مع الرابط المحفوظ على السيرفر
+  useEffect(() => { if (data?.slug) setSlugDraft(data.slug); }, [data?.slug]);
+
+  // فحص توفّر الرابط أثناء الكتابة (مع مهلة صغيرة لتقليل الطلبات)
+  useEffect(() => {
+    const slug = slugDraft.trim().toLowerCase();
+    const current = (data?.slug || '').toLowerCase();
+    if (!slug || slug === current) { setSlugStatus({ state: 'idle' }); return; }
+    setSlugStatus({ state: 'checking' });
+    const id = setTimeout(() => {
+      fetch(`${API}/teacher/domain/slug-available?slug=${encodeURIComponent(slug)}`, { headers: headers() })
+        .then(r => r.json())
+        .then(d => setSlugStatus({ state: d.available ? 'available' : (d.reason || 'taken') }))
+        .catch(() => setSlugStatus({ state: 'error' }));
+    }, 500);
+    return () => clearTimeout(id);
+  }, [slugDraft, data?.slug]);
+
+  const currentSlug = (data?.slug || '').toLowerCase();
+  const cleanSlug = slugDraft.trim().toLowerCase();
+  const slugChanged = cleanSlug !== '' && cleanSlug !== currentSlug;
+  const canSaveSlug = slugChanged && slugStatus.state === 'available' && !savingSlug;
+  const pageLink = typeof window !== 'undefined' && data?.slug ? `${window.location.origin}/t/${data.slug}` : '';
+
+  const saveSlug = async () => {
+    if (!canSaveSlug) return;
+    setSavingSlug(true);
+    try {
+      const res = await fetch(`${API}/teacher/domain/slug`, { method: 'PUT', headers: headers(), body: JSON.stringify({ slug: cleanSlug }) });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.message || t('تعذر الحفظ', 'Save failed')); return; }
+      toast.success(t('تم تحديث رابط منصتك', 'Your platform link was updated'));
+      setSlugDraft(d.slug || cleanSlug);
+      load();
+    } catch { toast.error(t('تعذر الحفظ', 'Save failed')); }
+    setSavingSlug(false);
+  };
+
   const connect = async () => {
     const domain = connectDomain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
     if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(domain)) {
@@ -59,7 +103,7 @@ export default function DomainManager() {
       if (!res.ok) { toast.error(d.message || 'Failed'); return; }
       toast.success(t('تم ربط الدومين — اتبع خطوات DNS بالأسفل', 'Domain connected — follow the DNS steps below'));
       setConnectDomain(''); load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
     setBusy(false);
   };
 
@@ -75,12 +119,23 @@ export default function DomainManager() {
   };
 
   const disconnect = async () => {
+    const ok = await confirmDialog({
+      danger: true,
+      title: t('فصل الدومين', 'Disconnect domain'),
+      description: t(
+        `سيتم فصل «${data?.domain || ''}» وسيتوقف موقعك عن العمل على هذا الدومين. هل أنت متأكد؟`,
+        `"${data?.domain || ''}" will be disconnected and your site will stop working on this domain. Are you sure?`,
+      ),
+    });
+    if (!ok) return;
+    setDisconnecting(true);
     try {
       const res = await fetch(`${API}/teacher/domain`, { method: 'DELETE', headers: headers() });
       if (!res.ok) throw new Error();
       toast.success(t('تم فصل الدومين', 'Domain disconnected'));
       load();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(t('تعذّر إتمام العملية، حاول مرة أخرى', 'Could not complete the action, please try again')); }
+    setDisconnecting(false);
   };
 
   const copy = async (v: string, label: string) => {
@@ -109,6 +164,60 @@ export default function DomainManager() {
         </div>
       </Card>
 
+      {/* رابط منصتك المجاني (النطاق الفرعي التابع للمنصة) */}
+      <Card className="border-0 shadow-sm overflow-hidden">
+        <CardContent className="p-6 space-y-5">
+          <div className="flex items-start gap-3.5">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500/10 to-emerald-500/10 border border-teal-100">
+              <Link2 className="h-6 w-6 text-teal-700" />
+            </span>
+            <div>
+              <h2 className="font-bold text-lg">{t('رابط منصتك المجاني', 'Your free platform link')}</h2>
+              <p className="text-sm text-muted-foreground mt-1">{t('هذا رابط صفحتك على منصة فهمني — اختر اسماً يعبّر عنك، ونفحص توفّره فوراً', 'This is your page link on Fahimni — pick a name that represents you, we check availability instantly')}</p>
+            </div>
+          </div>
+
+          {/* الرابط الحالي */}
+          <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50/50 p-2 ps-4">
+            <span className="text-[11px] text-teal-600 shrink-0">{t('رابط صفحتك', 'Your page link')}</span>
+            <span className="flex-1 min-w-0 font-mono text-xs text-teal-800 truncate" dir="ltr">{pageLink ? pageLink.replace(/^https?:\/\//, '') : '/t/—'}</span>
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={!pageLink} onClick={() => copy(pageLink, t('الرابط', 'Link'))}><Copy className="h-3.5 w-3.5" /></Button>
+          </div>
+
+          {/* تغيير الرابط */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label className="text-xs font-bold text-muted-foreground">{t('اختر اسم رابطك', 'Choose your link name')}</Label>
+              <span className="text-[11px] text-gray-400" dir="ltr">/t/{cleanSlug || 'your-name'}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className={`flex flex-1 min-w-[220px] items-center rounded-xl border overflow-hidden bg-white ${slugStatus.state === 'taken' || slugStatus.state === 'reserved' || slugStatus.state === 'invalid' ? 'border-red-300' : slugStatus.state === 'available' ? 'border-emerald-400' : 'border-slate-200'}`}>
+                <span className="px-3 h-11 flex items-center text-xs text-gray-400 border-e border-slate-200 bg-slate-50" dir="ltr">/t/</span>
+                <Input
+                  value={slugDraft}
+                  onChange={(e) => setSlugDraft(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                  dir="ltr"
+                  placeholder="your-name"
+                  className="h-11 border-0 rounded-none focus-visible:ring-0"
+                />
+              </div>
+              <Button onClick={saveSlug} disabled={!canSaveSlug} className="h-11 rounded-xl gap-1.5 shrink-0 text-white" style={{ background: 'linear-gradient(135deg, #0d9488, #14b8a6)' }}>
+                {savingSlug ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}{t('حفظ الرابط', 'Save link')}
+              </Button>
+            </div>
+            <div className="text-xs min-h-[18px]">
+              {slugStatus.state === 'checking' && <span className="text-gray-400 inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" />{t('جاري الفحص...', 'Checking...')}</span>}
+              {slugStatus.state === 'available' && <span className="text-emerald-600 inline-flex items-center gap-1 font-medium"><CheckCircle2 className="h-3.5 w-3.5" />{t('متاح ✔ — يمكنك حجزه', 'Available ✔ — you can claim it')}</span>}
+              {slugStatus.state === 'taken' && <span className="text-red-500 inline-flex items-center gap-1 font-medium"><XCircle className="h-3.5 w-3.5" />{t('غير متاح — هذا الاسم مستخدم، اختر غيره', 'Not available — already taken, choose another')}</span>}
+              {slugStatus.state === 'reserved' && <span className="text-red-500 inline-flex items-center gap-1 font-medium"><XCircle className="h-3.5 w-3.5" />{t('اسم محجوز — اختر غيره', 'Reserved name — choose another')}</span>}
+              {slugStatus.state === 'invalid' && <span className="text-red-500 inline-flex items-center gap-1 font-medium"><XCircle className="h-3.5 w-3.5" />{t('حروف إنجليزية وأرقام وشرطة فقط (2-63)', 'Letters, numbers and hyphens only (2–63)')}</span>}
+              {slugStatus.state === 'error' && <span className="text-amber-600 inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5" />{t('تعذر الفحص — حاول مجدداً', 'Could not check — try again')}</span>}
+              {slugStatus.state === 'idle' && <span className="text-gray-400">{t('اكتب الاسم الذي تريده لرابطك', 'Type the name you want for your link')}</span>}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {!enabled ? (
         <Card className="border-amber-200 bg-amber-50/50">
           <CardContent className="p-8 text-center space-y-4">
@@ -135,7 +244,7 @@ export default function DomainManager() {
                   <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={verify} disabled={checking}>
                     {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}{t('تحقق من الربط', 'Verify now')}
                   </Button>
-                  <Button variant="ghost" size="sm" className="gap-1.5 rounded-full text-xs text-red-500" onClick={disconnect}><Trash2 className="h-3.5 w-3.5" />{t('فصل', 'Disconnect')}</Button>
+                  <Button variant="ghost" size="sm" className="gap-1.5 rounded-full text-xs text-red-500" onClick={disconnect} disabled={disconnecting}>{disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}{t('فصل', 'Disconnect')}</Button>
                 </div>
                 {verifyResult && (
                   <div className={`mt-4 p-4 rounded-xl text-sm ${verifyResult.ok ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
@@ -205,13 +314,28 @@ export default function DomainManager() {
                   <p className="text-sm text-gray-400">{t('اربط الدومين أولاً لعرض الخطوات', 'Connect a domain first to see the steps')}</p>
                 ) : (
                   <div className="space-y-3">
-                    <div className="p-3 rounded-xl border bg-gray-50/60">
-                      <p className="text-[11px] text-gray-400 mb-1">CNAME · {t('المضيف', 'Host')}: <b dir="ltr">{data.dns_instructions?.cname_host}</b></p>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-xs bg-white border rounded-lg px-2 py-1.5" dir="ltr">{data.dns_instructions?.cname_value}</code>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copy(data.dns_instructions?.cname_value, 'CNAME')}><Copy className="h-3.5 w-3.5" /></Button>
+                    {(data.dns_instructions?.records?.length ?? 0) > 0 ? (
+                      (data.dns_instructions.records as { type: string; host: string; value: string; purpose?: string }[]).map((r, i) => (
+                        <div key={i} className="p-3 rounded-xl border bg-gray-50/60">
+                          <p className="text-[11px] text-gray-400 mb-1">{r.type} · {t('المضيف', 'Host')}: <b dir="ltr">{r.host}</b>{r.purpose ? ` · ${r.purpose}` : ''}</p>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 text-xs bg-white border rounded-lg px-2 py-1.5 truncate" dir="ltr">{r.value}</code>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copy(r.value, r.type)}><Copy className="h-3.5 w-3.5" /></Button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-3 rounded-xl border bg-gray-50/60">
+                        <p className="text-[11px] text-gray-400 mb-1">CNAME · {t('المضيف', 'Host')}: <b dir="ltr">{data.dns_instructions?.cname_host}</b></p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 text-xs bg-white border rounded-lg px-2 py-1.5" dir="ltr">{data.dns_instructions?.cname_value}</code>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copy(data.dns_instructions?.cname_value, 'CNAME')}><Copy className="h-3.5 w-3.5" /></Button>
+                        </div>
                       </div>
-                    </div>
+                    )}
+                    {data.dns_instructions?.apex_note && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">{data.dns_instructions.apex_note}</p>
+                    )}
                     <ol className="space-y-2 text-xs text-gray-500">
                       {(data.dns_instructions?.steps || []).map((s: string, i: number) => (
                         <li key={i} className="flex gap-2"><span className="text-teal-600 font-bold shrink-0">{i + 1}.</span>{s}</li>

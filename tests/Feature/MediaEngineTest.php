@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Media\MediaCostService;
+use App\Media\MediaProviderManager;
 use App\Media\MediaQuotaService;
 use App\Media\MediaSecurityService;
 use App\Media\MediaService;
@@ -421,7 +422,8 @@ class MediaEngineTest extends TenantTestCase
         $this->assertTrue($second['reused'] ?? false);
 
         $count = MediaAsset::withoutTenant()
-            ->where('idempotency_key', $key)
+            ->where('tenant_id', $tenant->id)
+            ->where('idempotency_key', hash('sha256', $tenant->id."\0".$key))
             ->count();
         $this->assertSame(1, $count);
     }
@@ -446,7 +448,11 @@ class MediaEngineTest extends TenantTestCase
         $assetIds = $results->pluck('asset_id')->unique();
         $this->assertCount(1, $assetIds);
 
-        $this->assertSame(1, MediaAsset::withoutTenant()->where('idempotency_key', $key)->count());
+        $storedKey = hash('sha256', $tenant->id."\0".$key);
+        $this->assertSame(1, MediaAsset::withoutTenant()
+            ->where('tenant_id', $tenant->id)
+            ->where('idempotency_key', $storedKey)
+            ->count());
     }
 
     public function test_upload_direct_reuses_existing_asset(): void
@@ -487,7 +493,7 @@ class MediaEngineTest extends TenantTestCase
         $this->assertCount(1, $contents);
     }
 
-    // ─── درس واحد = محتوى رئيسي واحد (لا تكرار أبداً) ───
+        // ─── استبدال آمن: لا حذف للمحتوى الحالي قبل تأكيد جاهزية الجديد ───
 
     public function test_lesson_has_single_primary_content_after_replacement(): void
     {
@@ -507,22 +513,179 @@ class MediaEngineTest extends TenantTestCase
             '*bunnycdn.com/*/videos' => Http::sequence()
                 ->push(['guid' => 'vid-a', 'status' => 0])
                 ->push(['guid' => 'vid-b', 'status' => 0]),
+            '*bunnycdn.com/*/videos/*' => Http::response([
+                'guid' => 'ready-video',
+                'status' => 3,
+                'length' => 120,
+                'storageUsage' => 1024,
+                'thumbnailFileName' => 'thumb.jpg',
+                'title' => 'Ready video',
+            ], 200),
+            '*bunnycdn.com/*' => Http::response([], 200),
         ]);
 
         // محتوى أول: فيديو
         $t1 = $media->createVideoUploadTicket($tenant->id, $teacher->id, ['title' => 'V1', 'file_size' => 1024 * 1024]);
-        $media->attachToLesson($t1['asset_id'], $lesson->id);
+        $oldAsset = $media->attachToLesson($t1['asset_id'], $lesson->id);
+        $provider = app(MediaProviderManager::class)->provider('bunny');
+        $media->markAssetReady($provider, $oldAsset->provider_asset_id, 'old-ready');
+        $contentId = MediaAsset::withoutTenant()->findOrFail($oldAsset->id)->lesson_content_id;
 
-        // محتوى ثانٍ (استبدال): فيديو آخر → يجب أن يبقى محتوى واحد فقط
+        // محتوى ثانٍ (استبدال): المحتوى القديم يبقى فعالاً أثناء المعالجة.
         $t2 = $media->createVideoUploadTicket($tenant->id, $teacher->id, ['title' => 'V2', 'file_size' => 1024 * 1024]);
-        $media->attachToLesson($t2['asset_id'], $lesson->id);
+        $newAsset = $media->attachToLesson($t2['asset_id'], $lesson->id);
 
         $contents = LessonContent::withoutTenant()->where('lesson_id', $lesson->id)->get();
         $this->assertCount(1, $contents, 'Lesson must have exactly ONE primary content');
+        $this->assertSame($contentId, $contents->first()->id);
 
         $video = VideoContent::withoutTenant()->where('lesson_content_id', $contents->first()->id)->first();
         $this->assertNotNull($video);
+        $this->assertSame('V1', $video->title);
+        $this->assertSame('vid-a', $video->provider_video_id);
+        $this->assertNull($newAsset->fresh()->lesson_content_id);
+
+        $media->markAssetReady($provider, $newAsset->provider_asset_id, 'new-ready');
+
+        $content = LessonContent::withoutTenant()->where('lesson_id', $lesson->id)->firstOrFail();
+        $this->assertSame($contentId, $content->id);
+        $video = VideoContent::withoutTenant()->where('lesson_content_id', $content->id)->firstOrFail();
         $this->assertSame('V2', $video->title);
+        $this->assertSame('vid-b', $video->provider_video_id);
+    }
+
+    public function test_video_replacement_keeps_the_old_content_until_the_new_video_is_ready(): void
+    {
+        $this->setupBunnyProvider();
+        Http::fake([
+            '*bunnycdn.com/*/videos' => Http::sequence()
+                ->push(['guid' => 'replacement-old', 'status' => 0])
+                ->push(['guid' => 'replacement-new', 'status' => 0]),
+            '*bunnycdn.com/*/videos/*' => Http::response([
+                'guid' => 'replacement-video',
+                'status' => 3,
+                'length' => 90,
+                'storageUsage' => 1024,
+                'thumbnailFileName' => 'thumb.jpg',
+                'title' => 'Replacement',
+            ], 200),
+            '*bunnycdn.com/*' => Http::response([], 200),
+        ]);
+
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $teacher = $this->makeUser();
+        $this->attachToTenant($teacher, $tenant, 'teacher');
+        $lesson = $this->makeLesson($this->makeCourse($tenant->id, $teacher));
+        $media = app(MediaService::class);
+        $provider = app(MediaProviderManager::class)->provider('bunny');
+
+        $oldTicket = $media->createVideoUploadTicket($tenant->id, $teacher->id, ['title' => 'Old', 'file_size' => 1024]);
+        $oldAsset = $media->attachToLesson($oldTicket['asset_id'], $lesson->id);
+        $media->markAssetReady($provider, $oldAsset->provider_asset_id, 'old-ready');
+        $oldAsset = MediaAsset::withoutTenant()->findOrFail($oldAsset->id);
+        $contentId = $oldAsset->lesson_content_id;
+        $videoId = VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('id');
+
+        $newTicket = $media->createVideoUploadTicket($tenant->id, $teacher->id, [
+            'title' => 'New',
+            'file_size' => 1024,
+            'replacement_lesson_content_id' => $contentId,
+            'replacement_lesson_id' => $lesson->id,
+        ]);
+        $newAsset = $media->attachToLesson($newTicket['asset_id'], $lesson->id);
+
+        $this->assertSame($contentId, $oldAsset->fresh()->lesson_content_id);
+        $this->assertSame('replacement-old', VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('provider_video_id'));
+        $this->assertNull($newAsset->fresh()->lesson_content_id);
+        $this->assertDatabaseHas('lesson_contents', ['id' => $contentId, 'lesson_id' => $lesson->id]);
+
+        $media->markAssetReady($provider, $newAsset->provider_asset_id, 'new-ready');
+
+        $this->assertSame(1, LessonContent::withoutTenant()->where('lesson_id', $lesson->id)->count());
+        $this->assertSame($videoId, VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('id'));
+        $this->assertSame('replacement-new', VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('provider_video_id'));
+        $this->assertSame('ready', VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('status'));
+        $this->assertSame($contentId, MediaAsset::withoutTenant()->findOrFail($newAsset->id)->lesson_content_id);
+        $this->assertSoftDeleted('media_assets', ['id' => $oldAsset->id]);
+    }
+
+    public function test_failed_video_replacement_leaves_the_old_video_and_lesson_untouched(): void
+    {
+        $this->setupBunnyProvider();
+        Http::fake([
+            '*bunnycdn.com/*/videos' => Http::sequence()
+                ->push(['guid' => 'failed-old', 'status' => 0])
+                ->push(['guid' => 'failed-new', 'status' => 0]),
+            '*bunnycdn.com/*/videos/*' => Http::response([
+                'guid' => 'failed-video',
+                'status' => 3,
+                'length' => 90,
+                'storageUsage' => 1024,
+                'thumbnailFileName' => 'thumb.jpg',
+                'title' => 'Old',
+            ], 200),
+            '*bunnycdn.com/*' => Http::response([], 200),
+        ]);
+
+        $tenant = $this->makeTenant();
+        $this->attachSubscription($tenant);
+        $teacher = $this->makeUser();
+        $this->attachToTenant($teacher, $tenant, 'teacher');
+        $lesson = $this->makeLesson($this->makeCourse($tenant->id, $teacher));
+        $media = app(MediaService::class);
+        $provider = app(MediaProviderManager::class)->provider('bunny');
+
+        $oldTicket = $media->createVideoUploadTicket($tenant->id, $teacher->id, ['title' => 'Old', 'file_size' => 1024]);
+        $oldAsset = $media->attachToLesson($oldTicket['asset_id'], $lesson->id);
+        $media->markAssetReady($provider, $oldAsset->provider_asset_id, 'old-ready');
+        $contentId = MediaAsset::withoutTenant()->findOrFail($oldAsset->id)->lesson_content_id;
+
+        $newTicket = $media->createVideoUploadTicket($tenant->id, $teacher->id, [
+            'title' => 'New',
+            'file_size' => 1024,
+            'replacement_lesson_content_id' => $contentId,
+            'replacement_lesson_id' => $lesson->id,
+        ]);
+        $newAsset = $media->attachToLesson($newTicket['asset_id'], $lesson->id);
+        $media->markAssetError($provider, $newAsset->provider_asset_id, 'processing-failed');
+
+        $this->assertSame(1, LessonContent::withoutTenant()->where('lesson_id', $lesson->id)->count());
+        $this->assertSame('failed-old', VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('provider_video_id'));
+        $this->assertSame('ready', VideoContent::withoutTenant()->where('lesson_content_id', $contentId)->value('status'));
+        $this->assertSame($contentId, MediaAsset::withoutTenant()->findOrFail($oldAsset->id)->lesson_content_id);
+        $this->assertNull(MediaAsset::withoutTenant()->findOrFail($newAsset->id)->lesson_content_id);
+    }
+
+    public function test_upload_idempotency_key_is_scoped_to_the_tenant(): void
+    {
+        $this->setupBunnyProvider();
+        Http::fake([
+            '*bunnycdn.com/*/videos' => Http::sequence()
+                ->push(['guid' => 'tenant-a-video', 'status' => 0])
+                ->push(['guid' => 'tenant-b-video', 'status' => 0]),
+        ]);
+
+        $tenantA = $this->makeTenant();
+        $tenantB = $this->makeTenant();
+        $this->attachSubscription($tenantA);
+        $this->attachSubscription($tenantB);
+        $media = app(MediaService::class);
+
+        $ticketA = $media->createVideoUploadTicket($tenantA->id, null, [
+            'title' => 'Same file',
+            'file_size' => 1024,
+            'idempotency_key' => 'same-client-key',
+        ]);
+        $ticketB = $media->createVideoUploadTicket($tenantB->id, null, [
+            'title' => 'Same file',
+            'file_size' => 1024,
+            'idempotency_key' => 'same-client-key',
+        ]);
+
+        $this->assertNotSame($ticketA['asset_id'], $ticketB['asset_id']);
+        $this->assertSame($tenantA->id, MediaAsset::withoutTenant()->findOrFail($ticketA['asset_id'])->tenant_id);
+        $this->assertSame($tenantB->id, MediaAsset::withoutTenant()->findOrFail($ticketB['asset_id'])->tenant_id);
     }
 
     public function test_lesson_content_store_replaces_previous_primary(): void

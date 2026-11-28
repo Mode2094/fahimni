@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { CardSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Loader2, Heart, Eye, Pin, Lock, CheckCircle2, HelpCircle, Tag,
   Pencil, Trash2, MessageSquare, Reply, MessagesSquare, LockOpen, Send,
@@ -72,17 +73,17 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
       toast.success(t('تم التحديث', 'Updated'));
       setShowEdit(false);
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setSaving(false);
   };
 
   const removeThread = async () => {
-    if (!confirm(t('حذف هذا الموضوع نهائياً؟', 'Delete this thread permanently?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الموضوع نهائياً؟', 'Delete this thread permanently?') }))) return;
     try {
       await communityApi.deleteThread(id);
       toast.success(t('تم الحذف', 'Deleted'));
       window.location.href = '/community';
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const pin = async () => {
@@ -91,7 +92,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
       const d = await communityApi.pinThread(id);
       setThread((prev) => prev ? { ...prev, is_pinned: d.is_pinned } : prev);
       toast.success(d.is_pinned ? t('تم التثبيت', 'Pinned') : t('تم إلغاء التثبيت', 'Unpinned'));
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setBusy(false);
   };
 
@@ -101,7 +102,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
       const d = await communityApi.toggleThreadStatus(id);
       setThread((prev) => prev ? { ...prev, status: d.status as CommunityThread['status'] } : prev);
       toast.success(d.status === 'open' ? t('تم فتح الموضوع', 'Thread reopened') : t('تم إغلاق الموضوع', 'Thread closed'));
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setBusy(false);
   };
 
@@ -109,7 +110,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
     try {
       const d = await communityApi.likeThread(id);
       setThread((prev) => prev ? { ...prev, liked_by_me: d.liked, likes_count: d.likes_count } : prev);
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const sendComment = async (parentId: string | null = null, text: string = '') => {
@@ -123,7 +124,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
       setReplyText('');
       setReplyingTo(null);
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
     setSending(false);
   };
 
@@ -133,7 +134,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
       const update = (list: CommunityComment[]): CommunityComment[] =>
         list.map((x) => x.id === c.id ? { ...x, liked_by_me: d.liked, likes_count: d.likes_count } : { ...x, replies: x.replies ? update(x.replies) : x.replies });
       setComments(update);
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const acceptAnswer = async (c: CommunityComment) => {
@@ -143,16 +144,16 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
         list.map((x) => ({ ...x, is_answer: x.id === c.id ? d.is_answer : false, replies: x.replies }));
       setComments(update);
       toast.success(d.is_answer ? t('تم اعتماد الإجابة', 'Answer accepted') : t('تم إلغاء الاعتماد', 'Answer unaccepted'));
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const removeComment = async (c: CommunityComment) => {
-    if (!confirm(t('حذف هذا التعليق؟', 'Delete this comment?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا التعليق؟', 'Delete this comment?') }))) return;
     try {
       await communityApi.deleteComment(id, c.id);
       toast.success(t('تم الحذف', 'Deleted'));
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const likeCommentReply = async (replyId: string) => {
@@ -163,16 +164,16 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
           ? { ...x, replies: x.replies.map((r) => r.id === replyId ? { ...r, liked_by_me: d.liked, likes_count: d.likes_count } : r) }
           : x);
       setComments(update);
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const removeReply = async (parentId: string, replyId: string) => {
-    if (!confirm(t('حذف هذا الرد؟', 'Delete this reply?'))) return;
+    if (!(await confirmDialog({ description: t('حذف هذا الرد؟', 'Delete this reply?') }))) return;
     try {
       await communityApi.deleteComment(id, replyId);
       toast.success(t('تم الحذف', 'Deleted'));
       load();
-    } catch (e: any) { toast.error(e.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.message || t('فشل', 'Failed')); }
   };
 
   const canActOn = (c: CommunityComment) => isTeacher || canManage || c.author?.id === user?.id;
@@ -183,11 +184,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
 
   if (!thread) {
     return (
-      <Card className="max-w-md mx-auto mt-16"><CardContent className="flex flex-col items-center gap-4 py-14 text-gray-400">
-        <MessagesSquare className="h-12 w-12 opacity-40" />
-        <p className="text-lg">{t('الموضوع غير موجود أو محذوف', 'Thread not found or deleted')}</p>
-        <Button variant="outline" className="rounded-full" onClick={() => window.location.href = '/community'}>{t('العودة للمجتمع', 'Back to community')}</Button>
-      </CardContent></Card>
+      <EmptyState icon={MessagesSquare} title={t('الموضوع غير موجود أو محذوف', 'Thread not found or deleted')} className="max-w-md mx-auto mt-16" action={<Button variant="outline" className="rounded-full" onClick={() => window.location.href = '/community'}>{t('العودة للمجتمع', 'Back to community')}</Button>} />
     );
   }
 
@@ -219,7 +216,7 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
 
           <div className="flex items-center gap-2 mt-3 text-xs text-gray-400 flex-wrap">
             {thread.author?.avatar_url
-              ? <img src={thread.author.avatar_url} className="h-7 w-7 rounded-full object-cover" alt="" />
+              ? <img src={thread.author.avatar_url} className="h-7 w-7 rounded-full object-cover" alt={thread.author?.name || t('صورة المستخدم', 'User avatar')} />
               : <span className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-100 text-[10px] font-bold text-teal-700">{initials(thread.author?.name)}</span>}
             <span className="font-medium text-gray-600">{thread.author?.name}</span>
             <span>·</span>
@@ -300,8 +297,8 @@ export default function ThreadDetailPage({ params }: { params: Promise<{ id: str
       {thread.status === 'open' && (
         <Card className="border-0 shadow-sm">
           <CardContent className="p-4 sm:p-5">
-            <Label className="mb-2 block">{isQuestion ? t('أضف إجابتك', 'Add your answer') : t('أضف تعليقاً', 'Add a comment')}</Label>
-            <Textarea value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" placeholder={t('اكتب هنا...', 'Write here...')} />
+            <Label htmlFor="comment" className="mb-2 block">{isQuestion ? t('أضف إجابتك', 'Add your answer') : t('أضف تعليقاً', 'Add a comment')}</Label>
+            <Textarea id="comment" value={comment} onChange={(e) => setComment(e.target.value)} className="min-h-[100px]" placeholder={t('اكتب هنا...', 'Write here...')} />
             <div className="flex justify-end mt-3">
               <Button onClick={() => sendComment()} disabled={sending || !comment.trim()} className="gap-2 rounded-full">
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{t('نشر', 'Post')}
@@ -360,7 +357,7 @@ function CommentItem({ comment, isQuestion, canActOn, canAccept, canReply, reply
         )}
         <div className="flex items-center gap-2 text-xs text-gray-400">
           {comment.author?.avatar_url
-            ? <img src={comment.author.avatar_url} className="h-7 w-7 rounded-full object-cover" alt="" />
+            ? <img src={comment.author.avatar_url} className="h-7 w-7 rounded-full object-cover" alt={comment.author?.name || t('صورة المستخدم', 'User avatar')} />
             : <span className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-100 text-[10px] font-bold text-teal-700">{initials(comment.author?.name)}</span>}
           <span className="font-medium text-gray-600">{comment.author?.name}</span>
           <span>·</span>
@@ -400,7 +397,7 @@ function CommentItem({ comment, isQuestion, canActOn, canAccept, canReply, reply
         {isReplying && (
           <div className="mt-3 flex gap-2">
             <Input value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder={t('اكتب رداً...', 'Write a reply...')} className="h-10 flex-1 min-w-0" />
-            <Button size="sm" className="rounded-full shrink-0" onClick={() => onReply(replyText)} disabled={sending || !replyText.trim()}>
+            <Button size="sm" className="rounded-full shrink-0" aria-label={t('إرسال الرد', 'Send reply')} onClick={() => onReply(replyText)} disabled={sending || !replyText.trim()}>
               {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             </Button>
           </div>

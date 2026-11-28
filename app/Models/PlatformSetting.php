@@ -127,7 +127,7 @@ class PlatformSetting extends Model
 
     public static function convertAmount(float|int|string $amount, string $currency): array
     {
-        // Platform-wide single currency: JOD only.
-        return [(float) $amount, 'JOD'];
+        // Platform-wide single currency: USD.
+        return [(float) $amount, 'USD'];
     }
 }

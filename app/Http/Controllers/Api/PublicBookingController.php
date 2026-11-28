@@ -194,7 +194,7 @@ class PublicBookingController extends Controller
                 'ends_at' => $endsAt,
                 'status' => Booking::STATUS_PENDING,
                 'price' => $price,
-                'currency' => $service?->currency ?? 'JOD',
+                'currency' => $service?->currency ?? 'USD',
                 'notes' => $validated['notes'] ?? null,
             ]);
 
@@ -270,10 +270,10 @@ class PublicBookingController extends Controller
     private function initiatePayment(Request $request, Tenant $tenant, Booking $booking, string $gateway): Payment
     {
         $user = $request->user();
-        $currency = $booking->currency ?: 'JOD';
+        $currency = $booking->currency ?: 'USD';
 
-        // PayPal only supports a fixed set of currencies: convert the
-        // platform currency (JOD) to USD using the admin-configured rate.
+        // PayPal only supports a fixed set of currencies: convert a non-USD
+        // platform currency to USD using the admin-configured rate.
         $gatewayCurrency = $gateway === 'paytabs' ? $currency : 'USD';
         $amount = $booking->price;
 

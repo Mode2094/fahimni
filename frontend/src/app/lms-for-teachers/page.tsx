@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '@/components/seo/breadcrumbs';
 import { Faq } from '@/components/seo/faq';
-import { CtaSection } from '@/components/seo/cta-section';
+import { TrialCtaSection } from '@/components/seo/trial-cta-section';
 import { SITE_NAME, absoluteUrl, DEFAULT_OG_IMAGE } from '@/lib/seo';
 
 export const metadata: Metadata = {
@@ -84,7 +84,7 @@ export default function LmsForTeachersPage() {
           </ul>
         </section>
 
-        <CtaSection
+        <TrialCtaSection
           title="Set up your first course tonight"
           text="Create your account, build one section with a few lessons, and enroll a test student. You will see the whole system click into place."
           primaryLabel="Start free"
@@ -114,7 +114,7 @@ export default function LmsForTeachersPage() {
 
         <Faq title="Frequently asked questions" items={FAQ} />
 
-        <CtaSection
+        <TrialCtaSection
           title="Run your academy your way"
           text="Your courses, students and results belong to you. Manage them in an LMS designed for independent teachers."
           primaryLabel="Create your free account"

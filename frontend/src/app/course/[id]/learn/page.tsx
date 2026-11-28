@@ -6,10 +6,15 @@ import { useLocale } from '@/store/locale';
 import { useFocus } from '@/store/focus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import ProtectedVideoPlayer from '@/components/video/protected-video-player';
-import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Download, Eye, Ban, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio } from 'lucide-react';
+import ProtectedVideoPlayer, { type ProtectedVideoHandle } from '@/components/video/protected-video-player';
+import LessonNotesPanel from '@/components/notes/lesson-notes-panel';
+import ProtectedFileViewer from '@/components/file/protected-file-viewer';
+import LessonQuestions from '@/components/lesson/lesson-questions';
+import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, ArrowRight, BookOpen, Clock, ShieldCheck, Eye, ClipboardCheck, CalendarClock, Star, Send, Upload, CheckCircle2, XCircle, ListChecks, Search, ClipboardList, Maximize2, Minimize2, Focus, Radio, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { parsePreviewQuery, parseLearnTaskQuery, buildExamUrl } from '@/lib/course-preview';
+import { plural, formatDuration } from '@/lib/ar-format';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -63,6 +68,18 @@ function LiveLessonView({ live }: { live: any }) {
     );
   }
 
+  if (live.status === 'cancelled') {
+    return (
+      <div className="aspect-video bg-slate-900 rounded-2xl flex items-center justify-center">
+        <div className="text-center text-white/70 space-y-2">
+          <Radio className="h-12 w-12 mx-auto text-rose-400" />
+          <p>{t('تم إلغاء هذه الحصة', 'This live session was cancelled.')}</p>
+          <p className="text-xs text-white/40">{live.title}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="aspect-video bg-slate-900 rounded-2xl flex items-center justify-center">
       <div className="text-center text-white/70 space-y-2">
@@ -79,10 +96,66 @@ function LiveLessonView({ live }: { live: any }) {
 }
 
 
+/** Exercise attached below a video lesson — links to the SAME exam engine. */
+function ExerciseCard({ exercise, preview = false }: { exercise: any; preview?: boolean }) {
+  const { locale } = useLocale();
+  const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
+  if (!exercise) return null;
+  const left = exercise.attempts_left;
+  const exhausted = left === 0 && !preview;
+  const done = !preview && exercise.attempts_used > 0;
+
+  return (
+    <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-5 space-y-3">
+      <div className="flex items-start gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 shrink-0"><ClipboardList className="h-5 w-5 text-violet-600" /></span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-semibold text-violet-600 uppercase tracking-wide">{t('تمرين الدرس', 'Lesson exercise')}</p>
+          <h3 className="font-bold text-lg">{exercise.title}</h3>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
+            <span>{plural.questions(exercise.questions_count, locale)}</span>
+            {exercise.duration_minutes > 0 && <span>{formatDuration(exercise.duration_minutes, locale)}</span>}
+            <span>{t('نجاح', 'pass')} {exercise.pass_mark_percent}%</span>
+            {!preview && left >= 0 ? (
+              <span className={exhausted ? 'text-rose-600 font-medium' : ''}>
+                {t('المحاولات المتبقية', 'Attempts left')}: {left}
+              </span>
+            ) : (
+              <span>{t('محاولات غير محدودة', 'Unlimited attempts')}</span>
+            )}
+          </div>
+          {exercise.last && (
+            <p className={`text-xs mt-1 font-medium ${exercise.last.passed ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {t('آخر نتيجة', 'Last result')}: {exercise.last.percentage}% · {exercise.last.passed ? t('ناجح', 'Passed') : t('لم ينجح بعد', 'Not passed yet')}
+              {exercise.best_percentage !== null && <span className="text-gray-400"> · {t('الأفضل', 'Best')}: {exercise.best_percentage}%</span>}
+            </p>
+          )}
+        </div>
+      </div>
+      <Link href={buildExamUrl(exercise.exam_id, { preview })}>
+        <Button className="rounded-full gap-2" style={{ background: '#7c3aed' }} disabled={exhausted}>
+          <ClipboardList className="h-4 w-4" />
+          {preview ? t('معاينة التمرين كطالب', 'Preview exercise as student') : exhausted ? t('انتهت المحاولات', 'No attempts left') : done ? t('إعادة التمرين', 'Retake exercise') : t('ابدأ التمرين', 'Start exercise')}
+        </Button>
+      </Link>
+      {exercise.description && <p className="text-sm text-gray-600 whitespace-pre-wrap">{exercise.description}</p>}
+    </div>
+  );
+}
+
 export default function LearnPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { locale } = useLocale();
   const { focused, setFocus } = useFocus();
+  // "Preview as student": `preview=1` turns on the banner and disables
+  // student-side write actions. The server independently authorises preview
+  // access (staff only), so this hint grants nothing on its own.
+  const [previewMode] = useState(() =>
+    typeof window !== 'undefined' && parsePreviewQuery(window.location.search).preview,
+  );
+  const [requestedLessonId] = useState(() =>
+    typeof window !== 'undefined' ? parsePreviewQuery(window.location.search).lessonId : null,
+  );
   const [data, setData] = useState<any>(null);
   const [active, setActive] = useState<any>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -90,8 +163,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const [content, setContent] = useState<any>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
-  const [fileBusy, setFileBusy] = useState(false);
   const [viewTab, setViewTab] = useState<'lessons' | 'assignments' | 'exams'>('lessons');
+  const requestedAssignmentId = useRef<string | null>(null);
+  const requestedExamId = useRef<string | null>(null);
   const [exams, setExams] = useState<any[]>([]);
   const [examsLoading, setExamsLoading] = useState(false);
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -109,8 +183,14 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const [commentVals, setCommentVals] = useState<Record<string, string>>({});
   const [commentingId, setCommentingId] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<ProtectedVideoHandle | null>(null);
   const [contentFs, setContentFs] = useState(false);
   const [pageBlurred, setPageBlurred] = useState(false);
+  // تقدّم الدروس: الدروس المكتملة + الثواني المشاهدة فعلاً للدرس الحالي + حالة
+  // الإرسال. تُبنى من حمولة الخادم ثم تُحدَّث محلياً عند الإكمال.
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const [markingId, setMarkingId] = useState<string | null>(null);
+  const [watchedSeconds, setWatchedSeconds] = useState(0);
 
   /* إخفاء المحتوى التعليمي عند مغادرة الصفحة (نص وفيديو) */
   useEffect(() => {
@@ -151,6 +231,41 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
     return headers;
   };
 
+  // درس جديد = عدّاد مشاهدة جديد.
+  useEffect(() => { setWatchedSeconds(0); }, [active?.id]);
+
+  // إكمال الدرس: الخادم هو الحَكَم (يتحقق من التفعيل والفتح وحدّ المشاهدة).
+  // نرسل الثواني المشاهدة فعلاً — لا وقتاً متوهَّماً. idempotent على الخادم.
+  const markLessonComplete = async (lesson: any, watched: number) => {
+    const enrollmentId = data?.enrollment_id;
+    if (preview || !enrollmentId || !lesson || completedIds.has(lesson.id) || markingId) return;
+    setMarkingId(lesson.id);
+    try {
+      const res = await fetch(`${API}/enrollments/${enrollmentId}/progress/${lesson.id}`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed', watch_time_seconds: Math.max(0, Math.floor(watched)) }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        toast.error(d?.message || (locale === 'ar' ? 'تعذر إكمال الدرس' : 'Could not complete the lesson'));
+        return;
+      }
+      setCompletedIds(prev => { const n = new Set(prev); n.add(lesson.id); return n; });
+      toast.success(locale === 'ar' ? 'أُكمل الدرس' : 'Lesson completed');
+    } catch {
+      toast.error(locale === 'ar' ? 'تعذر إكمال الدرس' : 'Could not complete the lesson');
+    }
+    setMarkingId(null);
+  };
+
+  // من المشغّل: عند بلوغ عتبة الخادم من مشاهدة حقيقية، نُكمل الدرس تلقائياً.
+  const onWatched = (watched: number) => {
+    setWatchedSeconds(watched);
+    const required = Number(active?.required_watch_seconds || 0);
+    if (required > 0 && watched >= required) markLessonComplete(active, watched);
+  };
+
   const loadAssignments = () => {
     setAssignLoading(true);
     fetch(`${API}/assignments?course_id=${id}`, { headers: authHeaders() })
@@ -165,17 +280,47 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   };
   useEffect(() => { if (viewTab === 'assignments' && assignments.length === 0) loadAssignments(); }, [viewTab]);
   useEffect(() => { if (viewTab === 'exams' && exams.length === 0) loadExams(); }, [viewTab]);
+  useEffect(() => {
+    const query = parseLearnTaskQuery(window.location.search);
+    if (query.tab) setViewTab(query.tab);
+    requestedAssignmentId.current = query.assignmentId;
+    requestedExamId.current = query.examId;
+  }, []);
+  useEffect(() => {
+    if (viewTab !== 'assignments' || assignLoading || !requestedAssignmentId.current) return;
+    const target = document.getElementById(`assignment-${requestedAssignmentId.current}`);
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    requestedAssignmentId.current = null;
+  }, [viewTab, assignments, assignLoading]);
+  useEffect(() => {
+    if (viewTab !== 'exams' || examsLoading || !requestedExamId.current) return;
+    const target = document.getElementById(`exam-${requestedExamId.current}`);
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    requestedExamId.current = null;
+  }, [viewTab, exams, examsLoading]);
 
   useEffect(() => {
     fetch(`${API}/public/courses/${id}/sections`, { headers: authHeaders() })
       .then(r => r.json()).then(d => {
         setData(d);
-        setAcknowledged(!d.course?.prerequisites || localStorage.getItem(`lms_prereq_ack_${id}`) === '1');
-        const firstFree = d.sections?.flatMap((s: any) => s.lessons).find((l: any) => !l.locked);
+        const done = new Set<string>(
+          (d.sections || []).flatMap((s: any) => (s.lessons || []).filter((l: any) => l.completed).map((l: any) => l.id)),
+        );
+        setCompletedIds(done);
+        // In preview mode the prerequisites gate is informational only — it
+        // must never block the teacher from seeing the student view.
+        setAcknowledged((previewMode && d?.preview) || !d.course?.prerequisites || localStorage.getItem(`lms_prereq_ack_${id}`) === '1');
+        const allLessons = d.sections?.flatMap((s: any) => s.lessons) || [];
+        const requested = requestedLessonId
+          ? allLessons.find((l: any) => l.id === requestedLessonId && !l.locked)
+          : null;
+        const firstFree = requested || allLessons.find((l: any) => !l.locked);
         if (firstFree) setActive(firstFree);
         setExpanded(new Set((d.sections || []).slice(0, 1).map((s: any) => s.id)));
       }).catch(() => {}).finally(() => setLoading(false));
-  }, [id]);
+  }, [id, previewMode, requestedLessonId]);
 
   useEffect(() => {
     if (!active || active.locked) {
@@ -186,13 +331,13 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
     setContentLoading(true);
     setContentError(null);
     fetch(`${API}/public/courses/${id}/lessons/${active.id}`, { headers: authHeaders() })
-      .then(r => r.json())
-      .then(d => {
-        if (d.unlock_at) {
-          setContentError('locked');
-        } else {
-          setContent(d);
-        }
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        // 423 (drip locked) يُرجع unlock_at؛ أي خطأ آخر (401/403/5xx) يجب أن
+        // يظهر كخطأ صريح — لا أن يُسقَط بصمت إلى واجهة "درس نصي".
+        if (d?.unlock_at) setContentError('locked');
+        else if (!r.ok) setContentError('error');
+        else setContent(d);
       })
       .catch(() => setContentError('error'))
       .finally(() => setContentLoading(false));
@@ -243,30 +388,29 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   const liveContent = content?.contents?.find((c: any) => c.content_type === 'live');
   const textContent = content?.contents?.find((c: any) => c.content_type === 'text');
   const fileContent = content?.contents?.find((c: any) => c.content_type === 'file');
+  const exercise = content?.exercise;
+  // الملاحظات/العلامات المرجعية: القفز الزمني ممكن فقط عبر المشغّل المحمي
+  // (عنصر <video> أصلي) — لا الفيديو الخارجي (YouTube/Vimeo) الذي لا نتحكّم به.
+  const notesVideoId = videoContent?.video?.id ?? videoContent?.id ?? null;
+  const notesCanSeek = !!videoContent?.video && (videoContent.video.type === 'stream' || videoContent.video.type === 'provider');
+  // Only a staff viewer gets `preview: true` from the API; combined with the
+  // query hint this means the banner and write-guards apply to staff only.
+  const preview = previewMode && !!data?.preview;
 
-  const openFile = async (mode: 'download' | 'preview') => {
-    if (!fileContent?.file?.url || fileBusy) return;
-    setFileBusy(true);
-    try {
-      const res = await fetch(`${API}${fileContent.file.url}`, { headers: authHeaders() });
-      const d = await res.json().catch(() => null);
-      if (!res.ok || !d?.url) {
-        toast.error(locale === 'ar' ? 'لا يمكن الوصول إلى الملف' : 'Cannot access the file');
-        return;
-      }
-      if (mode === 'download') {
-        window.location.href = d.url;
-      } else {
-        window.open(d.url, '_blank');
-      }
-    } catch {
-      toast.error(locale === 'ar' ? 'فشل تحميل الملف' : 'Failed');
-    }
-    setFileBusy(false);
-  };
+  // ─── Prev / next lesson navigation ─────────────
+  // Flat, curriculum-ordered list so "next" means next in the course, not next
+  // in a section. Locked lessons are still counted so the order stays truthful,
+  // but the buttons are disabled on them.
+  const flatLessons: any[] = (data?.sections || []).flatMap((s: any) => s.lessons || []);
+  const currentIndex = active ? flatLessons.findIndex((l) => l.id === active.id) : -1;
+  const prevLesson = currentIndex > 0 ? flatLessons[currentIndex - 1] : null;
+  const nextLesson = currentIndex >= 0 && currentIndex < flatLessons.length - 1 ? flatLessons[currentIndex + 1] : null;
 
   // ─── Assignments (student) ─────────────────────
+  // Never called in preview (the form is hidden), but this is a hard guard so
+  // a stray call can never create a submission for a previewing teacher.
   const uploadSubmitFile = async (aid: string, file: File) => {
+    if (preview) return;
     setUploadingId(aid);
     try {
       const fd = new FormData();
@@ -279,6 +423,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
     setUploadingId(null);
   };
   const submitAssignment = async (a: any) => {
+    if (preview) return;
     const s = submitText[a.id]?.trim();
     const f = submitFile[a.id];
     if (!s && !f) { toast.error(locale === 'ar' ? 'أدخل نصاً أو ارفع ملفاً' : 'Enter text or upload a file'); return; }
@@ -289,14 +434,15 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
           submission_text: s || '', file_url: f?.url || null, file_name: f?.name || null,
         }),
       });
-      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || 'Failed'); return; }
+      if (!res.ok) { const d = await res.json().catch(() => null); toast.error(d?.message || (locale === 'ar' ? 'تعذر تسليم الواجب' : 'Could not submit the assignment')); return; }
       toast.success(locale === 'ar' ? 'تم تسليم الواجب' : 'Assignment submitted');
       setSubmitText((x) => ({ ...x, [a.id]: '' })); setSubmitFile((x) => ({ ...x, [a.id]: undefined }));
       loadAssignments();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(locale === 'ar' ? 'تعذر تسليم الواجب' : 'Could not submit the assignment'); }
     setSubmittingId(null);
   };
   const addComment = async (a: any) => {
+    if (preview) return;
     const my = a.my_submission;
     if (!my?.id) return;
     const text = commentVals[a.id]?.trim();
@@ -307,7 +453,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
       if (!res.ok) throw new Error();
       setCommentVals((c) => ({ ...c, [a.id]: '' }));
       loadAssignments();
-    } catch { toast.error('Failed'); }
+    } catch { toast.error(locale === 'ar' ? 'تعذر إضافة التعليق' : 'Could not add the comment'); }
     setCommentingId(null);
   };
   const fmtDue = (iso: string | null) => {
@@ -321,7 +467,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100dvh-4rem)] max-lg:h-[calc(100dvh-8.5rem)] -m-4 sm:-m-6 lg:-m-8">
       <div className="order-2 lg:order-1 w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-e bg-card overflow-y-auto shrink-0 max-h-[45vh] lg:max-h-none">
-        <div className="p-4 border-b"><h2 className="font-semibold">{data.course?.title || ''}</h2><p className="text-sm text-gray-500">{data.sections?.reduce((a: number, s: any) => a + s.lessons.length, 0) || 0} {locale === 'ar' ? 'درس' : 'lessons'}</p></div>
+        <div className="p-4 border-b"><h1 className="font-semibold">{data.course?.title || ''}</h1><p className="text-sm text-gray-500">{plural.lessons(data.sections?.reduce((a: number, s: any) => a + s.lessons.length, 0) || 0, locale)}</p></div>
         <div className="p-3 border-b">
           <div className="relative">
             <Search className="h-4 w-4 text-gray-400 absolute start-3 top-1/2 -translate-y-1/2" />
@@ -364,16 +510,23 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
             </button>
             {expanded.has(s.id) && (s.lessons || []).map((l: any) => (
               <button key={l.id} onClick={() => setActive(l)} className={`flex items-center gap-3 px-4 py-3 w-full text-start hover:bg-muted/50 ${active?.id === l.id ? 'bg-teal-50 border-s-2 border-s-teal-500' : 'border-s-2 border-s-transparent'}`}>
-                {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
-                <div className="flex-1"><p className="text-sm">{l.title}</p><p className="text-xs text-gray-500">{l.duration_minutes || 0} min{l.locked && l.unlock_at && <span className="text-amber-600 ms-1"> · {formatCountdown(l.unlock_at)}</span>}</p></div>
+                {l.locked ? <Lock className="h-4 w-4 text-gray-400 shrink-0" /> : completedIds.has(l.id) ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : isVideo(l) ? <Play className="h-4 w-4 text-teal-600 shrink-0" /> : <FileText className="h-4 w-4 text-green-500 shrink-0" />}
+                <div className="flex-1"><p className="text-sm">{l.title}</p><p className="text-xs text-gray-500">{l.duration_minutes ? formatDuration(l.duration_minutes, locale) : (locale === 'ar' ? 'درس' : 'lesson')}{l.locked && l.unlock_at && <span className="text-amber-600 ms-1"> · {formatCountdown(l.unlock_at)}</span>}</p></div>
               </button>
             ))}
           </div>
         ))}
       </div>
       <div className="order-1 lg:order-2 flex-1 flex flex-col min-w-0">
+        {preview && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 bg-violet-600 px-4 py-2.5 text-sm text-white" role="status">
+            <Eye className="h-4 w-4 shrink-0" />
+            <span className="flex-1 min-w-[200px]">{locale === 'ar' ? 'وضع المعاينة كطالب — تشاهد الكورس والدروس والاختبارات كما يراها الطالب. لا تُحتسب مشاهدة أو تقدّم أو نتيجة، ولا يتغيّر أي شيء في بيانات الطلاب.' : 'Preview as student — you see the course, lessons and exams exactly as a student does. No watch, progress or result is recorded, and no student data changes.'}</span>
+            <a href={`/teacher/courses/${id}`} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25 shrink-0"><Pencil className="h-3.5 w-3.5" />{locale === 'ar' ? 'العودة للتحرير' : 'Back to editing'}</a>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-3 p-4 border-b">
-          <a href="/my-learning" className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 shrink-0">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />} {locale === 'ar' ? 'رجوع' : 'Back'}</a>
+          <a href={preview ? `/teacher/courses/${id}` : '/my-learning'} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 shrink-0">{locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />} {preview ? (locale === 'ar' ? 'العودة للتحرير' : 'Back to editing') : (locale === 'ar' ? 'رجوع' : 'Back')}</a>
           <div className="flex gap-1 p-1 bg-muted/50 rounded-full overflow-x-auto max-w-full">
             <button onClick={() => setViewTab('lessons')} className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${viewTab === 'lessons' ? 'bg-teal-600 text-white shadow' : 'text-gray-500 hover:text-gray-800'}`}>{locale === 'ar' ? 'الدروس' : 'Lessons'}</button>
             <button onClick={() => setViewTab('exams')} className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${viewTab === 'exams' ? 'bg-teal-600 text-white shadow' : 'text-gray-500 hover:text-gray-800'}`}>
@@ -387,7 +540,9 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
           {videoContent?.video?.type === 'stream' && (
             <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck className="h-4 w-4" /> {locale === 'ar' ? 'فيديو محمي' : 'Protected video'}</span>
           )}
-          <Badge variant="outline" className="text-xs">{data.is_enrolled ? (locale === 'ar' ? 'مسجل' : 'Enrolled') : (locale === 'ar' ? 'غير مسجل' : 'Guest')}</Badge>
+          {preview
+            ? <Badge className="border-0 bg-violet-100 text-violet-700 text-xs">{locale === 'ar' ? 'معاينة كطالب' : 'Student preview'}</Badge>
+            : <Badge variant="outline" className="text-xs">{data.is_enrolled ? (locale === 'ar' ? 'مسجل' : 'Enrolled') : (locale === 'ar' ? 'غير مسجل' : 'Guest')}</Badge>}
           <button
             onClick={toggleContentFullscreen}
             className="flex h-9 w-9 items-center justify-center rounded-xl border text-muted-foreground transition-colors hover:bg-muted shrink-0"
@@ -447,20 +602,20 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     {exams.map((ex) => {
                       const done = (ex.attempts_count || 0) > 0;
                       return (
-                        <div key={ex.id} className="bg-white border rounded-2xl p-5 flex flex-wrap items-center gap-4">
+                        <div key={ex.id} id={`exam-${ex.id}`} className="bg-white border rounded-2xl p-5 flex flex-wrap items-center gap-4">
                           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-50 shrink-0"><ClipboardList className="h-5 w-5 text-teal-700" /></div>
                           <div className="flex-1 min-w-[180px]">
                             <p className="font-semibold">{ex.title}</p>
                             <p className="text-xs text-gray-500 mt-0.5">
-                              {ex.questions_count ?? 0} {locale === 'ar' ? 'سؤال' : 'questions'}
-                              {ex.duration_minutes ? ` · ${ex.duration_minutes} ${locale === 'ar' ? 'دقيقة' : 'min'}` : ''}
+                              {plural.questions(ex.questions_count ?? 0, locale)}
+                              {ex.duration_minutes ? ` · ${formatDuration(ex.duration_minutes, locale)}` : ''}
                               {ex.pass_mark_percent ? ` · ${locale === 'ar' ? 'نجاح' : 'pass'} ${ex.pass_mark_percent}%` : ''}
-                              {ex.attempts_count > 0 ? ` · ${locale === 'ar' ? 'محاولاتك' : 'attempts'}: ${ex.attempts_count}` : ''}
+                              {!preview && ex.attempts_count > 0 ? ` · ${locale === 'ar' ? 'محاولاتك' : 'attempts'}: ${ex.attempts_count}` : ''}
                             </p>
                           </div>
-                          <Link href={`/exam/${ex.id}`}>
+                          <Link href={buildExamUrl(ex.id, { preview })}>
                             <Button className="rounded-full text-white shrink-0" style={{ background: '#0d9488' }}>
-                              {done ? (locale === 'ar' ? 'إعادة الاختبار' : 'Retake') : (locale === 'ar' ? 'ابدأ الاختبار' : 'Start exam')}
+                              {preview ? (locale === 'ar' ? 'معاينة الاختبار' : 'Preview exam') : done ? (locale === 'ar' ? 'إعادة الاختبار' : 'Retake') : (locale === 'ar' ? 'ابدأ الاختبار' : 'Start exam')}
                             </Button>
                           </Link>
                         </div>
@@ -484,7 +639,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                   const duePast = a.due_at && new Date(a.due_at).getTime() < Date.now();
                   const canSubmit = a.is_published && (!duePast || a.allow_late);
                   return (
-                    <div key={a.id} className="bg-white border rounded-2xl p-6 space-y-4">
+                    <div key={a.id} id={`assignment-${a.id}`} className="bg-white border rounded-2xl p-6 space-y-4">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 shrink-0"><ClipboardCheck className="h-5 w-5 text-amber-600" /></div>
                         <div className="flex-1 min-w-[200px]">
@@ -494,7 +649,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                             <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500" />{a.points} {locale === 'ar' ? 'درجة' : 'pts'}</span>
                           </div>
                           {a.description && <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{a.description}</p>}
-                          {a.file_name && <a href={a.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 mt-2 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{a.file_name}</a>}
+                          {a.file_name && <a href={`${API}/assignments/${a.id}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 mt-2 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{a.file_name}</a>}
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
                           {my ? (
@@ -511,7 +666,7 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                       {my ? (
                         <div className="space-y-3 border-t pt-4">
                           {my.submission_text && <div className="bg-gray-50 rounded-xl p-3 text-sm whitespace-pre-wrap">{my.submission_text}</div>}
-                          {my.file_name && <a href={my.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{my.file_name}</a>}
+                          {my.file_name && <a href={`${API}/submissions/${my.id}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs text-teal-700 bg-teal-50 rounded-full px-3 py-1.5 hover:bg-teal-100"><FileText className="h-3.5 w-3.5" />{my.file_name}</a>}
                           {my.grade_comment && <p className="text-sm bg-green-50 border border-green-100 rounded-xl p-3"><b className="text-green-700">{locale === 'ar' ? 'ملاحظة المعلم:' : 'Teacher note:'}</b> <span className="text-gray-700">{my.grade_comment}</span></p>}
                           <div className="space-y-2">
                             {(my.comments || []).map((c: any) => (
@@ -520,16 +675,20 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                                 <div className="bg-muted/50 rounded-xl rounded-tr-sm px-3 py-2 text-sm max-w-[85%]"><p className="text-[10px] text-gray-400">{c.user_name} · {new Date(c.created_at).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US')}</p><p className="text-gray-700 mt-0.5">{c.comment}</p></div>
                               </div>
                             ))}
-                            <div className="flex items-center gap-2 pt-1">
-                              <input value={commentVals[a.id] || ''} onChange={(e) => setCommentVals((c) => ({ ...c, [a.id]: e.target.value }))} placeholder={locale === 'ar' ? 'اسأل معلمك أو أضف تعليقاً...' : 'Ask your teacher or comment...'} className="flex-1 h-10 px-3 rounded-full border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600" />
-                              <Button size="icon" variant="outline" className="h-10 w-10 rounded-full text-teal-700" onClick={() => addComment(a)} disabled={commentingId === a.id}>{commentingId === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</Button>
-                            </div>
+                            {!preview && (
+                              <div className="flex items-center gap-2 pt-1">
+                                <input value={commentVals[a.id] || ''} onChange={(e) => setCommentVals((c) => ({ ...c, [a.id]: e.target.value }))} placeholder={locale === 'ar' ? 'اسأل معلمك أو أضف تعليقاً...' : 'Ask your teacher or comment...'} className="flex-1 h-10 px-3 rounded-full border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600" />
+                                <Button size="icon" variant="outline" className="h-10 w-10 rounded-full text-teal-700" onClick={() => addComment(a)} disabled={commentingId === a.id}>{commentingId === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</Button>
+                              </div>
+                            )}
                           </div>
-                          {canSubmit && <p className="text-xs text-gray-400">{locale === 'ar' ? 'يمكنك إعادة التسليم — التقييم السابق يُعاد' : 'You can resubmit — the previous grade is reset'}</p>}
+                          {!preview && canSubmit && <p className="text-xs text-gray-400">{locale === 'ar' ? 'يمكنك إعادة التسليم — التقييم السابق يُعاد' : 'You can resubmit — the previous grade is reset'}</p>}
                         </div>
                       ) : (
                         <div className="space-y-3 border-t pt-4">
-                          {canSubmit ? (
+                          {preview ? (
+                            <p className="text-xs text-violet-700 bg-violet-50 border border-violet-100 rounded-xl p-3">{locale === 'ar' ? 'تعطيل التسليم في وضع المعاينة — لن يُنشئ تسليمًا أو درجة طالب.' : 'Submission is disabled in preview mode — no submission or student grade is created.'}</p>
+                          ) : canSubmit ? (
                             <>
                               <textarea value={submitText[a.id] || ''} onChange={(e) => setSubmitText((s) => ({ ...s, [a.id]: e.target.value }))} rows={3} placeholder={locale === 'ar' ? 'اكتب إجابتك هنا...' : 'Write your answer here...'} className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600" />
                               <div className="flex flex-wrap items-center gap-2">
@@ -601,29 +760,90 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                     <LiveLessonView live={liveContent.live} />
                   )}
                   {videoContent?.video ? (
-                    <ProtectedVideoPlayer videoId={videoContent.video.id ?? videoContent.id} />
+                    <ProtectedVideoPlayer ref={playerRef} videoId={videoContent.video.id ?? videoContent.id} onProgress={onWatched} />
                   ) : (
                     <div className="flex items-center gap-3 p-4 rounded-xl bg-white border"><FileText className="h-6 w-6 text-green-500" /><span className="font-medium">{locale === 'ar' ? 'درس نصي' : 'Text lesson'}</span></div>
+                  )}
+                  {exercise && exercise.position !== 'after_content' && (
+                    pageBlurred ? null : <ExerciseCard exercise={exercise} preview={preview} />
                   )}
                   {textContent?.text?.body && (
                     <div className={`bg-white border rounded-2xl leading-relaxed whitespace-pre-wrap select-none ${contentFs ? 'max-w-3xl w-full mx-auto p-6 sm:p-10 text-lg' : 'p-6 sm:p-8'}`} onCopy={(e) => e.preventDefault()}>{textContent.text.body}</div>
                   )}
                   {fileContent?.file?.url && (
-                    <div className={`flex flex-wrap items-center gap-3 ${contentFs ? 'max-w-3xl w-full mx-auto justify-center' : ''}`}>
-                      {fileContent.file.is_downloadable ? (
-                        <Button onClick={() => openFile('download')} disabled={fileBusy} className="gap-2 rounded-full" style={{ background: '#0d9488' }}>
-                          {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} {locale === 'ar' ? 'تحميل الملف' : 'Download'} {fileContent.file.name}
+                    <div className={contentFs ? 'max-w-3xl w-full mx-auto' : ''}>
+                      <ProtectedFileViewer
+                        file={fileContent.file}
+                        headers={authHeaders()}
+                      />
+                    </div>
+                  )}
+                  {!preview && !pageBlurred && active && !completedIds.has(active.id) && (() => {
+                    const required = Number(active.required_watch_seconds || 0);
+                    const needWatch = required > 0 && watchedSeconds < required;
+                    const pct = required > 0 ? Math.min(100, Math.round((watchedSeconds / required) * 100)) : 100;
+                    return (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4">
+                        <span className="flex items-center gap-2 text-sm text-gray-500">
+                          <CheckCircle2 className={`h-5 w-5 ${needWatch ? 'text-gray-300' : 'text-emerald-500'}`} />
+                          {needWatch
+                            ? (locale === 'ar' ? `أكمل مشاهدة الدرس لإتمامه — ${pct}% من المطلوب.` : `Watch the lesson to finish it — ${pct}% of the required watch reached.`)
+                            : (locale === 'ar' ? 'هل أنهيت هذا الدرس؟ علّمه كمكتمل.' : 'Finished this lesson? Mark it complete.')}
+                        </span>
+                        <Button
+                          className="gap-2 rounded-full text-white shrink-0"
+                          style={{ background: needWatch ? '#94a3b8' : '#0d9488' }}
+                          disabled={needWatch || markingId === active.id}
+                          onClick={() => markLessonComplete(active, watchedSeconds)}
+                        >
+                          {markingId === active.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          {locale === 'ar' ? 'إكمال الدرس' : 'Mark complete'}
                         </Button>
-                      ) : fileContent.file.previewable ? (
-                        <>
-                          <Button variant="outline" onClick={() => openFile('preview')} disabled={fileBusy} className="gap-2 rounded-full">
-                            {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} {locale === 'ar' ? 'معاينة الملف (بدون تنزيل)' : 'Preview (no download)'} {fileContent.file.name}
-                          </Button>
-                          <span className="flex items-center gap-1.5 text-xs text-amber-600"><Ban className="h-3.5 w-3.5" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم' : 'Downloads disabled by your teacher'}</span>
-                        </>
-                      ) : (
-                        <span className="flex items-center gap-1.5 text-xs text-amber-600 p-3 rounded-xl bg-amber-50 border border-amber-100"><Ban className="h-4 w-4" />{locale === 'ar' ? 'التنزيل معطل من قبل المعلم — هذا النوع من الملفات لا يمكن معاينته' : 'Downloads disabled by your teacher — this file type cannot be previewed'} ({fileContent.file.name})</span>
-                      )}
+                      </div>
+                    );
+                  })()}
+                  {!preview && !pageBlurred && active && completedIds.has(active.id) && (
+                    <div className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">
+                      <CheckCircle2 className="h-5 w-5" />
+                      {locale === 'ar' ? 'أكملت هذا الدرس — أحسنت!' : 'You completed this lesson — well done!'}
+                    </div>
+                  )}
+                  {exercise && exercise.position === 'after_content' && (
+                    pageBlurred ? null : <ExerciseCard exercise={exercise} preview={preview} />
+                  )}
+                  {!preview && !pageBlurred && (
+                    <LessonNotesPanel
+                      lessonId={active.id}
+                      videoId={notesVideoId}
+                      canUsePlayer={notesCanSeek}
+                      getCurrentTime={() => playerRef.current?.getCurrentTime() ?? null}
+                      getDuration={() => playerRef.current?.getDuration() ?? null}
+                      onSeek={(seconds) => { playerRef.current?.seekTo(seconds); }}
+                    />
+                  )}
+                  {!preview && !pageBlurred && (
+                    <LessonQuestions lessonId={active.id} />
+                  )}
+                  {!preview && !pageBlurred && (prevLesson || nextLesson) && (
+                    <div className="flex items-center justify-between gap-3 pt-2">
+                      <Button
+                        variant="outline"
+                        className="gap-2 rounded-full"
+                        disabled={!prevLesson || prevLesson.locked}
+                        onClick={() => { if (prevLesson && !prevLesson.locked) setActive(prevLesson); }}
+                      >
+                        {locale === 'ar' ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+                        {locale === 'ar' ? 'الدرس السابق' : 'Previous lesson'}
+                      </Button>
+                      <Button
+                        className="gap-2 rounded-full text-white"
+                        style={{ background: '#0d9488' }}
+                        disabled={!nextLesson || nextLesson.locked}
+                        onClick={() => { if (nextLesson && !nextLesson.locked) setActive(nextLesson); }}
+                      >
+                        {locale === 'ar' ? 'الدرس التالي' : 'Next lesson'}
+                        {locale === 'ar' ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+                      </Button>
                     </div>
                   )}
                 </>

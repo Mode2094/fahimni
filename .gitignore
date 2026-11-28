@@ -7,6 +7,11 @@
 deploy/env/*.env
 deploy/state/
 
+# Local owner-supplied credentials (secure intake form writes here) — never commit
+.secrets/
+cf-account-token
+*.cf-account-token
+
 # Laravel
 /vendor
 /storage/*.key
@@ -40,6 +45,13 @@ deploy/state/
 .next/
 frontend/.env.local
 frontend/.env.*.local
+
+# Playwright (interactive-question browser tests)
+/frontend/test-results
+/frontend/playwright-report
+/frontend/audit-shots
+/frontend/blob-report
+/frontend/.playwright
 
 # Agent tooling (local only)
 /.claude-flow/

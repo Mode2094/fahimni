@@ -3,6 +3,7 @@
 namespace App\Media;
 
 use App\Models\MediaAsset;
+use App\Models\MediaOrphanAsset;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Uid\UuidV7;
@@ -89,8 +90,20 @@ class MediaReconciliationService
                 }
             }
 
-            // 2) أصول عند المزود بلا سجل محلي → orphan.
+            // 2) أصول عند المزود بلا سجل محلي → تُحتجز في جدول مستقل بلا
+            //    tenant. لا يجوز منحها مستأجراً وهمياً (UUID صفري) لأن مفتاح
+            //    media_assets.tenant_id الخارجي يرفض ذلك ويُفشل المزامنة كلها.
             $localIds = $local->pluck('provider_asset_id')->flip();
+
+            // Real assets may appear between reconciles; drop their quarantine
+            // rows so a claimed asset is no longer reported as an orphan. Only
+            // rows whose provider id now has a local owner are removed — with
+            // no local assets at all this must delete nothing.
+            if ($localIds->isNotEmpty()) {
+                MediaOrphanAsset::where('provider', $provider)
+                    ->whereIn('provider_asset_id', $localIds->keys()->all())
+                    ->delete();
+            }
 
             foreach ($videoList as $video) {
                 $uid = (string) ($video['uid'] ?? $video['guid'] ?? '');
@@ -99,30 +112,28 @@ class MediaReconciliationService
                     continue;
                 }
 
-                $exists = MediaAsset::withoutTenant()
-                    ->where('provider', $provider)
-                    ->where('provider_asset_id', $uid)
-                    ->where('status', MediaAsset::STATUS_ORPHAN)
-                    ->exists();
+                $orphan = MediaOrphanAsset::firstOrNew([
+                    'provider' => $provider,
+                    'provider_asset_id' => $uid,
+                ]);
 
-                if (! $exists) {
-                    MediaAsset::withoutTenant()->create([
-                        'id' => UuidV7::generate(),
-                        'tenant_id' => $tenantId ?? '00000000-0000-0000-0000-000000000000',
-                        'user_id' => null,
-                        'provider' => $provider,
-                        'provider_asset_id' => $uid,
-                        'kind' => 'video',
-                        'status' => MediaAsset::STATUS_ORPHAN,
-                        'title' => $video['meta']['name'] ?? $video['title'] ?? 'Orphan asset',
-                        'duration_seconds' => (int) ($video['duration'] ?? $video['length'] ?? 0),
-                        'thumbnail_url' => $video['thumbnail'] ?? null,
-                        'metadata' => ['detected_at' => now()->toIso8601String(), 'provider_status' => $video['status'] ?? ''],
-                    ]);
-
-                    Log::info('media.reconcile.orphan_detected', ['provider_asset' => $uid]);
+                if (! $orphan->exists) {
+                    $orphan->id = UuidV7::generate();
+                    $orphan->first_seen_at = now();
                     $result['orphans_detected']++;
+                    Log::info('media.reconcile.orphan_detected', ['provider_asset' => $uid]);
                 }
+
+                $orphan->fill([
+                    'title' => $video['meta']['name'] ?? $video['title'] ?? 'Orphan asset',
+                    'duration_seconds' => (int) ($video['duration'] ?? $video['length'] ?? 0),
+                    'thumbnail_url' => $video['thumbnail'] ?? null,
+                    'last_seen_at' => now(),
+                    'metadata' => [
+                        'provider_status' => $video['status'] ?? '',
+                        'detected_at' => $orphan->metadata['detected_at'] ?? now()->toIso8601String(),
+                    ],
+                ])->save();
             }
         } catch (\Throwable $e) {
             Log::error('media.reconcile.failed', ['provider' => $provider, 'error' => $e->getMessage()]);

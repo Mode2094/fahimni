@@ -10,10 +10,14 @@ use App\Models\AssignmentComment;
 use App\Models\AssignmentSubmission;
 use App\Models\Course;
 use App\Models\Enrollment;
+use App\Models\Lesson;
 use App\Plans\QuotaService;
+use App\Support\StoragePathGuard;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Uid\UuidV7;
 
 class AssignmentController extends Controller
@@ -30,7 +34,7 @@ class AssignmentController extends Controller
         return Enrollment::withoutTenant()
             ->where('course_id', $courseId)
             ->where('user_id', $request->user()->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->exists();
     }
 
@@ -44,9 +48,124 @@ class AssignmentController extends Controller
         return $assignment->is_published && $this->isEnrolled($request, $assignment->course_id);
     }
 
+    /**
+     * A client may only reference a private assignment path inside its own
+     * tenant folder, or a legacy public upload path. Anything else (external
+     * URLs, other tenants' paths, traversal) is dropped — the stored value is
+     * always resolved through an authorised endpoint, never linked raw.
+     */
+    private function sanitizeFileRef(?string $ref, string $tenantId): ?string
+    {
+        $ref = $ref === null ? null : trim($ref);
+
+        if ($ref === null || $ref === '') {
+            return null;
+        }
+
+        // Legacy rows created before the private-disk hardening.
+        if (str_starts_with($ref, '/storage/uploads/')) {
+            return $ref;
+        }
+
+        if (str_starts_with($ref, 'assignments/'.$tenantId.'/')
+            && StoragePathGuard::isSafe($ref, ['assignments'])) {
+            return $ref;
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve a stored file reference to the disk that actually holds it and
+     * stream it with a private, non-cacheable response. Legacy public rows are
+     * still served, but the path is validated first.
+     */
+    private function streamFile(?string $ref, ?string $name, string $tenantId): StreamedResponse|JsonResponse
+    {
+        if ($ref === null || trim($ref) === '') {
+            return response()->json(['message' => 'File not found.'], 404);
+        }
+
+        if (str_starts_with($ref, '/storage/')) {
+            $path = substr($ref, strlen('/storage/'));
+            if (! StoragePathGuard::isSafe($path, ['uploads'])) {
+                return response()->json(['message' => 'Invalid file path.'], 404);
+            }
+            $disk = Storage::disk('public');
+        } else {
+            if (! str_starts_with($ref, 'assignments/'.$tenantId.'/')
+                || ! StoragePathGuard::isSafe($ref, ['assignments'])) {
+                return response()->json(['message' => 'Invalid file path.'], 404);
+            }
+            $path = $ref;
+            $disk = Storage::disk('local');
+        }
+
+        if (! $disk->exists($path)) {
+            return response()->json(['message' => 'File missing.'], 404);
+        }
+
+        $filename = $name ?: basename($path);
+
+        return $disk->response($path, $filename, [
+            'Content-Disposition' => 'attachment; filename="'.rawurlencode($filename).'"',
+            'Content-Type' => $disk->mimeType($path) ?: 'application/octet-stream',
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, no-store',
+        ]);
+    }
+
+    /** Authorised download of an assignment/worksheet attachment. */
+    public function download(Request $request, string $id): StreamedResponse|JsonResponse
+    {
+        $assignment = Assignment::findOrFail($id);
+
+        if (! $this->requireAssignment($request, $assignment)) {
+            return response()->json(['message' => 'Access denied.'], 403);
+        }
+
+        return $this->streamFile($assignment->file_url, $assignment->file_name, $assignment->tenant_id);
+    }
+
+    /** Authorised download of a student's submission file (owner or staff). */
+    public function submissionFile(Request $request, string $id): StreamedResponse|JsonResponse
+    {
+        $submission = AssignmentSubmission::with('assignment')->findOrFail($id);
+
+        $isTeacher = $this->isTeacher($request);
+        $isOwner = $submission->user_id === $request->user()->id;
+
+        if (! $isTeacher && ! $isOwner) {
+            return response()->json(['message' => 'Access denied.'], 403);
+        }
+
+        if (! $isTeacher && ! $submission->assignment?->is_published) {
+            return response()->json(['message' => 'Access denied.'], 403);
+        }
+
+        return $this->streamFile($submission->file_url, $submission->file_name, $submission->tenant_id);
+    }
+
+    /** A lesson (if given) must belong to the same course and tenant. */
+    private function assertLessonInCourse(?string $lessonId, Course $course): bool
+    {
+        if ($lessonId === null || $lessonId === '') {
+            return true;
+        }
+
+        return Lesson::byTenant($course->tenant_id)
+            ->whereKey($lessonId)
+            ->whereHas('section', fn ($q) => $q->where('course_id', $course->id))
+            ->exists();
+    }
+
     public function index(Request $request): JsonResponse
     {
-        $request->validate(['course_id' => 'required|string|exists:courses,id']);
+        $request->validate([
+            'course_id' => 'required|string|exists:courses,id',
+            'lesson_id' => 'nullable|string|exists:lessons,id',
+            'filter' => 'nullable|in:upcoming,overdue,graded',
+        ]);
 
         $course = Course::findOrFail($request->course_id);
         $isTeacher = $this->isTeacher($request);
@@ -57,7 +176,32 @@ class AssignmentController extends Controller
 
         $query = Assignment::byTenant($course->tenant_id)
             ->where('course_id', $course->id)
+            ->when($request->lesson_id, fn ($q) => $q->where('lesson_id', $request->lesson_id))
             ->when(! $isTeacher, fn ($q) => $q->where('is_published', true))
+            ->when($request->filter, function ($q) use ($request, $isTeacher) {
+                $filter = $request->filter;
+                $now = now();
+
+                if ($isTeacher) {
+                    // Teacher views are driven by the deadline.
+                    return match ($filter) {
+                        'upcoming' => $q->where(fn ($w) => $w->whereNull('due_at')->orWhere('due_at', '>=', $now)),
+                        'overdue' => $q->where('due_at', '<', $now),
+                        'graded' => $q->whereHas('submissions', fn ($s) => $s->where('status', 'graded')),
+                    };
+                }
+
+                // Student views are driven by the student's own submission.
+                $userId = $request->user()->id;
+
+                return match ($filter) {
+                    'graded' => $q->whereHas('submissions', fn ($s) => $s->where('user_id', $userId)->where('status', 'graded')),
+                    'overdue' => $q->where('due_at', '<', $now)
+                        ->whereDoesntHave('submissions', fn ($s) => $s->where('user_id', $userId)->whereIn('status', ['submitted', 'late', 'graded'])),
+                    'upcoming' => $q->where(fn ($w) => $w->whereNull('due_at')->orWhere('due_at', '>=', $now))
+                        ->whereDoesntHave('submissions', fn ($s) => $s->where('user_id', $userId)->whereIn('status', ['submitted', 'late', 'graded'])),
+                };
+            })
             ->with([
                 'submissions' => fn ($q) => $q
                     ->when(! $isTeacher, fn ($sq) => $sq->where('user_id', $request->user()->id))
@@ -97,6 +241,7 @@ class AssignmentController extends Controller
         $request->validate([
             'course_id' => 'required|string|exists:courses,id',
             'section_id' => 'nullable|string|exists:sections,id',
+            'lesson_id' => 'nullable|string|exists:lessons,id',
             'title' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
             'points' => 'nullable|numeric|min:0|max:999999',
@@ -118,6 +263,10 @@ class AssignmentController extends Controller
             return response()->json(['message' => 'Course does not belong to this tenant.'], 403);
         }
 
+        if (! $this->assertLessonInCourse($request->lesson_id, $course)) {
+            return response()->json(['message' => 'The selected lesson does not belong to this course.'], 422);
+        }
+
         app(QuotaService::class)->assertCan($course->tenant_id, 'assignments');
 
         $assignment = Assignment::create([
@@ -125,6 +274,7 @@ class AssignmentController extends Controller
             'tenant_id' => $course->tenant_id,
             'course_id' => $course->id,
             'section_id' => $request->section_id,
+            'lesson_id' => $request->lesson_id,
             'title' => $request->title,
             'description' => $request->description,
             'points' => $request->points ?? 10,
@@ -134,7 +284,7 @@ class AssignmentController extends Controller
             'sort_order' => Assignment::withoutTenant()
                 ->where('course_id', $course->id)
                 ->max('sort_order') + 1,
-            'file_url' => $request->file_url,
+            'file_url' => $this->sanitizeFileRef($request->file_url, $course->tenant_id),
             'file_name' => $request->file_name,
             'file_size_bytes' => $request->file_size_bytes,
             'metadata' => [],
@@ -149,6 +299,7 @@ class AssignmentController extends Controller
     {
         $request->validate([
             'section_id' => 'nullable|string|exists:sections,id',
+            'lesson_id' => 'nullable|string|exists:lessons,id',
             'title' => 'sometimes|required|string|max:255',
             'description' => 'nullable|string|max:5000',
             'points' => 'nullable|numeric|min:0|max:999999',
@@ -170,7 +321,20 @@ class AssignmentController extends Controller
             return response()->json(['message' => 'Access denied.'], 403);
         }
 
-        $assignment->update($request->validated());
+        if ($request->has('lesson_id')) {
+            $course = Course::findOrFail($assignment->course_id);
+            if (! $this->assertLessonInCourse($request->lesson_id, $course)) {
+                return response()->json(['message' => 'The selected lesson does not belong to this course.'], 422);
+            }
+        }
+
+        $data = $request->validated();
+
+        if ($request->has('file_url')) {
+            $data['file_url'] = $this->sanitizeFileRef($request->file_url, $assignment->tenant_id);
+        }
+
+        $assignment->update($data);
 
         return response()->json([
             'assignment' => new AssignmentResource($assignment->fresh()),
@@ -247,7 +411,7 @@ class AssignmentController extends Controller
             'assignment_id' => $assignment->id,
             'user_id' => $user->id,
             'submission_text' => $request->submission_text,
-            'file_url' => $request->file_url,
+            'file_url' => $this->sanitizeFileRef($request->file_url, $tenantId),
             'file_name' => $request->file_name,
             'file_size_bytes' => $request->file_size_bytes,
             'submitted_at' => now(),

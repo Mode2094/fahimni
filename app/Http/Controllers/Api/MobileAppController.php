@@ -8,8 +8,11 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Lesson;
 use App\Models\TenantUser;
+use App\Models\VideoContent;
+use App\Services\CourseAccessService;
 use App\Services\StudentAppService;
 use App\Services\VideoProtectionService;
+use App\Services\VideoWatchPositionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -27,6 +30,7 @@ class MobileAppController extends Controller
     public function __construct(
         private readonly StudentAppService $app,
         private readonly VideoProtectionService $protection,
+        private readonly VideoWatchPositionService $positions,
     ) {}
 
     /**
@@ -107,7 +111,7 @@ class MobileAppController extends Controller
         $enrollments = Enrollment::with('course')
             ->where('tenant_id', $tenant->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->orderByDesc('enrolled_at')
             ->get();
 
@@ -124,7 +128,9 @@ class MobileAppController extends Controller
                                     ->from('enrollments')
                                     ->whereColumn('enrollments.course_id', 'announcements.course_id')
                                     ->where('enrollments.user_id', $user->id)
-                                    ->where('enrollments.tenant_id', $tenant->id);
+                                    ->where('enrollments.tenant_id', $tenant->id)
+                                    ->whereIn('enrollments.status', ['active', 'completed'])
+                                    ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
                             });
                     });
             })
@@ -168,7 +174,7 @@ class MobileAppController extends Controller
 
         $enrolledIds = Enrollment::where('tenant_id', $tenant->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->pluck('course_id')
             ->flip();
 
@@ -203,25 +209,42 @@ class MobileAppController extends Controller
             return response()->json(['message' => 'Course not found.'], 404);
         }
 
-        $enrollment = Enrollment::where('course_id', $course->id)
+        $enrollment = Enrollment::where('tenant_id', $tenant->id)
+            ->where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         $enrolled = $enrollment !== null;
+
+        // Course groups: a lesson restricted to groups is hidden from students
+        // who are not members — the same rule the web curriculum applies.
+        // Membership never creates an enrolment, so seats are unaffected.
+        $visibleLessonSet = array_flip(
+            Lesson::whereIn('section_id', $course->sections->pluck('id'))
+                ->visibleToStudent((string) $user->id)
+                ->pluck('id')
+                ->all()
+        );
 
         // Drip content unlocks gradually after enrollment.
         $dripEnabled = (bool) $course->drip_enabled && $enrolled;
         $intervalDays = max(1, (int) $course->drip_interval_days);
         $position = 0;
 
-        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment) {
+        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $visibleLessonSet) {
             return [
                 'id' => $section->id,
                 'title' => $section->title,
                 'sort_order' => $section->sort_order,
-                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment) {
+                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $visibleLessonSet) {
                     $position++;
+
+                    // Hidden for this student's group — not merely locked.
+                    if (! isset($visibleLessonSet[$lesson->id])) {
+                        return null;
+                    }
+
                     $unlockAt = null;
 
                     if ($dripEnabled) {
@@ -243,7 +266,7 @@ class MobileAppController extends Controller
                         'unlock_at' => $locked ? $unlockAt?->toIso8601String() : null,
                         'position' => $position,
                     ];
-                }),
+                })->filter()->values(),
             ];
         });
 
@@ -271,7 +294,7 @@ class MobileAppController extends Controller
 
         $lesson = Lesson::where('id', $lessonId)
             ->where('tenant_id', $tenant->id)
-            ->with(['contents.video', 'contents.text', 'contents.file', 'section'])
+            ->with(['contents.video', 'contents.text', 'contents.file', 'contents.liveSession', 'section'])
             ->first();
 
         if (! $lesson || ! $lesson->section) {
@@ -286,12 +309,19 @@ class MobileAppController extends Controller
             return response()->json(['message' => 'Lesson not found.'], 404);
         }
 
-        $enrollment = Enrollment::where('course_id', $course->id)
+        $enrollment = Enrollment::where('tenant_id', $tenant->id)
+            ->where('course_id', $course->id)
             ->where('user_id', $user->id)
-            ->whereIn('status', ['active', 'completed'])
+            ->effective()
             ->first();
 
         $enrolled = $enrollment !== null;
+
+        // Course-group restriction runs before the free-preview allowance so a
+        // lesson shared to specific groups never leaks to non-members.
+        if (! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return response()->json(['message' => 'This lesson is not available for your group.'], 403);
+        }
 
         if (! $lesson->is_free_preview && ! $enrolled) {
             return response()->json(['message' => 'This lesson is locked. Enroll to access it.'], 403);
@@ -323,9 +353,13 @@ class MobileAppController extends Controller
             ];
 
             if ($content->video && $user) {
-                $payload['video'] = $content->video->provider === 'bunny'
+                $videoPayload = $content->video->provider === 'bunny'
                     ? $this->protection->providerPlaybackPayload($content->video, $user)
                     : $this->protection->playbackPayload($content->video, $user);
+                // موضع الاستكمال للطالب نفسه (نفس سلوك الويب) — يُهمَل إن انتهى
+                // الفيديو أو تغيّرت مدته بعد إعادة الرفع.
+                $videoPayload['resume'] = $this->positions->read($content->video, $user);
+                $payload['video'] = $videoPayload;
             } elseif ($content->video) {
                 $payload['video'] = [
                     'type' => 'external',
@@ -353,6 +387,24 @@ class MobileAppController extends Controller
                 ];
             }
 
+            // Live lesson: a Google Meet link. The student only ever receives
+            // the join URL (never the organiser/start URL), only while the
+            // session is not cancelled, and only for a lesson they may see
+            // (group + enrollment were enforced above).
+            if ($content->liveSession) {
+                $live = $content->liveSession;
+                $payload['live'] = [
+                    'id' => $live->id,
+                    'title' => $live->title,
+                    'status' => $live->status,
+                    'scheduled_at' => $live->scheduled_at?->toIso8601String(),
+                    'cancelled_at' => $live->cancelled_at?->toIso8601String(),
+                    'meeting_url' => $live->status === 'cancelled'
+                        ? null
+                        : ($live->metadata['meeting_url'] ?? null),
+                ];
+            }
+
             return $payload;
         });
 
@@ -367,6 +419,45 @@ class MobileAppController extends Controller
             ],
             'contents' => $contents,
         ]);
+    }
+
+    /**
+     * POST /api/v1/mobile/video-position — حفظ موضع مشاهدة الفيديو للطالب
+     * الحالي (استكمال بين الأجهزة). نفس قواعد الوصول المستخدمة في التشغيل،
+     * ولا يمسّ احتساب دقائق المشاهدة أو الإكمال أو جلسات التشغيل المحمية.
+     */
+    public function saveVideoPosition(Request $request): JsonResponse
+    {
+        $tenant = $this->ensureStudentContext($request);
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'video_id' => 'required|uuid',
+            'position_seconds' => 'required|numeric|min:0|max:86400',
+            'duration_seconds' => 'nullable|numeric|min:0|max:86400',
+        ]);
+
+        $video = VideoContent::where('id', $validated['video_id'])
+            ->where('tenant_id', $tenant->id)
+            ->first();
+
+        if (! $video) {
+            return response()->json(['message' => 'Video not found.'], 404);
+        }
+
+        if (! $this->protection->canAccess($video, $user)) {
+            return response()->json(['message' => 'No access to this video.'], 403);
+        }
+
+        $saved = $this->positions->save(
+            $video,
+            $user,
+            (int) floor((float) $validated['position_seconds']),
+            isset($validated['duration_seconds']) ? (int) floor((float) $validated['duration_seconds']) : null,
+        );
+
+        // فشل الحفظ المتوقّع لا يعطّل التشغيل — نُبلّغ بحالة صريحة.
+        return response()->json(['ok' => $saved !== null, 'position' => $saved]);
     }
 
     /**
@@ -390,7 +481,9 @@ class MobileAppController extends Controller
                                     ->from('enrollments')
                                     ->whereColumn('enrollments.course_id', 'announcements.course_id')
                                     ->where('enrollments.user_id', $user->id)
-                                    ->where('enrollments.tenant_id', $tenant->id);
+                                    ->where('enrollments.tenant_id', $tenant->id)
+                                    ->whereIn('enrollments.status', ['active', 'completed'])
+                                    ->where(fn ($e) => $e->whereNull('enrollments.expires_at')->orWhere('enrollments.expires_at', '>', now()));
                             });
                     });
             })

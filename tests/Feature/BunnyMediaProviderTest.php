@@ -24,13 +24,16 @@ class BunnyMediaProviderTest extends TenantTestCase
 {
     private const LIBRARY = '112233';
 
-    private function setupBunnyProvider(bool $withSecurityKey = true): void
-    {
+    private function setupBunnyProvider(
+        bool $withSecurityKey = true,
+        string $hostname = '',
+        bool $tokenAuth = false,
+    ): void {
         $creds = [
             'library_id' => self::LIBRARY,
             'api_key' => 'test-api-key',
             'security_key' => $withSecurityKey ? 'test-security-key' : '',
-            'hostname' => '',
+            'hostname' => $hostname,
         ];
 
         MediaProvider::where('provider', 'bunny')->delete();
@@ -43,7 +46,7 @@ class BunnyMediaProviderTest extends TenantTestCase
             'webhook_secret' => 'bunny-webhook-secret',
             'environment' => 'sandbox',
             'connection_status' => 'unknown',
-            'config' => [],
+            'config' => ['token_auth' => $tokenAuth],
             'metadata' => [],
         ]);
     }
@@ -78,6 +81,57 @@ class BunnyMediaProviderTest extends TenantTestCase
         $this->assertSame('bunny-video-1', $ticket['asset_id']);
         $this->assertStringContainsString('video.bunnycdn.com/library/'.self::LIBRARY.'/videos/bunny-video-1', $ticket['upload_url']);
         $this->assertSame(3600, $ticket['expires_in']);
+    }
+
+    public function test_bunny_issues_resumable_tus_credentials_with_a_server_side_sha256_signature(): void
+    {
+        $this->setupBunnyProvider();
+
+        $provider = app(MediaProviderManager::class)->provider('bunny');
+
+        $before = time();
+        $creds = $provider->createResumableUploadTicket('bunny-video-1', 86400);
+
+        $this->assertSame('https://video.bunnycdn.com/tusupload', $creds['endpoint']);
+        $this->assertSame(self::LIBRARY, $creds['library_id']);
+        $this->assertSame('bunny-video-1', $creds['video_id']);
+        // صلاحية لا تقل عن ساعة (شرط Bunny) — وهنا 24 ساعة للاستئناف.
+        $this->assertGreaterThanOrEqual($before + 86400, $creds['expires']);
+
+        // SHA256(library_id + api_key + expires + video_id) — يُحسب على السيرفر.
+        $expected = hash('sha256', self::LIBRARY.'test-api-key'.$creds['expires'].'bunny-video-1');
+        $this->assertSame($expected, $creds['signature']);
+        $this->assertSame(64, strlen($creds['signature'])); // hex
+        // المفتاح لا يظهر أبداً في الحمولة العائدة للمتصفح.
+        $this->assertStringNotContainsString('test-api-key', json_encode($creds));
+    }
+
+    public function test_bunny_reports_resumable_upload_capability_and_enforces_a_minimum_expiry(): void
+    {
+        $this->setupBunnyProvider();
+
+        $provider = app(MediaProviderManager::class)->provider('bunny');
+
+        $this->assertTrue($provider->supportsResumableUpload());
+        $this->assertTrue($provider->capabilities()['resumable_upload']);
+        $this->assertTrue($provider->capabilities()['direct_upload']);
+
+        // حتى مع TTL صغير جداً، لا تنتهي الصلاحية قبل ساعة.
+        $creds = $provider->createResumableUploadTicket('bunny-video-1', 5);
+        $this->assertGreaterThanOrEqual(time() + 3600, $creds['expires']);
+    }
+
+    public function test_resumable_ticket_refuses_to_sign_without_configuration(): void
+    {
+        MediaProvider::where('provider', 'bunny')->delete();
+        config(['bunny.library_id' => '', 'bunny.api_key' => '']);
+
+        $provider = new BunnyStreamProvider();
+
+        $this->assertFalse($provider->supportsResumableUpload());
+
+        $this->expectException(\RuntimeException::class);
+        $provider->createResumableUploadTicket('bunny-video-1');
     }
 
     public function test_bunny_get_video_normalizes_status_and_metadata(): void
@@ -126,6 +180,36 @@ class BunnyMediaProviderTest extends TenantTestCase
         $plain = app(MediaProviderManager::class)->provider('bunny')
             ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
         $this->assertSame($url, $plain);
+    }
+
+    public function test_playback_url_is_signed_only_when_token_auth_is_enabled(): void
+    {
+        // Token Auth مفعّل + نطاق مخصص → رابط HLS موقّع بانتهاء صلاحية.
+        $this->setupBunnyProvider(hostname: 'stream.example.com', tokenAuth: true);
+
+        $signed = app(MediaProviderManager::class)->provider('bunny')
+            ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
+
+        $this->assertStringContainsString('https://stream.example.com/bcdn_token=HS256-', $signed);
+        $this->assertStringContainsString('token_path=', $signed);
+        $this->assertStringContainsString('expires=', $signed);
+        $this->assertStringContainsString('/bunny-video-1/playlist.m3u8', $signed);
+
+        // المفتاح نفسه يعطي توقيعاً حتمياً لنفس المدى الزمني (المُدخل الوحيد
+        // المتغيّر هو الطابع الزمني)، لذا نتحقق أن التوقيع ليس رابطاً عارياً.
+        $this->assertNotSame('https://stream.example.com/bunny-video-1/playlist.m3u8', $signed);
+
+        // نطاق مخصص لكن Token Auth معطّل → لا توقيع (لا يكسر التشغيل).
+        $this->setupBunnyProvider(hostname: 'stream.example.com', tokenAuth: false);
+        $unsigned = app(MediaProviderManager::class)->provider('bunny')
+            ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
+        $this->assertSame('https://stream.example.com/bunny-video-1/playlist.m3u8', $unsigned);
+
+        // Token Auth مفعّل لكن بلا نطاق مخصص (المضيف الافتراضي لا يدعم التوقيع).
+        $this->setupBunnyProvider(hostname: '', tokenAuth: true);
+        $noHost = app(MediaProviderManager::class)->provider('bunny')
+            ->signedPlaybackUrl('bunny-video-1', 'user-1', 900);
+        $this->assertSame('https://video.bunnycdn.com/bunny-video-1/playlist.m3u8', $noHost);
     }
 
     public function test_video_webhook_events_are_mapped(): void

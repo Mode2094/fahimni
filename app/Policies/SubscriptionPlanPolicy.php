@@ -32,4 +32,13 @@ class SubscriptionPlanPolicy
     {
         return $user->is_super_admin || $user->can('plans.manage');
     }
+
+    /**
+     * Changing a platform subscription PRICE is restricted to Super Admins.
+     * Teachers, students and any delegated permission can never do this.
+     */
+    public function publishPrice(User $user): bool
+    {
+        return (bool) $user->is_super_admin;
+    }
 }

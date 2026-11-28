@@ -84,6 +84,10 @@ class TeacherPlanController extends Controller
         }
 
         return response()->json([
+            // `active` is the explicit "does this workspace have a live plan or
+            // trial?" signal the UI uses to force plan selection. `plan` stays
+            // null for a pending-payment tenant.
+            'active' => $snapshot['active'],
             'plan' => $snapshot['active'] ? $subscription : null,
             'features' => $features,
             'limits' => $limits,

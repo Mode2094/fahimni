@@ -10,7 +10,10 @@ use App\Models\StudentAchievement;
 use App\Models\StudentActivity;
 use App\Models\StudentFavorite;
 use App\Models\StudentPoint;
+use App\Models\StudentStreak;
 use App\Models\User;
+use App\Support\LeaderboardPolicy;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Uid\UuidV7;
 
@@ -80,6 +83,66 @@ class StudentGamificationService
             'metadata' => $metadata,
             'created_at' => now(),
         ]);
+
+        // Any real activity extends the daily streak.
+        $this->touchStreak($user, $tenantId);
+    }
+
+    /**
+     * Advance the daily streak for the current day. Idempotent: repeated
+     * activity on the same day never inflates the count. A gap of more than
+     * one day restarts the streak at 1.
+     */
+    public function touchStreak(User $user, string $tenantId, ?Carbon $day = null): StudentStreak
+    {
+        $day = ($day ?? Carbon::now())->startOfDay();
+
+        $streak = StudentStreak::firstOrNew([
+            'tenant_id' => $tenantId,
+            'user_id' => $user->id,
+        ]);
+
+        $last = $streak->last_activity_date?->startOfDay();
+
+        if ($last && $last->equalTo($day)) {
+            // Already counted today — idempotent.
+            return $streak;
+        }
+
+        if ($last && $last->equalTo($day->copy()->subDay())) {
+            $streak->current_streak = (int) $streak->current_streak + 1;
+        } else {
+            $streak->current_streak = 1;
+        }
+
+        $streak->longest_streak = max((int) $streak->longest_streak, (int) $streak->current_streak);
+        $streak->last_activity_date = $day;
+        $streak->save();
+
+        return $streak;
+    }
+
+    /**
+     * Read the streak, resolving a stale one to zero without writing. A streak
+     * is "alive" when the last activity is today or yesterday.
+     */
+    public function streakFor(User $user, string $tenantId): array
+    {
+        $streak = StudentStreak::where('tenant_id', $tenantId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        $current = (int) ($streak->current_streak ?? 0);
+        $last = $streak?->last_activity_date?->startOfDay();
+        $today = Carbon::now()->startOfDay();
+        $alive = $last !== null && ($last->equalTo($today) || $last->equalTo($today->copy()->subDay()));
+
+        return [
+            'current' => $alive ? $current : 0,
+            'longest' => (int) ($streak->longest_streak ?? 0),
+            'last_activity_date' => $streak?->last_activity_date?->toDateString(),
+            'active_today' => $last !== null && $last->equalTo($today),
+        ];
     }
 
     public function toggleFavorite(User $user, string $tenantId, string $courseId): array
@@ -139,9 +202,18 @@ class StudentGamificationService
     /**
      * Leaderboard for a tenant, ordered by total points.
      * Returns rank, student info, points and course completion stats.
+     *
+     * Privacy: when `$anonymous` is true and the caller is not staff, every
+     * other student's identity is masked — no name, avatar or internal id.
+     * `is_me` is always present so a student can still find their own row.
      */
-    public function leaderboard(string $tenantId, int $limit = 50): array
-    {
+    public function leaderboard(
+        string $tenantId,
+        int $limit = 50,
+        ?string $viewerId = null,
+        bool $viewerIsStaff = false,
+        bool $anonymous = false,
+    ): array {
         $rows = StudentPoint::where('tenant_id', $tenantId)
             ->select('user_id', DB::raw('SUM(points) as total'))
             ->groupBy('user_id')
@@ -162,15 +234,21 @@ class StudentGamificationService
 
         $rank = 0;
 
-        return $rows->map(function ($row) use (&$rank, $users, $completion) {
+        return $rows->map(function ($row) use (&$rank, $users, $completion, $viewerId, $viewerIsStaff, $anonymous) {
             $rank++;
             $user = $users->get($row->user_id);
+            $isMe = $viewerId !== null && (string) $row->user_id === (string) $viewerId;
+            $hide = $anonymous && ! $viewerIsStaff && ! $isMe;
 
             return [
                 'rank' => $rank,
-                'user_id' => $row->user_id,
-                'name' => $user?->name ?? '—',
-                'avatar_url' => $user?->avatar_url,
+                // The internal id is an identifier of *another* student: never
+                // expose it in the anonymous student view (keep it for self and
+                // for staff, who are authorised to see identifiable results).
+                'user_id' => $hide ? null : $row->user_id,
+                'is_me' => $isMe,
+                'name' => $hide ? LeaderboardPolicy::ANON_LABEL : ($user?->name ?? '—'),
+                'avatar_url' => $hide ? null : $user?->avatar_url,
                 'points' => (int) $row->total,
                 'courses_count' => (int) ($completion[$row->user_id]->courses ?? 0),
                 'courses_completed' => (int) ($completion[$row->user_id]->completed ?? 0),
@@ -228,6 +306,7 @@ class StudentGamificationService
             'lessons_completed' => $completedLessons,
             'exams_passed' => $passedExams,
             'favorites_count' => StudentFavorite::where('tenant_id', $tenantId)->where('user_id', $user->id)->count(),
+            'streak' => $this->streakFor($user, $tenantId),
         ];
     }
 

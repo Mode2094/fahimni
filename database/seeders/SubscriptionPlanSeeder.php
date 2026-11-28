@@ -12,13 +12,18 @@ class SubscriptionPlanSeeder extends Seeder
     public function run(): void
     {
         $plansData = [
-            ['slug' => 'starter', 'name' => 'Starter', 'desc' => 'مثالية للمعلمين الجدد', 'monthly' => 49.00, 'yearly' => 490.00, 'trial' => 7, 'sort' => 1, 'features' => [
+            ['slug' => 'starter', 'name' => 'Starter', 'desc' => 'مثالية للمعلمين الجدد', 'monthly' => 29.00, 'yearly' => 299.00, 'trial' => 7, 'sort' => 1, 'features' => [
                 ['students_limit', '50', 'numeric'],
-                ['courses_limit', '5', 'numeric'],
-                ['storage_limit_mb', '5120', 'numeric'],
+                ['courses_limit', '3', 'numeric'],
+                ['storage_limit_mb', '716800', 'numeric'],
                 ['exams_limit', '10', 'numeric'],
                 ['questions_limit', '100', 'numeric'],
                 ['live_sessions_limit', '5', 'numeric'],
+                // Monthly broadcast minutes + attached recordings. Absent keys
+                // were treated as unlimited by PlanEngine, so the enforced quota
+                // silently never applied; the canonical set now carries them.
+                ['live_minutes_limit', '0', 'numeric'],
+                ['recordings_limit', '0', 'numeric'],
                 ['assignments_limit', '10', 'numeric'],
                 ['live_stream_enabled', 'false', 'boolean'],
                 ['scheduled_lessons_enabled', 'true', 'boolean'],
@@ -30,29 +35,41 @@ class SubscriptionPlanSeeder extends Seeder
                 ['support_level', 'email', 'string'],
                 ['community_enabled', 'true', 'boolean'],
                 ['community_groups_limit', '5', 'numeric'],
-                ['appointments_enabled', 'false', 'boolean'],
+                ['appointments_enabled', 'true', 'boolean'],
                 ['paid_services_enabled', 'false', 'boolean'],
                 ['multi_teacher_enabled', 'false', 'boolean'],
                 ['teachers_limit', '1', 'numeric'],
-                ['videos_limit', '50', 'numeric'],
+                ['videos_limit', 'unlimited', 'string'],
                 ['files_limit', '200', 'numeric'],
                 ['pdfs_limit', '50', 'numeric'],
                 ['blog_posts_limit', '10', 'numeric'],
                 ['cards_limit', '500', 'numeric'],
-                ['appointments_limit', '30', 'numeric'],
+                ['appointments_limit', 'unlimited', 'string'],
                 ['services_limit', '5', 'numeric'],
                 ['cards_enabled', 'true', 'boolean'],
                 ['announcements_enabled', 'true', 'boolean'],
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
+                ['secure_playback_enabled', 'true', 'boolean'],
+                // العلامة المائية المُخصّصة — متاحة على «المحترف» و«المتقدم» فقط.
+                // الإغلاق هنا مقصود: الأساسية لا تشملها (الحماية الأساسية تبقى مشمولة).
+                ['video_watermark', 'false', 'boolean'],
+                // "Fixed on for everyone" gates the admin plan editor hides
+                // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
+                ['assignments_enabled', 'true', 'boolean'],
+                ['blog_enabled', 'true', 'boolean'],
+                ['custom_domain', 'true', 'boolean'],
             ]],
-            ['slug' => 'professional', 'name' => 'Professional', 'desc' => 'للمعلمين المحترفين', 'monthly' => 99.00, 'yearly' => 990.00, 'trial' => 7, 'sort' => 2, 'features' => [
-                ['students_limit', '200', 'numeric'],
-                ['courses_limit', '20', 'numeric'],
-                ['storage_limit_mb', '20480', 'numeric'],
+            ['slug' => 'professional', 'name' => 'Professional', 'desc' => 'للمعلمين المحترفين', 'monthly' => 59.00, 'yearly' => 599.00, 'trial' => 7, 'sort' => 2, 'features' => [
+                ['students_limit', '250', 'numeric'],
+                ['courses_limit', '7', 'numeric'],
+                ['storage_limit_mb', '1572864', 'numeric'],
                 ['exams_limit', '50', 'numeric'],
                 ['questions_limit', '500', 'numeric'],
                 ['live_sessions_limit', '50', 'numeric'],
+                // 3000 min = 50 ساعة بث شهرياً، و100 تسجيل مرفق.
+                ['live_minutes_limit', '3000', 'numeric'],
+                ['recordings_limit', '100', 'numeric'],
                 ['assignments_limit', '100', 'numeric'],
                 ['live_stream_enabled', 'true', 'boolean'],
                 ['scheduled_lessons_enabled', 'true', 'boolean'],
@@ -68,7 +85,7 @@ class SubscriptionPlanSeeder extends Seeder
                 ['paid_services_enabled', 'true', 'boolean'],
                 ['multi_teacher_enabled', 'true', 'boolean'],
                 ['teachers_limit', '3', 'numeric'],
-                ['videos_limit', '200', 'numeric'],
+                ['videos_limit', 'unlimited', 'string'],
                 ['files_limit', '1000', 'numeric'],
                 ['pdfs_limit', '300', 'numeric'],
                 ['blog_posts_limit', '50', 'numeric'],
@@ -79,14 +96,24 @@ class SubscriptionPlanSeeder extends Seeder
                 ['announcements_enabled', 'true', 'boolean'],
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
+                ['secure_playback_enabled', 'true', 'boolean'],
+                // العلامة المائية المُخصّصة — متاحة على «المحترف» و«المتقدم» فقط.
+                ['video_watermark', 'true', 'boolean'],
+                // "Fixed on for everyone" gates the admin plan editor hides
+                // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
+                ['assignments_enabled', 'true', 'boolean'],
+                ['blog_enabled', 'true', 'boolean'],
+                ['custom_domain', 'true', 'boolean'],
             ]],
-            ['slug' => 'enterprise', 'name' => 'Enterprise', 'desc' => 'للأكاديميات والمؤسسات', 'monthly' => 199.00, 'yearly' => 1990.00, 'trial' => 7, 'sort' => 3, 'features' => [
-                ['students_limit', 'unlimited', 'string'],
-                ['courses_limit', 'unlimited', 'string'],
-                ['storage_limit_mb', '102400', 'numeric'],
+            ['slug' => 'enterprise', 'name' => 'Enterprise', 'desc' => 'للأكاديميات والمؤسسات', 'monthly' => 89.00, 'yearly' => 899.00, 'trial' => 7, 'sort' => 3, 'features' => [
+                ['students_limit', '1000', 'numeric'],
+                ['courses_limit', '20', 'numeric'],
+                ['storage_limit_mb', '3145728', 'numeric'],
                 ['exams_limit', 'unlimited', 'string'],
                 ['questions_limit', 'unlimited', 'string'],
                 ['live_sessions_limit', 'unlimited', 'string'],
+                ['live_minutes_limit', '10000', 'numeric'],
+                ['recordings_limit', 'unlimited', 'string'],
                 ['assignments_limit', 'unlimited', 'string'],
                 ['live_stream_enabled', 'true', 'boolean'],
                 ['scheduled_lessons_enabled', 'true', 'boolean'],
@@ -115,6 +142,14 @@ class SubscriptionPlanSeeder extends Seeder
                 ['announcements_enabled', 'true', 'boolean'],
                 ['video_upload_enabled', 'true', 'boolean'],
                 ['file_upload_enabled', 'true', 'boolean'],
+                ['secure_playback_enabled', 'true', 'boolean'],
+                // العلامة المائية المُخصّصة — متاحة على «المحترف» و«المتقدم» فقط.
+                ['video_watermark', 'true', 'boolean'],
+                // "Fixed on for everyone" gates the admin plan editor hides
+                // (FIXED_HIDDEN). Enforced by code; absent = feature 403.
+                ['assignments_enabled', 'true', 'boolean'],
+                ['blog_enabled', 'true', 'boolean'],
+                ['custom_domain', 'true', 'boolean'],
             ]],
         ];
 

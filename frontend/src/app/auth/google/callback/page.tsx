@@ -1,73 +1,144 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/store';
+import { track } from '@/lib/analytics';
+import { postLoginPath } from '@/lib/auth-routes';
+
+type Stage = 'working' | '2fa' | 'error';
+
+/** Login page per role — the «العودة لتسجيل الدخول» target. */
+const LOGIN_PATH: Record<string, string> = {
+  admin: '/admin/login',
+  student: '/student/login',
+  teacher: '/teacher/login',
+};
+
+/** OAuth errors arrive as a non-sensitive `?error=` marker (never a token). */
+const ERROR_MESSAGES: Record<string, string> = {
+  invalid_state: 'انتهت صلاحية طلب تسجيل الدخول — أعد المحاولة من جديد.',
+  google_failed: 'تعذّر الاتصال بحساب Google — حاول مرّة أخرى.',
+  inactive: 'هذا الحساب غير مُفعّل. تواصل مع الدعم.',
+  not_authorized: 'هذا الحساب غير مصرّح له بالدخول كمسؤول.',
+  no_email: 'حساب Google لا يحتوي على بريد إلكتروني.',
+  teacher_registration_disabled: 'تسجيل المعلمين غير متاح حاليًا. استخدم دعوة تسجيل أو تواصل مع الإدارة.',
+  retry: 'حدث تعارض مؤقت أثناء إنشاء الحساب — أعد المحاولة.',
+};
+
+const SESSION_FAILED_MESSAGE =
+  'تعذّر إنشاء الجلسة. قد تكون منتهية أو حُجبت كوكيز الموقع — حاول مجددًا أو سجّل الدخول من جديد.';
 
 function GoogleCallbackInner() {
   const router = useRouter();
+  const [stage, setStage] = useState<Stage>('working');
   const [msg, setMsg] = useState('');
-  const [need2fa, setNeed2fa] = useState(false);
+  const [role, setRole] = useState('teacher');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
+  // For a `step=done` failure the user can retry the session lookup in place;
+  // for an OAuth error retrying means starting the flow again.
+  const [canRetrySession, setCanRetrySession] = useState(false);
+  const started = useRef(false);
 
-  const routeByUser = () => {
+  const loginHref = LOGIN_PATH[role] || LOGIN_PATH.teacher;
+
+  /** Send an authenticated user to the dashboard their real role allows. */
+  const routeByUser = useCallback((): boolean => {
     const user = useAuth.getState().user;
-    if (user?.is_super_admin) router.push('/admin/dashboard');
-    else if (user?.roles?.includes('Teacher')) router.push('/teacher/dashboard');
-    else router.push('/my-learning');
-  };
+
+    if (!user) return false;
+
+    // A student who arrived from a teacher/card link returns to that
+    // same-origin destination; staff still route to their own dashboard.
+    const redirectTo = new URLSearchParams(window.location.search).get('redirect_to');
+    router.replace(postLoginPath(user, redirectTo));
+
+    return true;
+  }, [router]);
+
+  const fail = useCallback((message: string) => {
+    setMsg(message);
+    setStage('error');
+  }, []);
+
+  /** Hydrate the user from the HttpOnly session and route by real role. */
+  const hydrateSession = useCallback(async () => {
+    setStage('working');
+    setMsg('');
+
+    try {
+      await useAuth.getState().load();
+    } catch {
+      /* load() already swallows errors; treat a throw as "no session". */
+    }
+
+    if (routeByUser()) return;
+
+    // Do NOT bounce to the landing page: show a clear, actionable error.
+    setCanRetrySession(true);
+    fail(SESSION_FAILED_MESSAGE);
+  }, [fail, routeByUser]);
 
   useEffect(() => {
-    // Non-sensitive step markers only — no tokens are ever placed in the URL.
-    // The OAuth callback already set the HttpOnly session cookie.
+    if (started.current) return;
+    started.current = true;
+
     const params = new URLSearchParams(window.location.search);
     const step = params.get('step');
     const error = params.get('error');
+    const roleHint = params.get('role');
+
+    if (roleHint && LOGIN_PATH[roleHint]) setRole(roleHint);
 
     if (step === '2fa') {
-      setNeed2fa(true);
+      setStage('2fa');
+      return;
+    }
+
+    // A teacher who signed up with Google but has no phone yet: the account
+    // exists and is signed in, but the workspace/trial start only after the
+    // profile is completed. hydrateSession routes them to the completion step.
+    if (step === 'profile_required') {
+      void hydrateSession();
       return;
     }
 
     if (error || step !== 'done') {
-      const messages: Record<string, string> = {
-        invalid_state: 'انتهت صلاحية طلب تسجيل الدخول — أعد المحاولة من البداية',
-        google_failed: 'فشل الاتصال بحساب Google — حاول مجدداً',
-        inactive: 'هذا الحساب غير مفعّل',
-        not_authorized: 'هذا الحساب غير مصرح له بالدخول كمسؤول',
-        no_email: 'حساب Google بلا بريد إلكتروني',
-      };
-      setMsg(messages[error || ''] || 'تعذر تسجيل الدخول عبر Google');
-      setTimeout(() => router.push('/'), 2400);
+      const messages: Record<string, string> = ERROR_MESSAGES;
+      setCanRetrySession(false);
+      fail(messages[error || ''] || 'تعذّر تسجيل الدخول عبر Google.');
       return;
     }
 
-    // Hydrate the user from the HttpOnly session and route by role.
-    useAuth.getState().load().then(() => {
-      if (!useAuth.getState().user) {
-        setMsg('تعذر إنشاء الجلسة — حاول مجدداً');
-        setTimeout(() => router.push('/'), 2400);
-        return;
-      }
-      routeByUser();
-    });
-  }, [router]);
+    // Success marker: the OAuth callback already set the HttpOnly session
+    // cookie — no token ever travels in the URL.
+    if (params.get('trial_started') === '1' && (roleHint || 'teacher') === 'teacher') {
+      track('trial_start', { content_name: 'teacher_trial' });
+    }
+    void hydrateSession();
+  }, [fail, hydrateSession]);
 
   const confirm2fa = async () => {
     setLoading(true);
     setMsg('');
     try {
       await useAuth.getState().login2fa(code);
-      routeByUser();
+      if (!routeByUser()) {
+        setLoading(false);
+        setCanRetrySession(true);
+        fail(SESSION_FAILED_MESSAGE);
+        return;
+      }
     } catch (error: any) {
       setMsg(error?.response?.data?.message || error?.message || 'رمز التحقق غير صحيح');
     }
     setLoading(false);
   };
 
-  if (need2fa) {
+  if (stage === '2fa') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-slate-50 px-4">
         <p className="text-sm font-semibold text-gray-700">أدخل رمز التحقق بخطوتين (2FA)</p>
@@ -88,6 +159,47 @@ function GoogleCallbackInner() {
           {loading ? 'جارٍ التحقق…' : 'تأكيد'}
         </button>
         {msg && <p className="text-sm text-red-500">{msg}</p>}
+        <Link href={loginHref} className="text-xs text-gray-500 underline">
+          العودة لتسجيل الدخول
+        </Link>
+      </div>
+    );
+  }
+
+  if (stage === 'error') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-sm">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
+            <AlertCircle className="h-6 w-6 text-red-500" aria-hidden="true" />
+          </div>
+          <p className="text-sm font-semibold text-gray-800">تعذّر إكمال تسجيل الدخول</p>
+          <p className="mt-2 text-sm leading-6 text-gray-500">{msg}</p>
+
+          <div className="mt-5 flex flex-col gap-2">
+            {canRetrySession ? (
+              <button
+                onClick={() => void hydrateSession()}
+                className="w-full rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-700"
+              >
+                إعادة المحاولة
+              </button>
+            ) : (
+              <Link
+                href={loginHref}
+                className="w-full rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-700"
+              >
+                إعادة المحاولة
+              </Link>
+            )}
+            <Link
+              href={loginHref}
+              className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+            >
+              العودة لتسجيل الدخول
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }

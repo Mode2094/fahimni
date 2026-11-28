@@ -83,6 +83,23 @@ class FreemiusBillingTest extends TenantTestCase
     }
 
     /**
+     * Freemius pricing stub matching makePlan()'s displayed price (49.99/499.99)
+     * so the checkout price guard passes for the plan id 1010.
+     */
+    private function pricingStub(float $monthly = 49.99, float $annual = 499.99): array
+    {
+        return [
+            'api.freemius.test/v1/products/777/plans/1010/pricing.json' => Http::response(['pricing' => [[
+                'id' => '5005',
+                'plan_id' => '1010',
+                'currency' => 'usd',
+                'monthly_price' => $monthly,
+                'annual_price' => $annual,
+            ]]], 200),
+        ];
+    }
+
+    /**
      * Build a Freemius-signed Hosted-Checkout redirect URL exactly as Freemius
      * does: params + `&signature=HMAC-SHA256(cleanUrl, secret)`.
      */
@@ -214,6 +231,8 @@ class FreemiusBillingTest extends TenantTestCase
         $this->configureFreemius();
         config()->set('services.freemius.sandbox', true);
 
+        Http::fake($this->pricingStub());
+
         $plan = $this->makePlan();
         $tenant = $this->makeTenant();
         $user = $this->makeUser(['email' => 'owner@academy.test']);
@@ -234,6 +253,7 @@ class FreemiusBillingTest extends TenantTestCase
     public function test_checkout_returns_hosted_checkout_url_with_prefilled_email(): void
     {
         $this->configureFreemius();
+        Http::fake($this->pricingStub());
         $plan = $this->makePlan();
         $tenant = $this->makeTenant();
         $user = $this->makeUser(['email' => 'owner@academy.test']);
@@ -310,6 +330,37 @@ class FreemiusBillingTest extends TenantTestCase
         ], $this->authHeaders($user, $tenant))->assertStatus(422);
     }
 
+    public function test_checkout_allows_trialing_tenant_to_subscribe(): void
+    {
+        $this->configureFreemius();
+        Http::fake($this->pricingStub());
+        $plan = $this->makePlan();
+        $tenant = $this->makeTenant();
+        $user = $this->makeUser(['email' => 'owner@academy.test']);
+        $this->attachOwner($user, $tenant);
+
+        // A free trial is not a PAID subscription, and the platform provisions
+        // one for every new teacher. The teacher must still be able to start a
+        // paid checkout; activation supersedes the trial row.
+        TenantSubscription::withoutTenant()->create([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'plan_id' => $plan->id,
+            'status' => 'trialing',
+            'billing_cycle' => 'monthly',
+            'starts_at' => now(),
+            'trial_ends_at' => now()->addDays(7),
+            'auto_renew' => true,
+        ]);
+
+        $this->postJson('/api/v1/subscriptions/freemius/checkout', [
+            'plan_id' => $plan->id,
+            'billing_cycle' => 'monthly',
+        ], $this->authHeaders($user, $tenant))
+            ->assertOk()
+            ->assertJsonPath('mode', 'checkout');
+    }
+
     public function test_existing_own_license_upgrades_instead_of_blocking(): void
     {
         $this->configureFreemius();
@@ -329,7 +380,7 @@ class FreemiusBillingTest extends TenantTestCase
             'is_canceled' => false,
         ]);
 
-        Http::fake([
+        Http::fake($this->pricingStub() + [
             'api.freemius.test/v1/products/777/licenses/LIC-OWN/checkout/link.json' => Http::response([
                 'url' => 'https://checkout.freemius.test/upgrade/own',
                 'settings' => [],

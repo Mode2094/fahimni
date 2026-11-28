@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Media\MediaProviderManager;
 use App\Media\MediaUsageService;
 use App\Models\PlanProfitability;
+use App\Models\PlatformSetting;
 use App\Models\ProviderCostRule;
 use App\Models\ProviderUsageCost;
 use App\Models\SubscriptionPlan;
@@ -31,6 +32,30 @@ class SaasCostService
         private readonly MediaUsageService $usage,
         private readonly MediaProviderManager $manager,
     ) {}
+
+    // ─── العملة ────────────────────────────────────────
+
+    /**
+     * Convert an amount to USD using the platform currency_rate.
+     *
+     * Platform-subscription prices are stored in USD (Freemius is the only
+     * gateway and does not support JOD), so a USD amount must NEVER be
+     * multiplied again — doing so inflated profit/margin whenever
+     * currency_rate was not 1. Only legacy non-USD amounts are converted.
+     */
+    private function toUsd(float $amount, ?string $currency): float
+    {
+        $currency = strtoupper((string) ($currency ?: 'USD'));
+
+        if ($currency === 'USD') {
+            return round($amount, 2);
+        }
+
+        $rate = (float) PlatformSetting::get('currency_rate', 1);
+        $rate = $rate > 0 ? $rate : 1;
+
+        return round($amount * $rate, 2);
+    }
 
     // ─── أسعار الوحدات (DB) ────────────────────────────
 
@@ -169,6 +194,17 @@ class SaasCostService
         $liveMinutesLimit = (float) $plan->featureValue('live_minutes_limit', 0);
         $liveEnabled = filter_var($plan->featureValue('live_stream_enabled', 'false'), FILTER_VALIDATE_BOOLEAN);
 
+        // الخطط المعتمدة تُعرّف live_sessions_limit بدل live_minutes_limit، فكانت
+        // تكلفة البث تُقرأ صفراً دائماً. نقدّر الدقائق بساعة لكل جلسة عند غياب
+        // الحد الصريح (تقدير الكمية فقط — السعر من provider_cost_rules).
+        // القيمة 'unlimited' تُترجم إلى 0 فلا نقدّر بلا سقف.
+        if ($liveEnabled && $liveMinutesLimit <= 0) {
+            $sessions = (float) $plan->featureValue('live_sessions_limit', 0);
+            if ($sessions > 0) {
+                $liveMinutesLimit = $sessions * 60;
+            }
+        }
+
         $deliveryFactor = $this->ruleMetadata($provider, 'delivery', 'delivery_factor', 2.0);
         $expectedEmails = $this->ruleMetadata($provider, 'storage', 'expected_emails_month', 100.0);
 
@@ -191,13 +227,11 @@ class SaasCostService
      */
     public function planProfitability(SubscriptionPlan $plan, string $billingCycle = 'monthly'): array
     {
-        // التكلفة محسوبة بالدولار — نحول سعر الخطة لنفس العملة عبر
-        // currency_rate من إعدادات المنصة (المصدر الوحيد للحقيقة).
-        $rate = (float) \App\Models\PlatformSetting::get('currency_rate', 1);
+        $rate = (float) PlatformSetting::get('currency_rate', 1);
         $rate = $rate > 0 ? $rate : 1;
 
         $price = $billingCycle === 'yearly' ? (float) $plan->yearly_price : (float) $plan->monthly_price;
-        $priceUsd = round($price * $rate, 2);
+        $priceUsd = $this->toUsd($price, $plan->currency);
         $estimated = $this->planExpectedCost($plan);
         $profit = round($priceUsd - $estimated, 2);
 
@@ -209,7 +243,7 @@ class SaasCostService
             'margin_percentage' => $priceUsd > 0 ? round(($profit / $priceUsd) * 100, 2) : 0.0,
             'roi_percentage' => $estimated > 0 ? round(($profit / $estimated) * 100, 2) : 0.0,
             'loss' => $profit < 0,
-            'currency' => $plan->currency ?? 'JOD',
+            'currency' => $plan->currency ?? 'USD',
             'fx_rate' => $rate,
         ];
     }
@@ -297,22 +331,36 @@ class SaasCostService
                     'roi_percentage' => $row['roi_percentage'],
                     'loss' => $row['loss'],
                     'currency' => $row['currency'],
+                    // المشتركون = المدفوع + التجريبي. يجب فصل المدفوع لأن
+                    // الإيراد يُحسب من المدفوع فقط (active)، فظهور 12 «مشتركاً»
+                    // مع إيراد صفر كان يعني 12 تجربة مجانية لا 12 مشتركاً دافعاً.
                     'subscribers' => TenantSubscription::withoutTenant()
                         ->where('plan_id', $plan->id)
                         ->whereIn('status', ['active', 'trialing'])
+                        ->count(),
+                    'paid_subscribers' => TenantSubscription::withoutTenant()
+                        ->where('plan_id', $plan->id)
+                        ->where('status', 'active')
+                        ->count(),
+                    'trial_subscribers' => TenantSubscription::withoutTenant()
+                        ->where('plan_id', $plan->id)
+                        ->where('status', 'trialing')
                         ->count(),
                 ];
             })
             ->values();
 
-        // تكاليف البنية: فعلية هذا الشهر لكل مزود
+        // تكاليف البنية: فعلية هذا الشهر لكل مزود. الحد الأدنى الشهري للمزود
+        // (Bunny: $1) يُطبّق مرة واحدة على إجمالي المزود، لا لكل مستأجر — وإلا
+        // ظهرت التكلفة 0.12$ فقط (12 × 0.01$ بريد) متجاهلةً أي حد أدنى.
         $yearMonth = now()->format('Y-m');
         $infrastructure = ProviderUsageCost::withoutTenant()
             ->where('year_month', $yearMonth)
             ->get()
             ->groupBy('provider')
             ->map(function ($rows, $prov) {
-                $total = (float) $rows->sum('cost');
+                $raw = (float) $rows->sum('cost');
+                $floor = $this->ruleMetadata($prov, 'storage', 'min_monthly', 0.0);
 
                 return [
                     'provider' => $prov,
@@ -321,7 +369,8 @@ class SaasCostService
                     'encoding' => round((float) $rows->where('resource', 'encoding')->sum('cost'), 4),
                     'live' => round((float) $rows->where('resource', 'live')->sum('cost'), 4),
                     'email' => round((float) $rows->where('resource', 'email')->sum('cost'), 4),
-                    'total' => round($total, 4),
+                    'minimum_monthly' => round($floor, 4),
+                    'total' => round(max($floor, $raw), 4),
                     'currency' => $rows->first()->currency ?? 'USD',
                 ];
             })
@@ -329,17 +378,25 @@ class SaasCostService
 
         $monthlyInfraCost = (float) $infrastructure->sum('total');
 
-        // الإيراد بعملة المنصة (JOD) — الاشتراكات المدفوعة النشطة فقط
-        // (التجارب لا تدر إيراداً) + معادله بالدولار عبر سعر الصرف الرسمي.
-        $rate = (float) \App\Models\PlatformSetting::get('currency_rate', 1);
+        // الإيراد: الاشتراكات المدفوعة النشطة فقط (التجارب لا تدر إيراداً).
+        // أسعار الخطط مخزنة بالدولار، فلا تُضرب بسعر الصرف مرة أخرى — التحويل
+        // يتم لكل اشتراك حسب عملة خطته المخزنة (toUsd يتجاهل التحويل للدولار).
+        $rate = (float) PlatformSetting::get('currency_rate', 1);
         $rate = $rate > 0 ? $rate : 1;
 
-        $monthlyRevenue = TenantSubscription::withoutTenant()
-            ->whereIn('status', ['active'])
-            ->get()
-            ->sum(fn ($s) => (float) ($s->billing_cycle === 'yearly' ? $s->plan?->yearly_price / 12 : $s->plan?->monthly_price));
+        $monthlyRevenue = 0.0;
+        $monthlyRevenueUsd = 0.0;
 
-        $monthlyRevenueUsd = round($monthlyRevenue * $rate, 2);
+        foreach (TenantSubscription::withoutTenant()->whereIn('status', ['active'])->with('plan')->get() as $subscription) {
+            $amount = (float) ($subscription->billing_cycle === 'yearly'
+                ? ($subscription->plan?->yearly_price ?? 0) / 12
+                : ($subscription->plan?->monthly_price ?? 0));
+
+            $monthlyRevenue += $amount;
+            $monthlyRevenueUsd += $this->toUsd($amount, $subscription->plan?->currency);
+        }
+
+        $monthlyRevenueUsd = round($monthlyRevenueUsd, 2);
 
         return [
             'plans' => $plans,
@@ -350,7 +407,7 @@ class SaasCostService
             'monthly_revenue_usd' => $monthlyRevenueUsd,
             'platform_margin' => round($monthlyRevenueUsd - $monthlyInfraCost, 2),
             'currency' => 'USD',     // عملة التكاليف/الهامش
-            'revenue_currency' => 'JOD', // عملة الإيراد
+            'revenue_currency' => 'USD', // أسعار الاشتراكات مخزنة بالدولار
             'fx_rate' => $rate,
         ];
     }

@@ -1,0 +1,89 @@
+/**
+ * PWA manifest regression tests — run with the built-in Node test runner:
+ *
+ *   cd frontend && node --test scripts/manifest.test.ts
+ *
+ * The platform and every teacher share ONE manifest URL
+ * (/manifest.webmanifest); the served document differs per tenant and is
+ * resolved from Referer/Host. These tests lock in the two properties that keep
+ * that safe, so a future edit cannot silently reintroduce the bug:
+ *
+ *  1. The response must never be publicly cached (a shared cache keyed on the
+ *     URL alone would hand one teacher's name/logo/start_url to another).
+ *  2. It must vary on the Referer and Host headers it is resolved from.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const src = (rel: string) => readFileSync(join(here, '..', rel), 'utf8');
+
+test('manifest is never publicly cached across tenants', () => {
+  const route = src('src/app/manifest.webmanifest/route.ts');
+
+  assert.doesNotMatch(
+    route,
+    /Cache-Control'\s*:\s*'public/,
+    'manifest must never be served with a public/shared Cache-Control',
+  );
+  assert.match(
+    route,
+    /Cache-Control'\s*:\s*'private, no-store'/,
+    'manifest must be private, no-store so shared caches cannot bleed identities',
+  );
+});
+
+test('manifest varies on the headers it is resolved from', () => {
+  const route = src('src/app/manifest.webmanifest/route.ts');
+
+  assert.match(route, /'Vary'\s*:\s*'Referer, Host'/, "manifest must set Vary: Referer, Host");
+});
+
+test('every response uses the single hardened header set', () => {
+  const route = src('src/app/manifest.webmanifest/route.ts');
+
+  const occurrences = route.match(/MANIFEST_HEADERS/g) ?? [];
+  // 1 definition + the platform response + the tenant response.
+  assert.ok(occurrences.length >= 3, 'both responses must use the shared MANIFEST_HEADERS');
+});
+
+test('each teacher app keeps its own identity and start_url', () => {
+  const route = src('src/app/manifest.webmanifest/route.ts');
+
+  // On the platform the tenant lives at /t/{slug}; on the teacher's OWN host
+  // (custom domain / subdomain, resolved from Host) the site is served from the
+  // ROOT, so the install must start at '/', never the internal /t/{slug}.
+  assert.match(
+    route,
+    /const basePath = hostResolved \? '' : `\/t\/\$\{encodeURIComponent\(site\.slug\)\}`/,
+    'tenant manifest must fall back to the host root when resolved from Host',
+  );
+  assert.match(route, /const start_url = basePath \|\| '\/'/, 'tenant start_url must be basePath or /');
+  assert.match(route, /start_url,/, 'tenant manifest start_url must be the tenant base path');
+  assert.match(route, /id: start_url,/, 'tenant manifest id must be the tenant base path (no OS-app collision)');
+  // The platform app launches the session-aware /app entry, which restores the
+  // signed-in user's role dashboard instead of the public landing page.
+  assert.match(route, /start_url:\s*'\/app'/, 'platform manifest must launch the session-aware /app entry');
+});
+
+test('student areas install the "فهمني للطلاب" identity without a second app', () => {
+  const route = src('src/app/manifest.webmanifest/route.ts');
+
+  // A dedicated student identity is served for student paths.
+  assert.match(route, /const STUDENT_PATHS/, 'student path matcher must exist');
+  assert.match(route, /STUDENT_PATHS\.test\(path\)/, 'student identity must be selected by path');
+  assert.match(route, /فهمني للطلاب/, 'student manifest must carry the student app name');
+  assert.match(route, /start_url:\s*'\/app'/, 'student app must launch the session-aware /app entry');
+
+  // …but it shares the platform id/scope, so the OS treats it as ONE app and
+  // never installs a colliding second icon on the same device.
+  const student = route.slice(route.indexOf('const STUDENT_MANIFEST'));
+  const shared = student.slice(0, student.indexOf('} as const'));
+  assert.match(shared, /scope:\s*'\/'/, 'student scope must be the platform root (shared)');
+  assert.match(shared, /id:\s*'\/'/, 'student id must be the platform root (shared id prevents a second app)');
+  assert.match(shared, /shortcuts:/, 'student app should expose home-screen shortcuts');
+});

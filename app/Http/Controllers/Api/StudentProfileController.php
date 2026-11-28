@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Course;
+use App\Models\User;
 use App\Services\StudentGamificationService;
+use App\Support\LeaderboardPolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -13,6 +15,17 @@ class StudentProfileController extends Controller
     public function __construct(
         private readonly StudentGamificationService $gamification,
     ) {}
+
+    /**
+     * Requested page size, clamped to a sane range so a crafted `limit`
+     * can't force an unbounded result set.
+     */
+    private function clampLimit(Request $request, int $default = 50, int $max = 100): int
+    {
+        $limit = (int) $request->input('limit', $default);
+
+        return max(1, min($limit, $max));
+    }
 
     private function tenantId(Request $request): ?string
     {
@@ -90,12 +103,50 @@ class StudentProfileController extends Controller
             return response()->json(['message' => 'No active tenant found.'], 400);
         }
 
-        $entries = $this->gamification->leaderboard($tenantId, $this->clampLimit($request));
+        $mode = LeaderboardPolicy::mode($tenantId);
+        $isStaff = $this->isTenantStaff($request->user(), $tenantId);
+
+        // Disabled mode hides the board from students; staff still get it for
+        // oversight. A student always keeps their own position — the teacher's
+        // switch removes the comparative board and every entry point to it, not
+        // the student's personal result.
+        $entries = ($mode === LeaderboardPolicy::MODE_DISABLED && ! $isStaff)
+            ? []
+            : $this->gamification->leaderboard(
+                $tenantId,
+                $this->clampLimit($request),
+                (string) $request->user()->id,
+                $isStaff,
+                $mode === LeaderboardPolicy::MODE_ANONYMOUS,
+            );
 
         return response()->json([
+            'mode' => $mode,
+            'enabled' => $mode !== LeaderboardPolicy::MODE_DISABLED,
             'leaderboard' => $entries,
             'my_rank' => $this->gamification->rankOf($request->user(), $tenantId),
         ]);
+    }
+
+    /**
+     * Staff of this tenant (teacher/owner/admin) or a super admin — the only
+     * callers authorised to see identifiable student results.
+     */
+    private function isTenantStaff(?User $user, string $tenantId): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->is_super_admin) {
+            return true;
+        }
+
+        return $user->tenants()
+            ->where('tenant_id', $tenantId)
+            ->wherePivotIn('role', ['teacher', 'owner', 'admin'])
+            ->wherePivot('status', 'active')
+            ->exists();
     }
 
     public function achievements(Request $request): JsonResponse
@@ -194,6 +245,19 @@ class StudentProfileController extends Controller
 
         return response()->json([
             'stats' => $this->gamification->statsFor($request->user(), $tenantId),
+        ]);
+    }
+
+    public function streak(Request $request): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+
+        if (! $tenantId) {
+            return response()->json(['message' => 'No active tenant found.'], 400);
+        }
+
+        return response()->json([
+            'streak' => $this->gamification->streakFor($request->user(), $tenantId),
         ]);
     }
 }

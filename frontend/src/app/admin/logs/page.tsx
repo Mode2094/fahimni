@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Alert } from '@/components/ui/alert';
@@ -47,7 +48,10 @@ export default function AdminLogsPage() {
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState('');
 
-  const headers = () => ({ 'X-Tenant-Id': localStorage.getItem('tenant_id') || '', Accept: 'application/json' });
+  // Platform-wide super-admin page: request the whole platform explicitly.
+  // A lingering `X-Tenant-Id` in localStorage (after /admin/view-as) must not
+  // scope the audit/error logs to a single teacher.
+  const headers = () => ({ Accept: 'application/json' });
 
   useEffect(() => {
     if (!check()) return;
@@ -75,14 +79,14 @@ export default function AdminLogsPage() {
   };
 
   const clearErrors = async () => {
-    if (!window.confirm(t('مسح كل سجلات الأخطاء؟', 'Clear all error logs?'))) return;
+    if (!(await confirmDialog({ description: t('مسح كل سجلات الأخطاء؟', 'Clear all error logs?') }))) return;
     setClearing(true);
     try { await fetch(`${API}/admin/error-logs/clear`, { method: 'POST', headers: headers() }); loadErrors(); } catch { /* */ }
     setClearing(false);
   };
 
   const deleteError = async (id: string) => {
-    if (!window.confirm(t('حذف سجل الخطأ هذا؟', 'Delete this error log?'))) return;
+    if (!(await confirmDialog({ description: t('حذف سجل الخطأ هذا؟', 'Delete this error log?') }))) return;
     try { await fetch(`${API}/admin/error-logs/${id}`, { method: 'DELETE', headers: headers() }); loadErrors(); } catch { /* */ }
   };
 
