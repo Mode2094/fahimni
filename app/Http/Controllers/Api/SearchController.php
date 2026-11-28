@@ -33,7 +33,16 @@ class SearchController extends Controller
             }
         }
 
-        $results = $this->searchService->global($request->q, $tenantId, $this->isTenantStaff($request));
+        $isStaff = $this->isTenantStaff($request);
+
+        // Students only ever search lessons their course groups expose; staff
+        // see the full tenant catalogue for management.
+        $results = $this->searchService->global(
+            $request->q,
+            $tenantId,
+            $isStaff,
+            $isStaff ? null : (string) $user->id,
+        );
 
         return response()->json(['results' => $results]);
     }

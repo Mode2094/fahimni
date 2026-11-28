@@ -3,6 +3,7 @@ import {
   addFiles, markDone, markFailed, markUploading, cancelPending, cancelAllPending,
   retryFailed, retryOne, nextPending, counts, MAX_FILE_BYTES, MAX_PARALLEL,
   stableIdempotencyKey, nextPendingBatch, overallProgress, markCanceled, markAsset,
+  uploadIdempotencyKey,
   type QueueState,
 } from './video-upload-queue';
 
@@ -137,5 +138,28 @@ describe('video upload queue', () => {
     expect(s.items[0].assetId).toBe('asset-9');
     // A canceled item is never picked up again.
     expect(nextPendingBatch(s, MAX_PARALLEL)).toEqual([]);
+  });
+
+  // ─── Idempotency is per operation, not per file ───
+  // Regression: two queue items for the same file shared one server key, so the
+  // second upload reused the first's asset and its lesson attach failed (502).
+
+  it('gives two queue items for the same file distinct server keys', () => {
+    const f = { name: 'same.mp4', size: 4096, lastModified: 9 } as unknown as File;
+    const s = addFiles(empty, [f, f], { remainingSlots: null, makeId });
+    expect(s.items).toHaveLength(2);
+    expect(s.items[0].key).toBe(s.items[1].key); // same file ⇒ same file key
+    expect(uploadIdempotencyKey(s.items[0])).not.toBe(uploadIdempotencyKey(s.items[1]));
+  });
+
+  it('scopes the key to the destination lesson when uploading into an existing lesson', () => {
+    const item = { id: 'id-1', key: 'vq-abc' };
+    expect(uploadIdempotencyKey(item)).toBe('vq-abc-id-1');
+    expect(uploadIdempotencyKey(item, { destination: 'create' })).toBe('vq-abc-id-1');
+    expect(uploadIdempotencyKey(item, { destination: 'existing', lessonId: 'L1' })).toBe('vq-abc-id-1-L1');
+    // A different target lesson never reuses the other lesson's key.
+    expect(uploadIdempotencyKey(item, { destination: 'existing', lessonId: 'L2' })).not.toBe(
+      uploadIdempotencyKey(item, { destination: 'existing', lessonId: 'L1' }),
+    );
   });
 });

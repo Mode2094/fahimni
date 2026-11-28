@@ -22,10 +22,6 @@ class LessonPolicy
             return true;
         }
 
-        if ($lesson->is_free_preview) {
-            return $lesson->tenant_id === $this->tenantId();
-        }
-
         $tenantId = $this->tenantId();
 
         if ($lesson->tenant_id !== $tenantId) {
@@ -33,6 +29,16 @@ class LessonPolicy
         }
 
         if ($this->isTenantStaff($user, $tenantId)) {
+            return true;
+        }
+
+        // Course-group restriction runs before the free-preview allowance so a
+        // lesson shared to specific groups never leaks to non-members.
+        if (! Lesson::whereKey($lesson->id)->visibleToStudent((string) $user->id)->exists()) {
+            return false;
+        }
+
+        if ($lesson->is_free_preview) {
             return true;
         }
 

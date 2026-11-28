@@ -386,15 +386,46 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
                 <a href="/my-learning"><Button variant="outline">{t('العودة', 'Back')}</Button></a>
               </div>
             </div>
+          ) : result && result.needs_review ? (
+            <div className="space-y-3">
+              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-amber-100 mx-auto"><Clock className="h-12 w-12 text-amber-600" /></div>
+              <h2 className="text-3xl font-bold">{t('تم تسليم التمرين بنجاح', 'Submitted successfully')}</h2>
+              <p className="text-lg font-semibold text-amber-700">{t('بانتظار مراجعة المعلم', 'Awaiting teacher review')}</p>
+              <p className="text-sm text-gray-500">{t('تتضمن إجاباتك أسئلة تحتاج مراجعة يدوية (كتابية/ملف/HTML) — لا تُحتسب صحيحة تلقائياً. ستظهر الدرجة النهائية بعد أن يكمل المعلم التصحيح.', 'Your answers include questions that need manual review (written/file/HTML) — they are never auto-marked. Your final grade appears once the teacher completes grading.')}</p>
+              {previewMode && previewAnswers.length > 0 && (
+                <div className="space-y-1.5 rounded-xl border border-violet-100 bg-violet-50/40 p-3 text-start">
+                  <p className="text-xs font-bold text-violet-800">{t('نتيجة التصحيح التجريبي لكل سؤال', 'Dry-run grading per question')}</p>
+                  {previewAnswers.map((a, i) => (
+                    <div key={a.exam_question_id} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600">{t('سؤال', 'Q')} {i + 1} · {a.points_earned}/{a.points_max} {t('نقطة', 'pts')}</span>
+                      {a.is_correct === true ? (
+                        <Badge className="border-0 bg-emerald-100 text-emerald-700">{t('صحيح', 'Correct')}</Badge>
+                      ) : a.is_correct === false ? (
+                        <Badge className="border-0 bg-red-100 text-red-700">{t('خطأ', 'Wrong')}</Badge>
+                      ) : (
+                        <Badge className="border-0 bg-amber-100 text-amber-700">{t('يحتاج مراجعة', 'Needs review')}</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-center gap-3 pt-2">
+                {previewMode ? (
+                  <>
+                    <Button onClick={startExam} className="gap-2 rounded-full"><RotateCcw className="h-4 w-4" />{t('إعادة المعاينة', 'Preview again')}</Button>
+                    <Button variant="outline" onClick={() => window.close()}>{t('إغلاق المعاينة', 'Close preview')}</Button>
+                  </>
+                ) : (
+                  <a href="/my-learning"><Button variant="outline">{t('العودة', 'Back')}</Button></a>
+                )}
+              </div>
+            </div>
           ) : result ? (
             <div className="space-y-3">
               <div className={`flex h-24 w-24 items-center justify-center rounded-full mx-auto ${result.passed ? 'bg-emerald-100' : 'bg-red-100'}`}>{result.passed ? <Trophy className="h-12 w-12 text-emerald-500" /> : <XCircle className="h-12 w-12 text-red-500" />}</div>
               <h2 className="text-3xl font-bold">{result.passed ? t('مبروك!', 'Passed!') : t('حاول مرة أخرى', 'Try again')}</h2>
               <div className="text-6xl font-bold">{result.percentage}%</div>
               <div className="text-sm text-gray-500">{result.score} / {result.total} · {t('النجاح', 'Pass')}: {result.pass_mark}%</div>
-              {result.needs_review && (
-                <p className="text-xs text-amber-600">{t('تتضمن إجابات تحتاج مراجعة يدوية (كتابية/ملف/HTML) — لا تُحتسب صحيحة تلقائياً.', 'Contains answers that need manual review (written/file/HTML) — never auto-marked correct.')}</p>
-              )}
               {previewMode && previewAnswers.length > 0 && (
                 <div className="space-y-1.5 rounded-xl border border-violet-100 bg-violet-50/40 p-3 text-start">
                   <p className="text-xs font-bold text-violet-800">{t('نتيجة التصحيح التجريبي لكل سؤال', 'Dry-run grading per question')}</p>

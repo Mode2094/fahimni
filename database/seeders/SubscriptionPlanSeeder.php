@@ -19,6 +19,11 @@ class SubscriptionPlanSeeder extends Seeder
                 ['exams_limit', '10', 'numeric'],
                 ['questions_limit', '100', 'numeric'],
                 ['live_sessions_limit', '5', 'numeric'],
+                // Monthly broadcast minutes + attached recordings. Absent keys
+                // were treated as unlimited by PlanEngine, so the enforced quota
+                // silently never applied; the canonical set now carries them.
+                ['live_minutes_limit', '0', 'numeric'],
+                ['recordings_limit', '0', 'numeric'],
                 ['assignments_limit', '10', 'numeric'],
                 ['live_stream_enabled', 'false', 'boolean'],
                 ['scheduled_lessons_enabled', 'true', 'boolean'],
@@ -62,6 +67,9 @@ class SubscriptionPlanSeeder extends Seeder
                 ['exams_limit', '50', 'numeric'],
                 ['questions_limit', '500', 'numeric'],
                 ['live_sessions_limit', '50', 'numeric'],
+                // 3000 min = 50 ساعة بث شهرياً، و100 تسجيل مرفق.
+                ['live_minutes_limit', '3000', 'numeric'],
+                ['recordings_limit', '100', 'numeric'],
                 ['assignments_limit', '100', 'numeric'],
                 ['live_stream_enabled', 'true', 'boolean'],
                 ['scheduled_lessons_enabled', 'true', 'boolean'],
@@ -104,6 +112,8 @@ class SubscriptionPlanSeeder extends Seeder
                 ['exams_limit', 'unlimited', 'string'],
                 ['questions_limit', 'unlimited', 'string'],
                 ['live_sessions_limit', 'unlimited', 'string'],
+                ['live_minutes_limit', '10000', 'numeric'],
+                ['recordings_limit', 'unlimited', 'string'],
                 ['assignments_limit', 'unlimited', 'string'],
                 ['live_stream_enabled', 'true', 'boolean'],
                 ['scheduled_lessons_enabled', 'true', 'boolean'],

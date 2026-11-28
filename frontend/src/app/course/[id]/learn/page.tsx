@@ -68,6 +68,18 @@ function LiveLessonView({ live }: { live: any }) {
     );
   }
 
+  if (live.status === 'cancelled') {
+    return (
+      <div className="aspect-video bg-slate-900 rounded-2xl flex items-center justify-center">
+        <div className="text-center text-white/70 space-y-2">
+          <Radio className="h-12 w-12 mx-auto text-rose-400" />
+          <p>{t('تم إلغاء هذه الحصة', 'This live session was cancelled.')}</p>
+          <p className="text-xs text-white/40">{live.title}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="aspect-video bg-slate-900 rounded-2xl flex items-center justify-center">
       <div className="text-center text-white/70 space-y-2">

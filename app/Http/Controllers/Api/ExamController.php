@@ -7,6 +7,7 @@ use App\Http\Requests\Exam\StoreExamRequest;
 use App\Http\Requests\Exam\UpdateExamRequest;
 use App\Http\Resources\ExamResource;
 use App\Http\Resources\QuestionResource;
+use App\Models\Course;
 use App\Models\Exam;
 use App\Models\ExamAnswer;
 use App\Models\ExamQuestion;
@@ -48,6 +49,8 @@ class ExamController extends Controller
                     })
             )
             ->orderBy('sort_order')
+            ->orderBy('created_at')
+            ->orderBy('id')
             ->paginate($this->perPage($request));
 
         return response()->json([
@@ -96,14 +99,100 @@ class ExamController extends Controller
 
         app(QuotaService::class)->assertCan($request->current_tenant->id, 'exams');
 
+        $data = $request->validated();
+
+        // A new exam appends to the end of its section unless an order was
+        // supplied explicitly — otherwise every exam would default to 0 and
+        // the student list would be unordered.
+        if (! isset($data['sort_order'])) {
+            $data['sort_order'] = ((int) Exam::where('course_id', $data['course_id'])
+                ->when(! empty($data['section_id']), fn ($q) => $q->where('section_id', $data['section_id']))
+                ->when(empty($data['section_id']), fn ($q) => $q->whereNull('section_id'))
+                ->max('sort_order')) + 1;
+        }
+
         $exam = Exam::create([
             'id' => UuidV7::generate(),
-            ...$request->validated(),
+            ...$data,
         ]);
 
         return response()->json([
             'exam' => new ExamResource($exam),
         ], 201);
+    }
+
+    /**
+     * Reorder the exams inside one section. Mirrors lessons/reorder: optimistic
+     * concurrency (the client sends the list it saw), row locks, and a conflict
+     * response so two teachers never clobber each other.
+     */
+    public function reorder(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'course_id' => ['required', 'string', new TenantScopedExists('courses')],
+            'section_id' => ['nullable', 'string', new TenantScopedExists('sections')],
+            'exam_ids' => 'required|array|min:1|max:500',
+            'exam_ids.*' => 'required|string|distinct',
+            'expected_exam_ids' => 'sometimes|required|array|min:1|max:500',
+            'expected_exam_ids.*' => 'required|string|distinct',
+        ]);
+
+        $course = Course::findOrFail($validated['course_id']);
+
+        $this->authorize('update', $course);
+
+        $ids = array_values($validated['exam_ids']);
+        $sectionId = $validated['section_id'] ?? null;
+
+        $expectedIds = isset($validated['expected_exam_ids'])
+            ? array_values($validated['expected_exam_ids'])
+            : null;
+
+        return DB::transaction(function () use ($course, $sectionId, $ids, $expectedIds) {
+            $lockedCourse = Course::whereKey($course->id)->lockForUpdate()->firstOrFail();
+
+            $exams = Exam::where('course_id', $lockedCourse->id)
+                ->where(fn ($q) => $sectionId !== null
+                    ? $q->where('section_id', $sectionId)
+                    : $q->whereNull('section_id'))
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            foreach ($ids as $examId) {
+                if (! $exams->has($examId)) {
+                    return response()->json(['message' => 'Invalid exam ids.'], 422);
+                }
+            }
+
+            $currentIds = $exams->keys()->map(fn ($id) => (string) $id)->all();
+            if (count($ids) !== count($currentIds) || array_diff($currentIds, $ids) !== []) {
+                return response()->json([
+                    'message' => 'The exam list changed. Reload the section and try again.',
+                    'code' => 'exam_order_conflict',
+                ], 409);
+            }
+
+            if ($expectedIds !== null && $expectedIds !== $currentIds) {
+                return response()->json([
+                    'message' => 'The exam order changed elsewhere. Reload the section and try again.',
+                    'code' => 'exam_order_conflict',
+                ], 409);
+            }
+
+            foreach ($ids as $index => $examId) {
+                $exam = $exams[$examId];
+                $nextOrder = $index + 1;
+                if ($exam->sort_order !== $nextOrder) {
+                    $exam->sort_order = $nextOrder;
+                    $exam->save();
+                }
+            }
+
+            return response()->json(['message' => 'Exams reordered successfully.']);
+        }, attempts: 3);
     }
 
     public function update(UpdateExamRequest $request, string $id): JsonResponse

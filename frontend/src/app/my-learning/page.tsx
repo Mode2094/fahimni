@@ -18,10 +18,13 @@ import { toast } from 'sonner';
 import { enrollments as enrollmentsApi, dashboardApi, favoritesApi, cardsApi, tenants, type StudentDashboardOverview } from '@/services/endpoints';
 import { getApiErrorMessage } from '@/services/api';
 import { buildLearnAssignmentUrl } from '@/lib/course-preview';
+import { useLeaderboard } from '@/store/leaderboard';
 
 export default function MyLearningPage() {
   const { locale } = useLocale();
   const { user } = useAuth();
+  const leaderboardEnabled = useLeaderboard((s) => s.enabled);
+  const loadLeaderboardEnabled = useLeaderboard((s) => s.load);
   const [enrollments, setEnrollments] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +94,7 @@ export default function MyLearningPage() {
     setLoading(false);
   };
 
-  useEffect(() => { void loadDashboard(); }, []);
+  useEffect(() => { void loadDashboard(); void loadLeaderboardEnabled(); }, []);
 
   const refresh = () => { void loadDashboard(); };
 
@@ -223,7 +226,9 @@ export default function MyLearningPage() {
             </p>
             <div className="flex flex-wrap gap-2.5 mt-5">
               <a href="/exams"><Button className="gap-2 rounded-full bg-white text-teal-800 hover:bg-teal-50 shadow-lg"><Award className="h-4 w-4" /> {t('الاختبارات', 'Exams')}</Button></a>
-              <a href="/leaderboard"><Button variant="ghost" className="gap-2 rounded-full text-white border border-white/25 glass hover:bg-white/10"><TrendingUp className="h-4 w-4" /> {t('لوحة الأوائل', 'Leaderboard')}</Button></a>
+              {leaderboardEnabled !== false && (
+                <a href="/leaderboard"><Button variant="ghost" className="gap-2 rounded-full text-white border border-white/25 glass hover:bg-white/10"><TrendingUp className="h-4 w-4" /> {t('لوحة الأوائل', 'Leaderboard')}</Button></a>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2.5 w-full sm:w-auto sm:min-w-[240px]">

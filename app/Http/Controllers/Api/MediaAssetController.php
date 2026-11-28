@@ -229,6 +229,55 @@ class MediaAssetController extends Controller
     }
 
     /**
+     * ربط فيديو موجود من المكتبة بدرس آخر — بلا إعادة رفع ولا نسخة مزوّد ثانية.
+     * المساحة تُحتسب مرة واحدة (سجل الأصل)، فالاستخدام المتعدد لا يضاعفها.
+     */
+    public function attachExisting(Request $request, string $assetId): JsonResponse
+    {
+        $tenantId = $request->header('X-Tenant-Id');
+
+        $validated = $request->validate([
+            'lesson_id' => 'required|string',
+        ]);
+
+        $asset = MediaAsset::withoutTenant()->find($assetId);
+
+        if (! $asset || (string) $asset->tenant_id !== (string) $tenantId) {
+            return response()->json(['message' => 'Media asset not found.'], 404);
+        }
+
+        $lesson = Lesson::where('tenant_id', $tenantId)->find($validated['lesson_id']);
+
+        if (! $lesson) {
+            return response()->json(['message' => 'Lesson not found.'], 404);
+        }
+
+        try {
+            $asset = $this->media->attachExistingToLesson($asset->id, $lesson->id);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Could not link the video to this lesson.'], 500);
+        }
+
+        $video = VideoContent::withoutTenant()
+            ->where('lesson_id', $lesson->id)
+            ->where('provider_video_id', $asset->provider_asset_id)
+            ->first();
+
+        return response()->json([
+            'video' => [
+                'id' => $video?->id,
+                'lesson_id' => $lesson->id,
+                'asset_id' => $asset->id,
+                'status' => $video?->status ?? $asset->status,
+                'reused' => true,
+            ],
+            'message' => 'Video linked to the lesson (no re-upload).',
+        ], 201);
+    }
+
+    /**
      * حذف أصل (فيديو/تسجيل) + تحرير الاستخدام.
      */
     public function destroy(Request $request, string $assetId): JsonResponse

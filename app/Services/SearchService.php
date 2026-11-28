@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator as BasePaginator;
+use Illuminate\Support\Facades\DB;
 
 class SearchService
 {
@@ -16,6 +17,16 @@ class SearchService
     private function normalizeQuery(string $query): string
     {
         return mb_strtolower(trim($query), 'UTF-8');
+    }
+
+    /**
+     * Case-insensitive operator that the current driver understands. Postgres
+     * gets `ilike`; SQLite (tests) has no `ilike` and uses `like`, which is
+     * already case-insensitive for ASCII. Same convention as LessonNoteService.
+     */
+    private function likeOp(): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
     }
 
     private function emptyPaginator(int $perPage): LengthAwarePaginator
@@ -33,10 +44,11 @@ class SearchService
 
         return Course::byTenant($tenantId)
             ->where(function (Builder $q) use ($term) {
-                $q->where('title', 'ilike', "%{$term}%")
-                    ->orWhere('description', 'ilike', "%{$term}%")
-                    ->orWhere('short_description', 'ilike', "%{$term}%")
-                    ->orWhere('tags', 'ilike', "%{$term}%");
+                $op = $this->likeOp();
+                $q->where('title', $op, "%{$term}%")
+                    ->orWhere('description', $op, "%{$term}%")
+                    ->orWhere('short_description', $op, "%{$term}%")
+                    ->orWhere('tags', $op, "%{$term}%");
             })
             ->where('is_published', true)
             ->with('sections.lessons')
@@ -44,7 +56,12 @@ class SearchService
             ->paginate($perPage);
     }
 
-    public function searchLessons(string $query, string $tenantId, int $perPage = 10): LengthAwarePaginator
+    /**
+     * Search lessons. When `$visibleToUserId` is provided (a student caller),
+     * results are limited to lessons the student's course groups allow — so a
+     * group-restricted lesson never surfaces to a non-member through search.
+     */
+    public function searchLessons(string $query, string $tenantId, int $perPage = 10, ?string $visibleToUserId = null): LengthAwarePaginator
     {
         $term = $this->normalizeQuery($query);
 
@@ -52,13 +69,20 @@ class SearchService
             return $this->emptyPaginator($perPage);
         }
 
-        return Lesson::byTenant($tenantId)
+        $builder = Lesson::byTenant($tenantId)
             ->where(function (Builder $q) use ($term) {
-                $q->where('title', 'ilike', "%{$term}%")
-                    ->orWhere('description', 'ilike', "%{$term}%")
-                    ->orWhereHas('contents.text', fn (Builder $cq) => $cq->where('body', 'ilike', "%{$term}%"));
+                $op = $this->likeOp();
+                $q->where('title', $op, "%{$term}%")
+                    ->orWhere('description', $op, "%{$term}%")
+                    ->orWhereHas('contents.text', fn (Builder $cq) => $cq->where('body', $op, "%{$term}%"));
             })
-            ->with('section.course', 'contents')
+            ->with('section.course', 'contents');
+
+        if ($visibleToUserId !== null) {
+            $builder->visibleToStudent($visibleToUserId);
+        }
+
+        return $builder
             ->orderBy('sort_order')
             ->paginate($perPage);
     }
@@ -79,18 +103,19 @@ class SearchService
                 ->where('tenant_user.role', 'student');
         })
             ->where(function (Builder $q) use ($term) {
-                $q->where('name', 'ilike', "%{$term}%")
-                    ->orWhere('email', 'ilike', "%{$term}%");
+                $op = $this->likeOp();
+                $q->where('name', $op, "%{$term}%")
+                    ->orWhere('email', $op, "%{$term}%");
             })
             ->orderBy('name')
             ->paginate($perPage);
     }
 
-    public function global(string $query, string $tenantId, bool $includeStudents = false): array
+    public function global(string $query, string $tenantId, bool $includeStudents = false, ?string $visibleToUserId = null): array
     {
         return [
             'courses' => $this->searchCourses($query, $tenantId, 5)->items(),
-            'lessons' => $this->searchLessons($query, $tenantId, 5)->items(),
+            'lessons' => $this->searchLessons($query, $tenantId, 5, $visibleToUserId)->items(),
             'students' => $includeStudents ? $this->searchStudents($query, $tenantId, 5)->items() : [],
         ];
     }

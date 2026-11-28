@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { EmptyState } from '@/components/ui/empty-state';
 import { confirmDialog, promptDialog } from '@/components/ui/confirm-dialog';
@@ -255,6 +256,10 @@ export default function LiveSessionsPage() {
             <div className="space-y-2"><Label>{t('الموعد (اختياري)', 'Schedule (optional)')}</Label><Input type="datetime-local" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} className="h-11" /></div>
             <div className="space-y-2"><Label>{t('المدة المتوقعة (دقيقة)', 'Expected duration (minutes)')}</Label><Input type="number" min={5} max={600} value={form.duration_minutes} onChange={(e) => setForm({ ...form, duration_minutes: e.target.value })} className="h-11" /></div>
             <div className="space-y-2"><Label>{t('الحد الأقصى للمشاركين', 'Max participants')}</Label><Input type="number" value={form.max_participants} onChange={(e) => setForm({ ...form, max_participants: e.target.value })} className="h-11" /></div>
+            <div className="space-y-1">
+              <Switch checked={form.record_enabled} onCheckedChange={(v) => setForm({ ...form, record_enabled: v })} label={t('سأُسجّل الحصة وأرفق الرابط لاحقاً', 'I will record the session and attach the link later')} />
+              <p className="text-[11px] text-gray-400 leading-relaxed">{t('Google Meet لا يسجّل تلقائياً — فعّل التسجيل داخل Meet، ثم ألصق الرابط في صفحة الجلسة.', 'Google Meet does not record automatically — turn on recording inside Meet, then paste the link on the session card.')}</p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>{t('إلغاء', 'Cancel')}</Button>

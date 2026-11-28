@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Lesson;
 use App\Models\LessonQuestion;
 use App\Models\User;
+use App\Services\CourseAccessService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -138,6 +139,13 @@ class LessonQuestionController extends Controller
 
         if ($lesson->tenant_id !== $tenantId) {
             abort(404, 'Lesson not found.');
+        }
+
+        // Students cannot ask/read Q&A on a lesson their course groups hide.
+        $user = $request->user();
+        if ($user && ! $this->isTenantStaff($request)
+            && ! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            abort(403, 'This lesson is not available for your group.');
         }
 
         return $lesson;

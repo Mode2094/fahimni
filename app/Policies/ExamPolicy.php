@@ -27,12 +27,18 @@ class ExamPolicy
             return false;
         }
 
+        if ($this->isTenantStaff($user, $exam->tenant_id)) {
+            return true;
+        }
+
         // Staff can inspect drafts; students only see published exams.
-        if (! $this->isTenantStaff($user, $exam->tenant_id) && ! $exam->is_published) {
+        if (! $exam->is_published) {
             return false;
         }
 
-        return true;
+        // Course-group restriction: an exam shared to specific groups is
+        // invisible to students who are not members of one of those groups.
+        return Exam::whereKey($exam->id)->visibleToStudent((string) $user->id)->exists();
     }
 
     public function viewQuestions(User $user, Exam $exam): bool
@@ -77,6 +83,11 @@ class ExamPolicy
         $tenantId = $this->tenantId();
 
         if ($exam->tenant_id !== $tenantId) {
+            return false;
+        }
+
+        // A group-restricted exam cannot be attempted by non-members.
+        if (! Exam::whereKey($exam->id)->visibleToStudent((string) $user->id)->exists()) {
             return false;
         }
 

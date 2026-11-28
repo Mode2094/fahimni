@@ -120,6 +120,12 @@ class FileProtectionService
             return false;
         }
 
+        // Course-group restriction: a lesson shared to specific groups is only
+        // downloadable by members of one of those groups.
+        if (! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return false;
+        }
+
         $enrollment = Enrollment::where('course_id', $course->id)
             ->where('user_id', $user->id)
             ->effective()

@@ -315,6 +315,12 @@ class VideoProtectionService
 
         $lesson = $content->lesson;
 
+        // Course-group restriction runs before the free-preview allowance so a
+        // lesson shared to specific groups never leaks through the media path.
+        if (! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return false;
+        }
+
         if ($lesson->is_free_preview) {
             return true;
         }

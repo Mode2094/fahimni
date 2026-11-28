@@ -9,6 +9,7 @@ use App\Models\Enrollment;
 use App\Models\Lesson;
 use App\Models\TenantUser;
 use App\Models\VideoContent;
+use App\Services\CourseAccessService;
 use App\Services\StudentAppService;
 use App\Services\VideoProtectionService;
 use App\Services\VideoWatchPositionService;
@@ -216,18 +217,34 @@ class MobileAppController extends Controller
 
         $enrolled = $enrollment !== null;
 
+        // Course groups: a lesson restricted to groups is hidden from students
+        // who are not members — the same rule the web curriculum applies.
+        // Membership never creates an enrolment, so seats are unaffected.
+        $visibleLessonSet = array_flip(
+            Lesson::whereIn('section_id', $course->sections->pluck('id'))
+                ->visibleToStudent((string) $user->id)
+                ->pluck('id')
+                ->all()
+        );
+
         // Drip content unlocks gradually after enrollment.
         $dripEnabled = (bool) $course->drip_enabled && $enrolled;
         $intervalDays = max(1, (int) $course->drip_interval_days);
         $position = 0;
 
-        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment) {
+        $sections = $course->sections->map(function ($section) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $visibleLessonSet) {
             return [
                 'id' => $section->id,
                 'title' => $section->title,
                 'sort_order' => $section->sort_order,
-                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment) {
+                'lessons' => $section->lessons->map(function ($lesson) use ($enrolled, $dripEnabled, $intervalDays, &$position, $enrollment, $visibleLessonSet) {
                     $position++;
+
+                    // Hidden for this student's group — not merely locked.
+                    if (! isset($visibleLessonSet[$lesson->id])) {
+                        return null;
+                    }
+
                     $unlockAt = null;
 
                     if ($dripEnabled) {
@@ -249,7 +266,7 @@ class MobileAppController extends Controller
                         'unlock_at' => $locked ? $unlockAt?->toIso8601String() : null,
                         'position' => $position,
                     ];
-                }),
+                })->filter()->values(),
             ];
         });
 
@@ -277,7 +294,7 @@ class MobileAppController extends Controller
 
         $lesson = Lesson::where('id', $lessonId)
             ->where('tenant_id', $tenant->id)
-            ->with(['contents.video', 'contents.text', 'contents.file', 'section'])
+            ->with(['contents.video', 'contents.text', 'contents.file', 'contents.liveSession', 'section'])
             ->first();
 
         if (! $lesson || ! $lesson->section) {
@@ -299,6 +316,12 @@ class MobileAppController extends Controller
             ->first();
 
         $enrolled = $enrollment !== null;
+
+        // Course-group restriction runs before the free-preview allowance so a
+        // lesson shared to specific groups never leaks to non-members.
+        if (! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return response()->json(['message' => 'This lesson is not available for your group.'], 403);
+        }
 
         if (! $lesson->is_free_preview && ! $enrolled) {
             return response()->json(['message' => 'This lesson is locked. Enroll to access it.'], 403);
@@ -361,6 +384,24 @@ class MobileAppController extends Controller
                     'previewable' => $this->isPreviewable($content->file),
                     'is_downloadable' => $downloadsEnabled && (bool) $content->file->is_downloadable,
                     'url' => '/lessons/'.$content->lesson_id.'/file-ticket?tenant_id='.$content->tenant_id,
+                ];
+            }
+
+            // Live lesson: a Google Meet link. The student only ever receives
+            // the join URL (never the organiser/start URL), only while the
+            // session is not cancelled, and only for a lesson they may see
+            // (group + enrollment were enforced above).
+            if ($content->liveSession) {
+                $live = $content->liveSession;
+                $payload['live'] = [
+                    'id' => $live->id,
+                    'title' => $live->title,
+                    'status' => $live->status,
+                    'scheduled_at' => $live->scheduled_at?->toIso8601String(),
+                    'cancelled_at' => $live->cancelled_at?->toIso8601String(),
+                    'meeting_url' => $live->status === 'cancelled'
+                        ? null
+                        : ($live->metadata['meeting_url'] ?? null),
                 ];
             }
 

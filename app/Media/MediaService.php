@@ -320,6 +320,124 @@ class MediaService
         return $asset->fresh();
     }
 
+    /**
+     * Attach an ALREADY-UPLOADED library video to another lesson without
+     * re-uploading or creating a second provider copy. The new lesson gets its
+     * own LessonContent + a VideoContent marked `is_shared_reference`, pointing
+     * at the same provider video. Storage is counted once (the asset row), so
+     * reuse never inflates the tenant's usage.
+     *
+     * The target lesson's existing main content is replaced (one main content
+     * per lesson), matching the behaviour of a fresh upload.
+     */
+    public function attachExistingToLesson(string $assetId, string $lessonId): MediaAsset
+    {
+        $asset = MediaAsset::withoutTenant()->findOrFail($assetId);
+        $lesson = Lesson::withoutTenant()->findOrFail($lessonId);
+
+        if ((string) $asset->tenant_id !== (string) $lesson->tenant_id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, 'Media asset does not belong to this tenant.');
+        }
+
+        if ($asset->kind !== 'video' || $asset->status !== MediaAsset::STATUS_READY || ! $asset->provider_asset_id) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'This video is not ready to be reused.');
+        }
+
+        // Source metadata comes from the asset's own provider video row.
+        $source = VideoContent::withoutTenant()
+            ->where('provider', $asset->provider)
+            ->where('provider_video_id', $asset->provider_asset_id)
+            ->first();
+
+        if (! $source) {
+            throw new \Symfony\Component\HttpKernel\Exception\HttpException(409, 'The library video could not be found.');
+        }
+
+        // Idempotent: the same video already attached to this lesson → done.
+        $already = VideoContent::withoutTenant()
+            ->where('provider', $asset->provider)
+            ->where('provider_video_id', $asset->provider_asset_id)
+            ->where('lesson_id', $lesson->id)
+            ->exists();
+
+        if ($already) {
+            return $asset->fresh();
+        }
+
+        DB::transaction(function () use ($asset, $lesson, $source) {
+            // One main content per lesson: clear the target's existing content
+            // (children included) before attaching the reused video.
+            $existing = LessonContent::withoutTenant()
+                ->where('tenant_id', $lesson->tenant_id)
+                ->where('lesson_id', $lesson->id)
+                ->whereIn('content_type', ['video', 'text', 'file', 'live'])
+                ->first();
+
+            if ($existing) {
+                VideoContent::withoutTenant()->where('lesson_content_id', $existing->id)->delete();
+                TextContent::withoutTenant()->where('lesson_content_id', $existing->id)->delete();
+                FileContent::withoutTenant()->where('lesson_content_id', $existing->id)->delete();
+                LiveSession::withoutTenant()->where('lesson_content_id', $existing->id)->update(['lesson_content_id' => null]);
+
+                $oldAsset = MediaAsset::withoutTenant()->where('lesson_content_id', $existing->id)->first();
+                $oldAsset?->update(['lesson_content_id' => null]);
+
+                $existing->delete();
+            }
+
+            $lessonContent = LessonContent::withoutTenant()->create([
+                'id' => UuidV7::generate(),
+                'tenant_id' => $lesson->tenant_id,
+                'lesson_id' => $lesson->id,
+                'content_type' => 'video',
+                'sort_order' => 0,
+                'is_required' => true,
+                'title' => $source->title,
+                'metadata' => ['media_asset_id' => $asset->id, 'reused' => true],
+            ]);
+
+            VideoContent::withoutTenant()->create([
+                'id' => UuidV7::generate(),
+                'lesson_content_id' => $lessonContent->id,
+                'lesson_id' => $lesson->id,
+                'tenant_id' => $lesson->tenant_id,
+                'provider' => $source->provider,
+                // Same provider video — no second Bunny object, no extra storage.
+                'provider_video_id' => $source->provider_video_id,
+                'title' => $source->title,
+                'description' => $source->description,
+                'thumbnail_url' => $source->thumbnail_url,
+                'duration' => $source->duration,
+                'status' => $source->status,
+                'file_size_bytes' => $source->file_size_bytes,
+                'config' => $source->config,
+                'storage_path' => $source->storage_path,
+                'original_name' => $source->original_name,
+                'mime_type' => $source->mime_type,
+                'is_uploaded' => $source->is_uploaded,
+                'is_shared_reference' => true,
+            ]);
+        });
+
+        return $asset->fresh();
+    }
+
+    /**
+     * How many lessons play this asset's provider video (>= 1 once attached).
+     * Drives the "used in N lessons" hint and the multi-reference delete warning.
+     */
+    public function referenceCount(MediaAsset $asset): int
+    {
+        if (! $asset->provider_asset_id) {
+            return 0;
+        }
+
+        return VideoContent::withoutTenant()
+            ->where('provider', $asset->provider)
+            ->where('provider_video_id', $asset->provider_asset_id)
+            ->count();
+    }
+
     private function stageVideoReplacement(MediaAsset $asset, Lesson $lesson, LessonContent $content): void
     {
         DB::transaction(function () use ($asset, $lesson, $content) {
@@ -763,6 +881,9 @@ class MediaService
             'duration_seconds' => $a->duration_seconds,
             'thumbnail_url' => $a->thumbnail_url,
             'created_at' => $a->created_at,
+            // How many lessons play this video: 0 = never attached, 1 = normal,
+            // >1 = shared across lessons (deletion keeps it for the others).
+            'reference_count' => $this->referenceCount($a),
         ])->all();
     }
 }

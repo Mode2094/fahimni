@@ -20,11 +20,12 @@ import {
   ArrowLeft, ArrowRight, Plus, Trash2, Video, FileText, Lock, Unlock, ChevronDown, ChevronUp, Loader2,
   Pencil, Layers, BookOpen, ClipboardList, ArrowUp, ArrowDown, Eye, EyeOff, ListChecks, CheckCircle2, XCircle, GripVertical,
   Upload, FileAudio, FileVideo, FileImage, FileArchive, File, ClipboardCheck, CalendarClock, Star, MessageSquare, Send,
-  UploadCloud, Radio, ExternalLink, Link2, Copy, Info, Users } from 'lucide-react';
+  UploadCloud, Radio, ExternalLink, Link2, Copy, Info, Users, Film } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { ExamEditor } from '@/components/exam/exam-editor';
 import VideoUploadQueue from '@/components/media/video-upload-queue';
+import VideoLibraryPicker from '@/components/media/video-library-picker';
 import CourseGroupsManager from '@/components/course/course-groups';
 import { DuplicateDialog, type DuplicateKind } from '@/components/content/duplicate-dialog';
 import { uploadVideoDirect } from '@/lib/tus-upload';
@@ -68,6 +69,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [videoUploadError, setVideoUploadError] = useState('');
   const [videoUploadName, setVideoUploadName] = useState('');
   const [videoQueueOpen, setVideoQueueOpen] = useState(false);
+  const [videoLibraryOpen, setVideoLibraryOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -261,6 +263,48 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       toast.success(t('تم حفظ ترتيب الدروس', 'Lesson order saved'));
     } catch (error: any) {
       setSections(previous);
+      toast.error(error?.message || t('فشل حفظ الترتيب — أُعيد الترتيب السابق', 'Could not save order — the previous order was restored'));
+      void load();
+    } finally {
+      setOrderSaving(false);
+    }
+  };
+
+  const moveExam = async (e: any, dir: number) => {
+    if (orderSaving) return;
+    const expectedIds = exams.filter((x: any) => x.section_id === e.section_id).map((x: any) => x.id);
+    const ids = moveLessonBy(expectedIds, e.id, dir < 0 ? -1 : 1);
+    if (ids) await saveExamOrder(e.section_id, ids, expectedIds);
+  };
+
+  const saveExamOrder = async (sectionId: string, examIds: string[], expectedIds: string[]) => {
+    const previous = exams;
+    const current = exams.filter((x: any) => x.section_id === sectionId);
+    if (examIds.length !== current.length || examIds.every((id, index) => id === current[index]?.id)) return;
+
+    const sortOrder = new Map(examIds.map((examId, index) => [examId, index + 1]));
+    const optimistic = exams
+      .map((x: any) => (x.section_id === sectionId ? { ...x, sort_order: sortOrder.get(x.id) } : x))
+      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    setExams(optimistic);
+    setOrderSaving(true);
+
+    try {
+      const res = await fetch(`${API}/exams/reorder`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ course_id: id, section_id: sectionId, exam_ids: examIds, expected_exam_ids: expectedIds }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.status === 409) {
+          throw new Error(t('تغيّر ترتيب الاختبارات في تبويب آخر — جارٍ تحميل الترتيب الحالي.', 'Exam order changed elsewhere — reloading the latest order.'));
+        }
+        throw new Error(data?.message || t('فشل حفظ الترتيب', 'Failed to save order'));
+      }
+      toast.success(t('تم حفظ ترتيب الاختبارات', 'Exam order saved'));
+    } catch (error: any) {
+      setExams(previous);
       toast.error(error?.message || t('فشل حفظ الترتيب — أُعيد الترتيب السابق', 'Could not save order — the previous order was restored'));
       void load();
     } finally {
@@ -901,9 +945,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
                     {/* اختبارات الوحدة */}
                     <div className="space-y-3">
-                    {secEx.map((e: any) => (
+                    {secEx.map((e: any, ei: number) => (
                       <div key={e.id} className="flex items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/40 p-3 hover:bg-violet-50 transition">
-                        <GripVertical className="h-4 w-4 text-violet-300 shrink-0" />
                         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 shrink-0"><ClipboardList className="h-4 w-4 text-violet-600" /></span>
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-sm truncate">{e.title}</p>
@@ -913,6 +956,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         </div>
                         <Badge className={e.is_published ? 'bg-green-50 text-green-600 border-0' : 'bg-gray-100 text-gray-500 border-0'}>{e.is_published ? t('منشور', 'Published') : t('مسودة', 'Draft')}</Badge>
                         <div className="flex items-center gap-1">
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveExam(e, -1)} disabled={orderSaving || ei === 0} aria-label={t('تحريك الاختبار لأعلى', 'Move exam up')} title={t('تحريك الاختبار لأعلى', 'Move exam up')}><ArrowUp className="h-3.5 w-3.5" /></Button>
+                          <Button size="sm" variant="ghost" className="rounded-full text-xs" onClick={() => moveExam(e, 1)} disabled={orderSaving || ei === secEx.length - 1} aria-label={t('تحريك الاختبار لأسفل', 'Move exam down')} title={t('تحريك الاختبار لأسفل', 'Move exam down')}><ArrowDown className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" className="gap-1 rounded-full bg-violet-600 hover:bg-violet-700 text-white" onClick={() => openExamViewer(e)}><Pencil className="h-3.5 w-3.5" />{t('تحرير', 'Edit')}</Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-violet-700" onClick={() => setDup({ kind: 'exam', id: e.id, title: e.title })} aria-label={t('إنشاء نسخة من الاختبار', 'Duplicate exam')} title={t('إنشاء نسخة من الاختبار', 'Duplicate exam')}><Copy className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" variant="ghost" className="rounded-full text-xs text-red-500" onClick={() => removeExam(e.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -1106,7 +1151,17 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                 <div className="flex flex-wrap gap-2">
                   {!hasVideoContent && (
                     <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => videoInputRef.current?.click()} disabled={videoUploading}>
-                      {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}{t('رفع فيديو', 'Upload video')}
+                      {videoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}{t('رفع فيديو جديد', 'Upload a new video')}
+                    </Button>
+                  )}
+                  {!hasVideoContent && (
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => setVideoLibraryOpen(true)} disabled={videoUploading}>
+                      <Film className="h-3.5 w-3.5" />{t('اختيار فيديو موجود', 'Choose an existing video')}
+                    </Button>
+                  )}
+                  {hasVideoContent && (
+                    <Button variant="outline" size="sm" className="gap-1.5 rounded-full text-xs" onClick={() => setVideoLibraryOpen(true)}>
+                      <Film className="h-3.5 w-3.5" />{t('استبدال بفيديو موجود', 'Replace with an existing video')}
                     </Button>
                   )}
                   <input ref={videoInputRef} type="file" className="hidden" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" onChange={onVideoSelected} />
@@ -1294,6 +1349,13 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         sections={sections.map((s: any) => ({ id: s.id, title: s.title }))}
         lessons={sections.flatMap((s: any) => (s.lessons || []).map((l: any) => ({ id: l.id, title: l.title, section_id: s.id })))}
         onUploaded={load}
+      />
+
+      <VideoLibraryPicker
+        open={videoLibraryOpen}
+        onOpenChange={setVideoLibraryOpen}
+        lessonId={lesTarget?.id || null}
+        onAttached={() => { if (lesTarget) loadLesContents(lesTarget.id); load(); }}
       />
 
       <CourseGroupsManager open={groupsOpen} onOpenChange={setGroupsOpen} courseId={id} />
