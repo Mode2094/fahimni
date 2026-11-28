@@ -388,10 +388,8 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
             </div>
           ) : result && result.needs_review ? (
             <div className="space-y-3">
-              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-amber-100 mx-auto"><Clock className="h-12 w-12 text-amber-600" /></div>
-              <h2 className="text-3xl font-bold">{t('تم تسليم التمرين بنجاح', 'Submitted successfully')}</h2>
-              <p className="text-lg font-semibold text-amber-700">{t('بانتظار مراجعة المعلم', 'Awaiting teacher review')}</p>
-              <p className="text-sm text-gray-500">{t('تتضمن إجاباتك أسئلة تحتاج مراجعة يدوية (كتابية/ملف/HTML) — لا تُحتسب صحيحة تلقائياً. ستظهر الدرجة النهائية بعد أن يكمل المعلم التصحيح.', 'Your answers include questions that need manual review (written/file/HTML) — they are never auto-marked. Your final grade appears once the teacher completes grading.')}</p>
+              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-teal-100 mx-auto"><CheckCircle className="h-12 w-12 text-teal-600" /></div>
+              <h2 className="text-3xl font-bold">{t('تم التسليم', 'Submitted')}</h2>
               {previewMode && previewAnswers.length > 0 && (
                 <div className="space-y-1.5 rounded-xl border border-violet-100 bg-violet-50/40 p-3 text-start">
                   <p className="text-xs font-bold text-violet-800">{t('نتيجة التصحيح التجريبي لكل سؤال', 'Dry-run grading per question')}</p>

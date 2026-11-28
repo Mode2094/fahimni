@@ -14,6 +14,7 @@ import { Play, FileText, Lock, ChevronDown, ChevronUp, Loader2, ArrowLeft, Arrow
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { parsePreviewQuery, parseLearnTaskQuery, buildExamUrl } from '@/lib/course-preview';
+import { isPracticeExam, showsPassMark } from '@/lib/exam-display';
 import { plural, formatDuration } from '@/lib/ar-format';
 
 const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -104,6 +105,8 @@ function ExerciseCard({ exercise, preview = false }: { exercise: any; preview?: 
   const left = exercise.attempts_left;
   const exhausted = left === 0 && !preview;
   const done = !preview && exercise.attempts_used > 0;
+  // Ungraded practice: never surface a pass mark or a pass/fail indicator.
+  const practice = isPracticeExam(exercise);
 
   return (
     <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-5 space-y-3">
@@ -115,7 +118,9 @@ function ExerciseCard({ exercise, preview = false }: { exercise: any; preview?: 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
             <span>{plural.questions(exercise.questions_count, locale)}</span>
             {exercise.duration_minutes > 0 && <span>{formatDuration(exercise.duration_minutes, locale)}</span>}
-            <span>{t('نجاح', 'pass')} {exercise.pass_mark_percent}%</span>
+            {practice
+              ? <span className="text-teal-600 font-medium">{t('غير مُقيَّم', 'Ungraded')}</span>
+              : <span>{t('نجاح', 'pass')} {exercise.pass_mark_percent}%</span>}
             {!preview && left >= 0 ? (
               <span className={exhausted ? 'text-rose-600 font-medium' : ''}>
                 {t('المحاولات المتبقية', 'Attempts left')}: {left}
@@ -124,12 +129,16 @@ function ExerciseCard({ exercise, preview = false }: { exercise: any; preview?: 
               <span>{t('محاولات غير محدودة', 'Unlimited attempts')}</span>
             )}
           </div>
-          {exercise.last && (
+          {exercise.last && (practice ? (
+            <p className="text-xs mt-1 font-medium text-teal-600">
+              {t('أكملت هذا التمرين — التمارين غير المُقيَّمة لا تُحتسب في معدلك.', 'You completed this practice — ungraded practices never count toward your average.')}
+            </p>
+          ) : (
             <p className={`text-xs mt-1 font-medium ${exercise.last.passed ? 'text-emerald-600' : 'text-amber-600'}`}>
               {t('آخر نتيجة', 'Last result')}: {exercise.last.percentage}% · {exercise.last.passed ? t('ناجح', 'Passed') : t('لم ينجح بعد', 'Not passed yet')}
               {exercise.best_percentage !== null && <span className="text-gray-400"> · {t('الأفضل', 'Best')}: {exercise.best_percentage}%</span>}
             </p>
-          )}
+          ))}
         </div>
       </div>
       <Link href={buildExamUrl(exercise.exam_id, { preview })}>
@@ -609,7 +618,8 @@ export default function LearnPage({ params }: { params: Promise<{ id: string }> 
                             <p className="text-xs text-gray-500 mt-0.5">
                               {plural.questions(ex.questions_count ?? 0, locale)}
                               {ex.duration_minutes ? ` · ${formatDuration(ex.duration_minutes, locale)}` : ''}
-                              {ex.pass_mark_percent ? ` · ${locale === 'ar' ? 'نجاح' : 'pass'} ${ex.pass_mark_percent}%` : ''}
+                              {showsPassMark(ex) && ex.pass_mark_percent ? ` · ${locale === 'ar' ? 'نجاح' : 'pass'} ${ex.pass_mark_percent}%` : ''}
+                              {isPracticeExam(ex) ? ` · ${locale === 'ar' ? 'غير مُقيَّم' : 'ungraded'}` : ''}
                               {!preview && ex.attempts_count > 0 ? ` · ${locale === 'ar' ? 'محاولاتك' : 'attempts'}: ${ex.attempts_count}` : ''}
                             </p>
                           </div>
