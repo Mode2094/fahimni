@@ -13,7 +13,8 @@ import { toast } from 'sonner';
 import {
   addFiles, markUploading, markProgress, markProcessing, markDone, markFailed, markAsset,
   markCanceled, cancelAllPending, retryFailed, retryOne, nextPendingBatch, counts,
-  overallProgress, humanBytes, MAX_FILE_BYTES, MAX_PARALLEL, type QueueState, type QueueItem,
+  overallProgress, humanBytes, MAX_FILE_BYTES, MAX_PARALLEL, uploadIdempotencyKey,
+  type QueueState, type QueueItem,
 } from '@/lib/video-upload-queue';
 import { uploadVideoDirect, type TusHandle } from '@/lib/tus-upload';
 
@@ -49,8 +50,9 @@ async function postJson(url: string, body: unknown, tid: string, retry = 0): Pro
  * re-uploaded), pending/active items can be cancelled, and an interrupted
  * upload resumes from its last acknowledged chunk.
  *
- * Each file gets a deterministic idempotency key, so re-adding the same file
- * reuses its video instead of creating a duplicate or charging space twice.
+ * Each queue item gets a unique idempotency key (file fingerprint + a per-operation
+ * id), so a retry reuses the same video instead of creating a duplicate, while
+ * two different videos that happen to share a filename never collide.
  */
 export default function VideoUploadQueue({
   open, onOpenChange, sections, lessons, onUploaded,
@@ -72,6 +74,22 @@ export default function VideoUploadQueue({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const tenantId = () => (typeof window !== 'undefined' ? localStorage.getItem('tenant_id') || '' : '');
+
+  // The course page mounts this dialog before `sections`/`lessons` finish
+  // loading, so the initial state would capture `''`. Keep the selection valid
+  // as the async data arrives: adopt the first item only when the current one
+  // is empty/unknown, and NEVER clobber a choice the teacher made on purpose.
+  useEffect(() => {
+    setSectionId((prev) => (prev && sections.some((s) => s.id === prev) ? prev : (sections[0]?.id || '')));
+  }, [sections]);
+  useEffect(() => {
+    setLessonId((prev) => (prev && lessons.some((l) => l.id === prev) ? prev : (lessons[0]?.id || '')));
+  }, [lessons]);
+
+  // A batch is only launchable once an explicit destination target exists.
+  const destinationReady = destination === 'create'
+    ? (confirmCreate && Boolean(sectionId))
+    : Boolean(lessonId);
 
   useEffect(() => {
     if (!open) return;
@@ -100,6 +118,15 @@ export default function VideoUploadQueue({
       return;
     }
 
+    // Never start a batch whose destination target is not resolved yet — that
+    // is exactly what shipped the empty `section_id` to the server.
+    if (!destinationReady) {
+      toast.error(destination === 'create'
+        ? t('اختر الوحدة (القسم) وتأكّد من الموافقة على إنشاء الدروس قبل الرفع.', 'Choose the unit (section) and confirm lesson creation before uploading.')
+        : t('اختر درساً قبل الرفع.', 'Choose a lesson before uploading.'));
+      return;
+    }
+
     setQueue((s) => addFiles(s, files, { remainingSlots, makeId: () => crypto.randomUUID() }));
   };
 
@@ -120,9 +147,16 @@ export default function VideoUploadQueue({
     const tid = tenantId();
     const file = item.file;
     if (!file) throw new Error(t('الملف غير متاح — أعد اختياره', 'File is no longer available — pick it again'));
-    const idempotencyKey = destination === 'existing' && lessonId
-      ? `${item.key || ''}-${lessonId}`
-      : item.key;
+    const idempotencyKey = uploadIdempotencyKey(item, { destination, lessonId });
+
+    // Validate the destination target right before we reserve quota. Guarding
+    // here (not only in pickFiles) covers a course switch racing the batch.
+    if (destination === 'existing' && !lessonId) {
+      throw new Error(t('اختر درساً قبل الرفع', 'Choose a lesson before uploading'));
+    }
+    if (destination === 'create' && !sectionId) {
+      throw new Error(t('اختر الوحدة (القسم) قبل الرفع', 'Choose a section before uploading'));
+    }
 
     // 1) Resumable (TUS) ticket FIRST: reserves quota + signs a direct Bunny
     // upload. `key` is deterministic per file, so a retry/reload reuses the
@@ -280,9 +314,13 @@ export default function VideoUploadQueue({
           {destination === 'create' ? (
             <div className="space-y-2">
               <Label>{t('الوحدة التي ستُنشأ فيها الدروس', 'Unit the lessons go into')}</Label>
-              <select value={sectionId} onChange={(e) => setSectionId(e.target.value)} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
-                {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
-              </select>
+              {sections.length === 0 ? (
+                <p className="rounded-xl border border-dashed p-3 text-xs text-amber-600">{t('لا توجد وحدات بعد — أضف وحدة (قسم) في الكورس أولاً لتتمكّن من إنشاء الدروس.', 'No units yet — add a section to the course first so lessons can be created.')}</p>
+              ) : (
+                <select value={sectionId} onChange={(e) => setSectionId(e.target.value)} className="h-10 w-full rounded-xl border bg-background px-3 text-sm">
+                  {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+                </select>
+              )}
               <label className="flex items-start gap-2 text-xs text-gray-600">
                 <input type="checkbox" checked={confirmCreate} onChange={(e) => setConfirmCreate(e.target.checked)} className="mt-0.5" />
                 {t('أوافق على إنشاء درس منظّم لكل فيديو باسم الملف.', 'I agree to create one organized lesson per video, named after the file.')}
@@ -301,7 +339,7 @@ export default function VideoUploadQueue({
 
         <div className="flex flex-wrap items-center gap-2">
           <input ref={inputRef} type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.mkv,.avi" multiple className="hidden" onChange={pickFiles} />
-          <Button type="button" onClick={() => inputRef.current?.click()} disabled={destination === 'create' && !confirmCreate} className="gap-2 rounded-full bg-teal-600 text-white hover:bg-teal-700">
+          <Button type="button" onClick={() => inputRef.current?.click()} disabled={!destinationReady} className="gap-2 rounded-full bg-teal-600 text-white hover:bg-teal-700">
             <Upload className="h-4 w-4" />{t('اختيار ملفات', 'Choose files')}
           </Button>
           <span className="text-[11px] text-gray-400">

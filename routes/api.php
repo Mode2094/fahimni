@@ -367,6 +367,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('questions/{question}/options/{option}', [QuestionOptionController::class, 'destroy']);
 
             // ─── Exams ───────────────────────────────────
+            Route::post('exams/reorder', [ExamController::class, 'reorder']);
             Route::get('exams', [ExamController::class, 'index']);
             Route::post('exams', [ExamController::class, 'store']);
             Route::get('exams/{exam}', [ExamController::class, 'show']);
@@ -570,6 +571,8 @@ Route::prefix('v1')->group(function () {
                 // تذكرة TUS لكل ملف + إتمام/ربط بعد نجاح الرفع + تنظيف.
                 Route::post('resumable-ticket', [MediaAssetController::class, 'resumableTicket'])->middleware('throttle:media-ticket');
                 Route::post('resumable-complete', [MediaAssetController::class, 'resumableComplete'])->middleware('throttle:media-ticket');
+                // إعادة استخدام فيديو مكتبة في درس آخر (بلا رفع أو نسخة ثانية).
+                Route::post('assets/{asset}/attach', [MediaAssetController::class, 'attachExisting'])->middleware('throttle:media-ticket');
                 Route::delete('assets/{asset}', [MediaAssetController::class, 'destroy'])->middleware('throttle:media-ticket');
             });
 

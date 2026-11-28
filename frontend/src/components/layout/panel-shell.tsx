@@ -18,6 +18,7 @@ import {
 import { TeacherNotificationBell } from './teacher-notification-bell';
 import ViewAsBanner from './view-as-banner';
 import AdminSupportBanner from './admin-support-banner';
+import { useLeaderboard } from '@/store/leaderboard';
 
 type UnreadCounts = { notifications: number; messages: number; adminNotifications: number };
 
@@ -113,8 +114,12 @@ function SidebarNav({
 
   const isActive = (item: NavItem) => item.href === activeHref;
 
+  // A disabled leaderboard must not leave a link behind on any student surface.
+  const leaderboardEnabled = useLeaderboard((s) => s.enabled);
+  const hideLeaderboard = variant === 'student' && leaderboardEnabled === false;
+
   const visibleGroups = groups
-    .map((g) => ({ ...g, items: g.items.filter((i) => (!i.gate || gates[i.gate]) && !(i.hideWithApp && settings.student_app_hidden)) }))
+    .map((g) => ({ ...g, items: g.items.filter((i) => (!i.gate || gates[i.gate]) && !(i.hideWithApp && settings.student_app_hidden) && !(hideLeaderboard && i.href === '/leaderboard')) }))
     .filter((g) => g.items.length > 0);
   const filteredGroups = variant === 'teacher' ? filterNavGroups(visibleGroups, query, locale) : visibleGroups;
 
@@ -335,6 +340,13 @@ export function PanelShell({ variant, children, hideAccount = false }: PanelShel
   const visibleBottomItems = STUDENT_BOTTOM_NAV.filter((item) => !item.gate || gates[item.gate]);
   const moreIsActive = isStudent && isMoreNavRoute(path, visibleBottomItems);
   const collapsedGroupsKey = `sidebar-collapsed-groups:${variant}`;
+
+  // Resolve the tenant's leaderboard visibility so student navigation can hide
+  // ranking links when the teacher disabled it.
+  const loadLeaderboard = useLeaderboard((s) => s.load);
+  useEffect(() => {
+    if (isStudent) void loadLeaderboard();
+  }, [isStudent, loadLeaderboard]);
 
   useEffect(() => { setDrawer(false); }, [path]);
   useEffect(() => {

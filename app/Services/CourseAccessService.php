@@ -4,9 +4,11 @@ namespace App\Services;
 
 use App\Models\Course;
 use App\Models\Enrollment;
+use App\Models\Exam;
 use App\Models\ExamAttempt;
 use App\Models\Lesson;
 use App\Models\LessonProgress;
+use App\Models\User;
 
 /**
  * Single source of truth for course-content access rules:
@@ -29,6 +31,37 @@ class CourseAccessService
      * lesson stays reasonable.
      */
     private const MIN_WATCH_FRACTION = 0.9;
+
+    /**
+     * Course-group visibility — the single implementation every content path
+     * must call so the rule can never drift between web, mobile, media, files,
+     * search and Q&A.
+     *
+     * A lesson shared to specific course groups is visible only to members of
+     * at least one of those groups; a lesson with no group rows is visible to
+     * every enrolled student. Staff and super admins bypass the check (they
+     * own the content), so callers that have already granted staff access can
+     * skip this.
+     */
+    public function lessonVisibleToUser(Lesson $lesson, ?User $user): bool
+    {
+        $query = Lesson::query()->whereKey($lesson->id);
+
+        // A guest can still reach an UNRESTRICTED lesson (free preview). Only a
+        // lesson shared to groups is hidden from a caller we cannot identify.
+        return $user
+            ? $query->visibleToStudent((string) $user->id)->exists()
+            : $query->whereDoesntHave('groups')->exists();
+    }
+
+    public function examVisibleToUser(Exam $exam, ?User $user): bool
+    {
+        $query = Exam::query()->whereKey($exam->id);
+
+        return $user
+            ? $query->visibleToStudent((string) $user->id)->exists()
+            : $query->whereDoesntHave('groups')->exists();
+    }
 
     public function enrollmentIsValid(?Enrollment $enrollment): bool
     {

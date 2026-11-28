@@ -110,6 +110,25 @@ export function addFiles(state: QueueState, files: File[], opts: AddOptions): Qu
   return { items, rejected };
 }
 
+/**
+ * The server idempotency key for ONE upload operation.
+ *
+ * The file-level `key` dedupes a file re-added after a reload (TUS resumes, no
+ * duplicate). But two distinct queue items for the same file — the same clip
+ * added twice, or a corrected re-upload — must not share a key: the server
+ * would reuse the first item's provider asset for the second, and the leftover
+ * lesson binding failed. The queue item id (unique per operation) disambiguates
+ * them; when uploading straight into an existing lesson, that lesson is folded
+ * in too so the same file can target two lessons independently.
+ */
+export function uploadIdempotencyKey(
+  item: Pick<QueueItem, 'key' | 'id'>,
+  opts: { destination?: 'create' | 'existing'; lessonId?: string } = {},
+): string {
+  const base = `${item.key || ''}-${item.id}`;
+  return opts.destination === 'existing' && opts.lessonId ? `${base}-${opts.lessonId}` : base;
+}
+
 export function markUploading(state: QueueState, id: string): QueueState {
   return patch(state, id, { status: 'uploading', progress: 0, error: undefined });
 }

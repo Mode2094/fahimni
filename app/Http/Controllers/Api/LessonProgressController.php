@@ -201,6 +201,12 @@ class LessonProgressController extends Controller
             abort(422, 'This lesson is not published yet.');
         }
 
+        // A lesson shared to specific course groups cannot be completed by a
+        // student who is not a member of one of them.
+        if (! $this->access->lessonVisibleToUser($lesson, $enrollment->student)) {
+            abort(403, 'This lesson is not available for your group.');
+        }
+
         if (! $this->access->lessonUnlocked($enrollment, $lesson)) {
             abort(422, 'This lesson is locked (drip content). Complete the previous lessons first.');
         }

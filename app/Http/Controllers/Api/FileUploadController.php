@@ -81,7 +81,12 @@ class FileUploadController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (FeatureUnavailableException $e) {
             return response()->json(['message' => $e->getMessage()], 403);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            // A domain conflict (asset already attached elsewhere, wrong tenant,
+            // not-ready) must keep its real status — never be masked as 502.
+            return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         } catch (\RuntimeException $e) {
+            // Genuine provider/transport failure only.
             return response()->json(['message' => $e->getMessage()], 502);
         }
 
@@ -222,6 +227,8 @@ class FileUploadController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (FeatureUnavailableException $e) {
             return response()->json(['message' => $e->getMessage()], 403);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         } catch (\Throwable $e) {
             Log::warning('media.upload_direct_failed', ['error' => $e->getMessage()]);
 

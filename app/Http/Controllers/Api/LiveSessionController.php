@@ -16,6 +16,7 @@ use App\Plans\Exceptions\QuotaExceededException;
 use App\Plans\PlanEngine;
 use App\Rules\TenantScopedExists;
 use App\Rules\ValidGoogleMeetUrl;
+use App\Services\CourseAccessService;
 use App\Services\IntegrationService;
 use App\Traits\AuthorizesTenantAccess;
 use Illuminate\Http\JsonResponse;
@@ -589,6 +590,13 @@ class LiveSessionController extends Controller
     private function isEnrolledForSession(LiveSession $session, ?Request $request): bool
     {
         if (! $request?->user()) {
+            return false;
+        }
+
+        // A session attached to a lesson that is restricted to specific course
+        // groups is only joinable by members of one of those groups.
+        $lesson = $session->lessonContent?->lesson;
+        if ($lesson && ! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $request->user())) {
             return false;
         }
 

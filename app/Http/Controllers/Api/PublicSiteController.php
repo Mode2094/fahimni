@@ -486,17 +486,10 @@ class PublicSiteController extends Controller
 
         // Course-group restriction: a lesson shared to specific groups is only
         // reachable by their members (staff always reach it). Enforced before
-        // the free-preview allowance so a restricted lesson never leaks.
-        if (! $isOwner) {
-            $groupIds = $lesson->groups()->pluck('course_groups.id')->all();
-            if ($groupIds) {
-                $isMember = $user && $lesson->groups()
-                    ->whereHas('members', fn ($m) => $m->where('users.id', $user->id))
-                    ->exists();
-                if (! $isMember) {
-                    return response()->json(['message' => 'This lesson is not available for your group.'], 403);
-                }
-            }
+        // the free-preview allowance so a restricted lesson never leaks. The
+        // rule itself lives in CourseAccessService so every surface matches.
+        if (! $isOwner && ! app(CourseAccessService::class)->lessonVisibleToUser($lesson, $user)) {
+            return response()->json(['message' => 'This lesson is not available for your group.'], 403);
         }
 
         if (! $lesson->is_free_preview && ! $enrolled) {
@@ -584,7 +577,10 @@ class PublicSiteController extends Controller
                     'id' => $live->id,
                     'title' => $live->title,
                     'provider' => $live->provider,
-                    'meeting_url' => ($live->metadata ?? [])['meeting_url'] ?? null,
+                    // A cancelled session must never hand out its join link.
+                    'meeting_url' => $live->status === 'cancelled'
+                        ? null
+                        : (($live->metadata ?? [])['meeting_url'] ?? null),
                     'status' => $live->status,
                     'stream_url' => null,
                     'player_type' => 'meeting',
@@ -592,6 +588,7 @@ class PublicSiteController extends Controller
                     'started_at' => $live->started_at?->toIso8601String(),
                     'ended_at' => $live->ended_at?->toIso8601String(),
                     'scheduled_at' => $live->scheduled_at?->toIso8601String(),
+                    'cancelled_at' => $live->cancelled_at?->toIso8601String(),
                     'record_enabled' => (bool) $live->record_enabled,
                 ];
             }

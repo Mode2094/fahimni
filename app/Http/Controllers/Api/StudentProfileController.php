@@ -107,7 +107,9 @@ class StudentProfileController extends Controller
         $isStaff = $this->isTenantStaff($request->user(), $tenantId);
 
         // Disabled mode hides the board from students; staff still get it for
-        // oversight. Everyone keeps their own position.
+        // oversight. A student always keeps their own position — the teacher's
+        // switch removes the comparative board and every entry point to it, not
+        // the student's personal result.
         $entries = ($mode === LeaderboardPolicy::MODE_DISABLED && ! $isStaff)
             ? []
             : $this->gamification->leaderboard(

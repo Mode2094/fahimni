@@ -59,6 +59,7 @@ export default function ProfilePage() {
   const [activity, setActivity] = useState<any[]>([]);
   const [points, setPoints] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [leaderboardEnabled, setLeaderboardEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const headers = () => {
@@ -80,6 +81,7 @@ export default function ProfilePage() {
       setActivity(act.activity || []);
       setPoints(pt.history || []);
       setLeaderboard(lb.leaderboard || []);
+      setLeaderboardEnabled(lb.enabled !== false);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
@@ -130,7 +132,7 @@ export default function ProfilePage() {
                   <Flame className="h-3.5 w-3.5" />{s.streak.current} {t('يوم متتالي', 'day streak')}
                 </Badge>
               )}
-              {myRank && <Badge className="bg-teal-100 text-teal-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Trophy className="h-3.5 w-3.5" />{t('الترتيب', 'Rank')} #{myRank}</Badge>}
+              {leaderboardEnabled && myRank && <Badge className="bg-teal-100 text-teal-700 border-0 gap-1 px-3 py-1.5 rounded-full"><Trophy className="h-3.5 w-3.5" />{t('الترتيب', 'Rank')} #{myRank}</Badge>}
             </div>
           </div>
 
@@ -183,6 +185,7 @@ export default function ProfilePage() {
               </div>
             </CardContent></Card>
 
+            {leaderboardEnabled && (
             <Card className="border-0 shadow-sm"><CardContent className="p-5">
               <h3 className="font-semibold mb-3 flex items-center gap-2"><Trophy className="h-4 w-4 text-amber-500" />{t('ترتيبي بين الطلاب', 'My ranking')}</h3>
               {leaderboard.length === 0 ? <EmptyState className="border-0 bg-transparent py-6" title={t('لا يوجد ترتيب بعد', 'No ranking yet')} /> : (
@@ -201,6 +204,7 @@ export default function ProfilePage() {
                 </div>
               )}
             </CardContent></Card>
+            )}
           </div>
 
           <AppCard />
